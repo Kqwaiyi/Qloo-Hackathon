@@ -37,12 +37,12 @@ A build-ready spec for the Outfit Recommender webapp (`.scratch/outfit-recommend
 - [What privacy and age rules apply to stored face photos?](issues/06-privacy-age-rules.md): Gemini's terms require an 18+ app; outfit editing isn't biometric processing under GDPR, but Illinois/Washington need BIPA-style notice and release; full must-disclose list and one-month deletion.
 - [Can Style Icons drive whole Outfits in Qloo?](issues/01-qloo-style-icons.md): viable with caveats: cached person call per demographic + one Brand call per Outfit; the app must re-sort by affinity and diversify Style Icons; `fashion_segment` is a solid fallback.
 - [How do Qloo filters turn Brands into Pieces?](issues/02-qloo-brand-filters.md): footwear vs apparel tags (no Top/Bottom split, so the AI picks garments); Budget Tiers map cleanly onto `target_income_level` tags; age via `target_age_group` filter, gender via signal; popularity floor instead of trends; ~2.2 calls per Consultation.
+- [Prototype the Consultation flow](issues/07-consultation-flow-prototype.md): guided-steps wizard (Photo Type → photo & Budget Tier → progress checklist → Outfit list); results appear all at once at the end; a Budget Tier change replaces the Outfits; the Hairstyle shows no price or link; history is its own page.
 
 ## Not yet specified
 
 - **Account flows in detail**: sign-up, email verification, sign-in, password reset and settings (edit Style Preference, delete account). Their shape follows whichever auth library the architecture ticket picks.
 - **Data model**: what's stored for users, Consultations, Outfits, Pieces and Previews, once the architecture and Outfit assembly settle.
-- **Failure states**: what users see when the photo check rejects a photo, Qloo returns too few Style Icons or Brands for the filters, or the image model refuses a Preview.
 - **Hackathon submission**: demo link, demo account or seed data, Devpost requirements and judging criteria (the Devpost page blocked the charting scan). Also which Vercel plan and repo setup deploys the team's co-authored commits (see the Vercel limits ticket). The user wants to revisit this later.
 - **Spec assembly**: writing spec.md and slicing it into vertical implementation issues once the frontier clears.
 
