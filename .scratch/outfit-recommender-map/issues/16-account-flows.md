@@ -22,3 +22,10 @@ Map: [Outfit Recommender](../map.md)
 - **Settings:** what can be edited (Style Preference, Country, email, username, password), and how a changed email is verified again. Settings also gets "Withdraw photo consent". It deletes every Consultation, keeps the account, and shows the consent sheet again. Country is limited to Gemini's supported regions.
 - **Account deletion:** how it's confirmed, and what the user is told is deleted. Better Auth 1.7 offers a password, a session younger than `freshAge` (1 day by default), or an emailed single-use link that also needs a signed-in session. The deletion promise and the provider leftovers are in "What consent, retention and minimum age do we commit to?".
 - **Email volume:** Gmail sends at most 500 emails a day. What sign-ups and resets do beyond that. Warnings 30 days before an inactive account's 12-month deletion add to the volume.
+  - Accounts are free, so someone could script mass sign-ups to use up the day's sends and block real users' verification.
+  - What limit does sign-up get, per IP or app-wide? Better Auth's rate limiter stores its counts in the database.
+- **Demo Account** ("What limits keep AI and Qloo spend bounded?"):
+  - Password, email, username, account deletion and "Withdraw photo consent" are locked as "Managed by the team".
+  - Its email is a plus-address of the team Gmail.
+  - How the team creates and verifies it.
+  - What the locked settings look like.

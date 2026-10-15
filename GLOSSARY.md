@@ -71,3 +71,11 @@ _Avoid_: try-on, render, mockup
 **Budget Tier**:
 The price filter on Outfits: No Budget, Low, Medium or Expensive. Low, Medium and Expensive keep every Piece of an Outfit within that tier; No Budget applies no filter, so one Outfit may mix tiers. A Face Photo Consultation has no Budget Tier, since a Hairstyle has no price.
 _Avoid_: price range, price level
+
+**Outfit Allowance**:
+How many Outfits a user may have made in any 24 hours. Every Outfit made counts, whether it came from a new Consultation, "see more" or a change of Budget Tier or Photo Style, and whether or not it was later replaced or deleted. The Demo Account has none.
+_Avoid_: credits, quota, tokens
+
+**Demo Account**:
+The single shared account the team gives the judges privately and also tests with. No usage limit applies to it, anyone with its login sees every Consultation made on it, and it asks for photo consent before every Consultation instead of once.
+_Avoid_: test account, admin account, judge account

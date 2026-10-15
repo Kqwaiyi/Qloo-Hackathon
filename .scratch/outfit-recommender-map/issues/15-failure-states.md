@@ -16,5 +16,7 @@ In the guided-steps flow chosen in "Prototype the Consultation flow", what does 
 - Qloo returns too few Style Icons or Brands, even after the quiet widening in "How does Qloo build and rank Outfits?", including when the Style Icons run out and "Show 2 more Outfits" disappears.
 - Tailoring fails for an Outfit after its one retry.
 - The image model refuses a Preview (final, never retried) or fails it.
-- The user hits a usage limit: Consultations per day, "see more" presses, Budget Tier re-runs, or Photo Style re-runs.
-- Whether a failed attempt still counts against those limits, and whether the Consultation is kept in history.
+- Whether a failed run still uses the Outfit Allowance, and whether its Consultation is kept in history.
+  - Usage is recorded separately from Consultations, one row per Outfit made, so a refund is possible.
+  - "What limits keep AI and Qloo spend bounded?" already settles what the user sees when a limit is hit. This ticket decides only what a failure does to the count.
+  - The Demo Account has no allowance.
