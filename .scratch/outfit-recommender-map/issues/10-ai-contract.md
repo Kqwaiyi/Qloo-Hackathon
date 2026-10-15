@@ -68,7 +68,7 @@ Resolved with the user on 2026-10-15. A Qloo check of the Photo Style words took
   - The cut must be achievable from the user's current hair: shorter or restyled, without adding much length or changing the texture. The hair colour stays the user's own.
 - **Bad output:** checked against the schema and our rules (expected Categories, no prices, no empty fields), retried once, then "tailoring failed".
 
-**3. Render one Preview** (Nano Banana 2 Lite, pending "Is Nano Banana 2 Lite good enough for Previews?")
+**3. Render one Preview** (Nano Banana 2.1 at thinking level `minimal`, decided in "Is Nano Banana 2 Lite good enough for Previews?")
 - **In:** the photo, the Photo Type and each Piece's `details`. Never the Style Icon's name or image.
 - **What changes:** only the Pieces.
 - **What stays:**
