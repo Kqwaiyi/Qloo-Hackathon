@@ -14,3 +14,4 @@ Given the rules found in "What privacy and age rules apply to stored face photos
 - Illinois and Washington biometric-law handling (notice, release, retention schedule), or whether to treat every user that way.
 - Retention and deletion of photos, Previews, Consultations and accounts.
 - Any other notices or controls we owe users, including for the Country now collected at sign-up and the Photo Style the AI reads from each photo.
+- Verification and reset emails go out through a team Gmail account (decided in "What's the architecture?"), so Google handles users' email addresses.
