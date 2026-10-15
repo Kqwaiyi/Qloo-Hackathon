@@ -4,3 +4,16 @@
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Dependencies and builds
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# Local PGlite database for development
+.data/
+
+# Playwright
+test-results/
+playwright-report/
