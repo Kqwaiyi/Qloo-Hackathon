@@ -15,3 +15,4 @@ Given the rules found in "What privacy and age rules apply to stored face photos
 - Retention and deletion of photos, Previews, Consultations and accounts.
 - Any other notices or controls we owe users, including for the Country now collected at sign-up and the Photo Style the AI reads from each photo.
 - Verification and reset emails go out through a team Gmail account (decided in "What's the architecture?"), so Google handles users' email addresses.
+- A Body-Only Photo may still show the user's face, which is stored and sent to Google like the rest of the photo (decided in "What do we ask the AI model at each step?"). The consent wording can't promise that Body-Only keeps the face out.
