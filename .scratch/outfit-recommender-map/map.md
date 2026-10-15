@@ -45,12 +45,20 @@ A build-ready spec for the Outfit Recommender webapp (`.scratch/outfit-recommend
 - [What limits keep AI and Qloo spend bounded?](issues/12-cost-guardrails.md): each user gets an Outfit Allowance of 10 Outfits in any 24 hours, used by every run, plus 20 photo checks and one run at a time. The app stops at 750 Outfits a month and 100 a day (about $30), and below 1,000 Qloo calls left. A $50 Google spend cap is the backstop. There's no regenerate button and no reuse. One private Demo Account has no limits, asks for consent before every Consultation, and has its account settings locked.
 - [Prototype the landing page](issues/13-landing-page-prototype.md): the page walks through one sample Consultation as you scroll, with each step tagged Qloo, AI or You. The sample is a realistic AI-generated person, badged as such, run once through the app and frozen. 18+ appears in the footer only, and Gemini is named once, by the final button. Signed-in users see the page too, with "Open the app".
 - [Where can we get realistic AI-generated people for the landing page?](issues/17-ai-generated-people.md): Pixabay images tagged "AI generated", chosen over the research's pick (Generated Photos, paid). Each image is reverse-image checked, kept out of the repo and served from Blob, and captioned "AI-generated person: not a real person." Google's sublicence clause is an accepted gap.
+- [What does the user see when a Consultation step fails?](issues/15-failure-states.md): a rejected photo sends the user back to the photo step with a specific message (wrong Photo Type offers a one-tap switch). Tailoring failures are replaced by the next Style Icon, and refused Previews show a placeholder. A Styling (new glossary term) fails only when it makes no Outfit: re-runs then keep the old Outfits, and an empty new Consultation stays with "Try again". Every Outfit shown uses allowance, with no refunds. A Styling stuck for 10 minutes counts as failed.
 
 ## Not yet specified
 
-- **Data model**: what's stored for users (including Country, the accepted photo-notice version and time, and the last sign-in for the inactivity sweep), Consultations (including Photo Style and their Styling/ready status), Outfits, Pieces (including One-Pieces and the unknown-cut flag) and Previews (including refusals), and the Qloo response cache. Also the usage records (one row per Outfit made and per photo check) and the Demo Account's consent stored on each Consultation. The architecture, AI contract, consent rules and spend limits are settled; this now waits only on the failure-state ticket, and may fold into spec assembly.
 - **Hackathon submission**: the demo link, Devpost requirements and judging criteria (the Devpost page blocked the charting scan). Also which Vercel plan and repo setup deploys the team's co-authored commits (see the Vercel limits ticket). The private, unlimited Demo Account for judges is settled (see the spend limits ticket), and so is the landing page the demo link opens on (see the landing page ticket). The user wants to revisit this later.
-- **Spec assembly**: writing spec.md and slicing it into vertical implementation issues once the frontier clears.
+- **Spec assembly**: writing spec.md and slicing it into vertical implementation issues once the frontier clears. It now includes the **data model**, folded in after "What does the user see when a Consultation step fails?" because it follows from settled decisions rather than needing one of its own. It covers:
+  - users: Country, the accepted photo-notice version and time, the last sign-in for the inactivity sweep, and whatever "How do the account flows behave?" settles for age and username;
+  - Consultations: Photo Style, Styling status, the "No Outfits" state and a failed Styling's reason, and when the stage last moved;
+  - Outfits: which are current, so a re-run switches only on success;
+  - Pieces: One-Pieces and the unknown-cut flag;
+  - Previews: including refusals and failures;
+  - the Qloo response cache;
+  - the usage records: one row per Outfit shown and per photo check;
+  - the Demo Account's consent, stored on each Consultation.
 
 ## Out of scope
 

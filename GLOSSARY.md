@@ -42,7 +42,7 @@ One submitted photo together with every Outfit and Preview generated from it; ke
 _Avoid_: session, analysis, scan
 
 **Outfit**:
-The unit the app recommends: one coordinated set of Pieces, one per Category the Photo Type unlocks (a One-Piece covers Top and Bottom together), inspired by a single Style Icon and shown with a single Preview.
+The unit the app recommends: one coordinated set of Pieces, one per Category the Photo Type unlocks (a One-Piece covers Top and Bottom together), inspired by a single Style Icon and shown with a single Preview, or none when the image model declines to make one.
 _Avoid_: look, recommendation (ambiguous between an Outfit and one of its Pieces)
 
 **Category**:
@@ -72,8 +72,12 @@ _Avoid_: try-on, render, mockup
 The price filter on Outfits: No Budget, Low, Medium or Expensive. Low, Medium and Expensive keep every Piece of an Outfit within that tier; No Budget applies no filter, so one Outfit may mix tiers. A Face Photo Consultation has no Budget Tier, since a Hairstyle has no price.
 _Avoid_: price range, price level
 
+**Styling**:
+One pass that builds Outfits for a Consultation: its first, a "see more", or a change of Budget Tier or Photo Style. It fails only when it makes no Outfit; otherwise it keeps whatever Outfits it made.
+_Avoid_: run, job, generation
+
 **Outfit Allowance**:
-How many Outfits a user may have made in any 24 hours. Every Outfit made counts, whether it came from a new Consultation, "see more" or a change of Budget Tier or Photo Style, and whether or not it was later replaced or deleted. The Demo Account has none.
+How many Outfits a user may have made in any 24 hours. An Outfit counts once it is shown to the user, with or without its Preview, whichever Styling made it, and even if it is later replaced or deleted. The Demo Account has none.
 _Avoid_: credits, quota, tokens
 
 **Demo Account**:
