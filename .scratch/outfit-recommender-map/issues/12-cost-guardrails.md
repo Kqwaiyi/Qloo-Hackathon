@@ -12,5 +12,7 @@ Every Consultation and every "see more" costs real money in Previews, and Qloo a
 - Consultations per user per day.
 - "See more" presses per Consultation.
 - Re-running when the Budget Tier changes.
+- Re-running when the user changes the Photo Style: each change re-picks the Style Icons and makes new Previews.
+- Qloo use: about 4–5 calls per uncached Consultation (1–2 person calls and 3 Brand calls, see "How does Qloo build and rank Outfits?"), plus about 2 per "see more" and per Budget Tier change, all cached for 30 days.
 - Reusing results for identical requests.
 - What users see when they hit a limit.
