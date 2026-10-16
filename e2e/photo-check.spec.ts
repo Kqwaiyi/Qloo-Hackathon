@@ -11,6 +11,7 @@ test("a photo that looks like another Photo Type is sent again as that type with
 
   await expect(page.getByRole("radio", { name: /Full-Body Photo/ })).toBeChecked();
   await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("tab", { name: "Upload" }).click();
   const fileChooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: /Choose a photo/ }).click();
   await (await fileChooser).setFiles({ name: "me.jpg", mimeType: "image/jpeg", buffer: await plainPhoto() });

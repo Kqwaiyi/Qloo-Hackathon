@@ -16,4 +16,5 @@ export const COPY = {
   photoNotAppropriate: "We can't use this photo.",
   contentRules: "Only use photos of yourself that you have the rights to, with no nudity or intimate images.",
   photoHairNotVisible: "We need to see your hair to suggest a Hairstyle.",
+  faceGuide: "keep your face above this line",
 } as const;

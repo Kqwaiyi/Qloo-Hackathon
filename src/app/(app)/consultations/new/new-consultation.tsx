@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type ChangeEvent, useEffect, useRef, useState, useTransition } from "react";
+import { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState, useTransition } from "react";
 
 import { PhotoTypeSilhouette } from "@/components/photo-type-silhouette";
 import { fieldError, primaryButton, secondaryButton } from "@/components/ui";
@@ -20,12 +20,20 @@ import type { PhotoRejection } from "@/server/consultations/photo-check";
 
 import { Stepper } from "../stepper";
 import { startConsultationAction } from "./actions";
+import { CameraView, useCamera } from "./camera";
 import { shrinkPhoto } from "./shrink-photo";
+
+const PHOTO_SOURCES = ["camera", "upload"] as const;
+type PhotoSource = (typeof PHOTO_SOURCES)[number];
+
+const PHOTO_SOURCE_LABELS: Record<PhotoSource, string> = { camera: "Camera", upload: "Upload" };
 
 /** A photo the browser has shrunk, ready to send, with a link to show it on the page. */
 interface ChosenPhoto {
   blob: Blob;
   url: string;
+  /** The tab it came from, which is the tab that shows it. */
+  source: PhotoSource;
 }
 
 export function NewConsultation() {
@@ -157,9 +165,26 @@ function PhotoStep({
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
+  const [source, setSource] = useState<PhotoSource>(photo?.source ?? "camera");
+  // Each tab shows only its own photo, and "Get my Outfits" sends the one on screen.
+  const shown = photo?.source === source ? photo : null;
+  const camera = useCamera(source === "camera" && !shown);
   const [problem, setProblem] = useState<Problem | null>(null);
   const [opening, setOpening] = useState(false);
+  const [capturing, setCapturing] = useState(false);
   const [sending, startSending] = useTransition();
+
+  function chooseSource(next: PhotoSource) {
+    if (next === source) return;
+    setSource(next);
+    setProblem(null);
+  }
+
+  /** "Upload a photo instead", when the camera can't be used: straight to the picker. */
+  function uploadInstead() {
+    chooseSource("upload");
+    fileInput.current?.click();
+  }
 
   async function pick(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -171,21 +196,39 @@ function PhotoStep({
     const result = await shrinkPhoto(file);
     setOpening(false);
     if (result.ok) {
-      onPhotoChange({ blob: result.photo, url: URL.createObjectURL(result.photo) });
+      onPhotoChange({ blob: result.photo, url: URL.createObjectURL(result.photo), source: "upload" });
     } else {
-      onPhotoChange(null);
+      if (photo?.source === "upload") onPhotoChange(null);
       setProblem({ message: result.problem === "too-large" ? COPY.photoTooLarge : COPY.photoUnreadable });
     }
   }
 
+  const canTakePhoto = camera.state.status === "live" && !capturing;
+
+  async function takePhoto() {
+    if (!canTakePhoto) return;
+    setProblem(null);
+    setCapturing(true);
+    const taken = await camera.capture();
+    setCapturing(false);
+    if (taken) onPhotoChange({ blob: taken, url: URL.createObjectURL(taken), source: "camera" });
+    else setProblem({ message: "We couldn't take your photo. Try again." });
+  }
+
+  /** Back to the live camera. */
+  function retake() {
+    setProblem(null);
+    onPhotoChange(null);
+  }
+
   /** "Get my Outfits": sends the photo as `type`, which is the chosen Photo Type unless switching. */
   function getOutfits(type: PhotoType) {
-    if (!photo) return;
+    if (!shown) return;
     setProblem(null);
     startSending(async () => {
       const form = new FormData();
       form.set("photoType", type);
-      form.set("photo", new File([photo.blob], "photo.jpg", { type: "image/jpeg" }));
+      form.set("photo", new File([shown.blob], "photo.jpg", { type: "image/jpeg" }));
       let result;
       try {
         result = await startConsultationAction(form);
@@ -210,31 +253,26 @@ function PhotoStep({
 
   const label = PHOTO_TYPE_LABELS[photoType];
   const switchTo = problem?.switchTo;
+  const busy = opening || capturing || sending;
 
   return (
     <section aria-labelledby="photo-heading">
       <h2 id="photo-heading" className="text-xl font-semibold tracking-tight">
-        Upload your {label}
+        {source === "camera" ? "Take" : "Upload"} your {label}
       </h2>
-      <p className="mt-1 text-stone-600">{PHOTO_TYPE_HINTS[photoType]} Just you in the photo.</p>
+      <p className="mt-1 text-stone-600">
+        {PHOTO_TYPE_HINTS[photoType]} Just you in the photo.
+        {source === "camera" && " Line yourself up with the outline."}
+      </p>
 
       <div className="mt-6 overflow-hidden rounded-xl border border-stone-200 bg-white">
-        <div role="tablist" aria-label="Photo source" className="flex border-b border-stone-200 text-sm font-medium">
-          <button
-            type="button"
-            role="tab"
-            id="upload-tab"
-            aria-selected="true"
-            aria-controls="upload-panel"
-            className="flex-1 border-b-2 border-stone-900 py-2.5 text-stone-900"
-          >
-            Upload
-          </button>
-        </div>
-        <div role="tabpanel" id="upload-panel" aria-labelledby="upload-tab">
-          <div className="mx-auto aspect-[3/4] w-full max-w-[45vh]">
-            {photo ? (
-              <img src={photo.url} alt={`Your ${label}`} className="h-full w-full bg-stone-100 object-contain" />
+        <PhotoSourceTabs value={source} onChange={chooseSource} disabled={busy} />
+        <div role="tabpanel" id="photo-panel" aria-labelledby={`${source}-tab`}>
+          <div className="mx-auto aspect-[4/5] w-full max-w-[45vh]">
+            {shown ? (
+              <img src={shown.url} alt={`Your ${label}`} className="h-full w-full bg-stone-100 object-contain" />
+            ) : source === "camera" ? (
+              <CameraView camera={camera} photoType={photoType} onUpload={uploadInstead} />
             ) : (
               <button
                 type="button"
@@ -248,20 +286,40 @@ function PhotoStep({
               </button>
             )}
           </div>
-          <input ref={fileInput} type="file" accept="image/*" onChange={pick} className="hidden" />
-          {photo && (
+          {source === "camera" ? (
             <div className="flex justify-end border-t border-stone-200 p-3">
+              {/* One button for both, and aria-disabled rather than disabled, so focus stays on it
+                  while the camera starts, the photo is taken and the user retakes. */}
               <button
                 type="button"
-                onClick={() => fileInput.current?.click()}
-                disabled={opening || sending}
-                className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-100 disabled:opacity-40"
+                onClick={shown ? retake : takePhoto}
+                disabled={Boolean(shown) && sending}
+                aria-disabled={!shown && !canTakePhoto}
+                className={`rounded-lg px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 ${
+                  shown
+                    ? "border border-stone-300 bg-white hover:bg-stone-100"
+                    : "bg-stone-900 text-white hover:bg-stone-700"
+                }`}
               >
-                {opening ? "Opening your photo…" : "Choose another"}
+                {shown ? "Retake" : capturing ? "Taking your photo…" : "Take photo"}
               </button>
             </div>
+          ) : (
+            shown && (
+              <div className="flex justify-end border-t border-stone-200 p-3">
+                <button
+                  type="button"
+                  onClick={() => fileInput.current?.click()}
+                  disabled={opening || sending}
+                  className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-100 disabled:opacity-40"
+                >
+                  {opening ? "Opening your photo…" : "Choose another"}
+                </button>
+              </div>
+            )
           )}
         </div>
+        <input ref={fileInput} type="file" accept="image/*" onChange={pick} className="hidden" />
       </div>
       {problem && (
         <div className="mt-1">
@@ -273,7 +331,7 @@ function PhotoStep({
             <button
               type="button"
               onClick={() => switchPhotoType(switchTo)}
-              disabled={opening || sending}
+              disabled={busy}
               className={`mt-3 ${secondaryButton}`}
             >
               {COPY.useItAs(PHOTO_TYPE_LABELS[switchTo])}
@@ -291,15 +349,73 @@ function PhotoStep({
         >
           Back
         </button>
-        <button
-          type="button"
-          onClick={() => getOutfits(photoType)}
-          disabled={!photo || opening || sending}
-          className={primaryButton}
-        >
+        <button type="button" onClick={() => getOutfits(photoType)} disabled={!shown || busy} className={primaryButton}>
           {sending ? "Checking your photo…" : "Get my Outfits"}
         </button>
       </div>
     </section>
+  );
+}
+
+/** The Camera and Upload tabs, with arrow keys moving between them. */
+function PhotoSourceTabs({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: PhotoSource;
+  onChange: (source: PhotoSource) => void;
+  disabled: boolean;
+}) {
+  const tabs = useRef<Partial<Record<PhotoSource, HTMLButtonElement | null>>>({});
+
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const index = PHOTO_SOURCES.indexOf(value);
+    const count = PHOTO_SOURCES.length;
+    const moves: Partial<Record<string, PhotoSource>> = {
+      ArrowRight: PHOTO_SOURCES[(index + 1) % count],
+      ArrowLeft: PHOTO_SOURCES[(index + count - 1) % count],
+      Home: PHOTO_SOURCES[0],
+      End: PHOTO_SOURCES[count - 1],
+    };
+    const next = moves[event.key];
+    if (!next) return;
+    event.preventDefault();
+    onChange(next);
+    tabs.current[next]?.focus();
+  }
+
+  return (
+    <div
+      role="tablist"
+      aria-label="Photo source"
+      onKeyDown={onKeyDown}
+      className="flex border-b border-stone-200 text-sm font-medium"
+    >
+      {PHOTO_SOURCES.map((source) => {
+        const selected = source === value;
+        return (
+          <button
+            key={source}
+            ref={(tab) => {
+              tabs.current[source] = tab;
+            }}
+            type="button"
+            role="tab"
+            id={`${source}-tab`}
+            aria-selected={selected}
+            aria-controls={selected ? "photo-panel" : undefined}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(source)}
+            disabled={disabled}
+            className={`flex-1 border-b-2 py-2.5 disabled:cursor-not-allowed ${
+              selected ? "border-stone-900 text-stone-900" : "border-transparent text-stone-500 hover:text-stone-900"
+            }`}
+          >
+            {PHOTO_SOURCE_LABELS[source]}
+          </button>
+        );
+      })}
+    </div>
   );
 }
