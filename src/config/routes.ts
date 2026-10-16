@@ -10,5 +10,9 @@ export const ROUTES = {
   privacy: "/privacy",
 } as const;
 
+export function consultationRoute(consultationId: string): string {
+  return `${ROUTES.myConsultations}/${encodeURIComponent(consultationId)}`;
+}
+
 /** Where a signed-in user lands. */
 export const APP_HOME = ROUTES.newConsultation;

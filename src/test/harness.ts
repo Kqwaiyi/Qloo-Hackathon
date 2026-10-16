@@ -1,4 +1,6 @@
+import { FakeAiProvider } from "@/server/ai/fake";
 import { createAuth } from "@/server/auth/create-auth";
+import { MemoryBlobStore } from "@/server/blob/memory";
 import type { Clock } from "@/server/clock";
 import type { Database } from "@/server/db/database";
 import { openPgliteDatabase } from "@/server/db/pglite";
@@ -69,6 +71,9 @@ export interface TestHarness {
   db: Database;
   auth: ReturnType<typeof createAuth>;
   clock: TestClock;
+  /** The fake AI adapter, with no delay. Tests set its scenario. */
+  ai: FakeAiProvider;
+  blob: MemoryBlobStore;
   /** A server operation's context for a request coming from this browser. */
   context(browser: TestBrowser): OperationContext;
   /** Sends a request straight to Better Auth's HTTP handler, as a script skipping our forms could. */
@@ -76,22 +81,29 @@ export interface TestHarness {
 }
 
 /**
- * A fresh database with the real migrations, Better Auth running for real against it, and a clock
- * the test controls (starting at 2026-10-16 12:00 UTC). Create one per test file.
+ * A fresh database with the real migrations, Better Auth running for real against it, a clock the
+ * test controls (starting at 2026-10-16 12:00 UTC), the fake AI adapter and an in-memory Blob
+ * store. Create one per test file.
  */
 export async function createTestHarness(): Promise<TestHarness> {
   const db = await openPgliteDatabase();
   const clock = new TestClock(new Date("2026-10-16T12:00:00Z"));
   const auth = createAuth({ db, clock, baseURL: BASE_URL, secret: "test-secret-that-is-at-least-32-characters-long" });
+  const ai = new FakeAiProvider({ delayMs: 0 });
+  const blob = new MemoryBlobStore();
 
   return {
     db,
     auth,
     clock,
+    ai,
+    blob,
     context: (browser) => ({
       db,
       auth,
       clock,
+      ai,
+      blob,
       requestHeaders: browser.requestHeaders(),
       responseCookies: browser.responseCookies,
     }),

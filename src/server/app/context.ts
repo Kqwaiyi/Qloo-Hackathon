@@ -18,7 +18,7 @@ export async function getOperationContext(): Promise<OperationContext> {
 }
 
 /** What reads need: the services and the request's headers. Pages can't set cookies. */
-export async function getReadContext(): Promise<Pick<OperationContext, "auth" | "db" | "clock" | "requestHeaders">> {
+export async function getReadContext(): Promise<Pick<OperationContext, "auth" | "db" | "clock" | "blob" | "requestHeaders">> {
   const [services, requestHeaders] = await Promise.all([getServices(), headers()]);
   return { ...services, requestHeaders: new Headers(requestHeaders) };
 }

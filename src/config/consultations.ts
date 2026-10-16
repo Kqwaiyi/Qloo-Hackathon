@@ -1,0 +1,91 @@
+// Consultation rules and vocabulary. Every number and word list lives here so it can change
+// without hunting through code.
+
+export const PHOTO_TYPES = ["face", "full_body", "body_only"] as const;
+export type PhotoType = (typeof PHOTO_TYPES)[number];
+
+/** Full-Body Photo is the default: it unlocks the most complete Outfits. */
+export const DEFAULT_PHOTO_TYPE: PhotoType = "full_body";
+
+export const PHOTO_TYPE_LABELS: Record<PhotoType, string> = {
+  face: "Face Photo",
+  full_body: "Full-Body Photo",
+  body_only: "Body-Only Photo",
+};
+
+export const PHOTO_TYPE_HINTS: Record<PhotoType, string> = {
+  face: "Your face and hair, shoulders up.",
+  full_body: "Head to toe, face included.",
+  body_only: "Shoulders to toe, face out of frame.",
+};
+
+export const CATEGORIES = ["hairstyle", "top", "bottom", "shoes"] as const;
+export type Category = (typeof CATEGORIES)[number];
+
+export const CATEGORY_LABELS: Record<Category, string> = {
+  hairstyle: "Hairstyle",
+  top: "Top",
+  bottom: "Bottom",
+  shoes: "Shoes",
+};
+
+/** The Categories each Photo Type unlocks. A Full-Body Photo with covered hair gets no Hairstyle. */
+export const PHOTO_TYPE_CATEGORIES: Record<PhotoType, readonly Category[]> = {
+  face: ["hairstyle"],
+  full_body: ["hairstyle", "top", "bottom", "shoes"],
+  body_only: ["top", "bottom", "shoes"],
+};
+
+/** The words the AI may read as a photo's Photo Style. A plain photo reads as casual. */
+export const PHOTO_STYLES = [
+  "casual",
+  "classic",
+  "elegant",
+  "streetwear",
+  "preppy",
+  "edgy",
+  "bohemian",
+  "chic",
+  "glamorous",
+  "sporty",
+  "rugged",
+] as const;
+export type PhotoStyle = (typeof PHOTO_STYLES)[number];
+
+/** A Photo Style: one or two words from the list, strongest first. */
+export type PhotoStyleWords = readonly [PhotoStyle] | readonly [PhotoStyle, PhotoStyle];
+
+export const BUDGET_TIERS = ["no_budget", "low", "medium", "expensive"] as const;
+export type BudgetTier = (typeof BUDGET_TIERS)[number];
+
+/** Body photos start at No Budget. A Face Photo has no Budget Tier, since a Hairstyle has no price. */
+export const DEFAULT_BUDGET_TIER: BudgetTier = "no_budget";
+
+/** Age groups, 18+ only (ADR-0004). Each Consultation keeps the user's age group from when it started. */
+export const AGE_GROUPS = ["18_24", "25_29", "30_34", "35_44", "45_54", "55_64", "65_plus"] as const;
+export type AgeGroup = (typeof AGE_GROUPS)[number];
+
+/** The youngest age in each group. */
+export const AGE_GROUP_FLOORS: Record<AgeGroup, number> = {
+  "18_24": 18,
+  "25_29": 25,
+  "30_34": 30,
+  "35_44": 35,
+  "45_54": 45,
+  "55_64": 55,
+  "65_plus": 65,
+};
+
+// Photo intake.
+
+/** The picker refuses bigger files before anything is sent. */
+export const PICKER_MAX_FILE_BYTES = 20 * 1024 * 1024;
+
+/** The browser redraws every photo as a JPEG at most this many pixels on its long side. */
+export const PHOTO_MAX_LONG_SIDE_PX = 1600;
+
+/** The server refuses bigger photos. Only requests that skipped the browser's redraw get near it. */
+export const SERVER_MAX_PHOTO_BYTES = 2 * 1024 * 1024;
+
+/** Pages show photos through signed links that last this long, created when the page renders. */
+export const PHOTO_LINK_LIFETIME_SECONDS = 60 * 60;
