@@ -6,6 +6,7 @@ import {
   type BudgetTier,
   type Category,
   isBrandCategory,
+  type PieceCategory,
   type PriceRangeUsd,
 } from "@/config/consultations";
 import { OFF_CATEGORY_DENYLIST, RETAILER_DENYLIST } from "@/config/denylists";
@@ -154,13 +155,25 @@ export interface PickedBrand {
   officialSite: string | null;
 }
 
-/** An Outfit's Brand picks: one per Brand Category. */
+/**
+ * An Outfit's Brand picks: one per Brand Category, fixed before tailoring. A One-Piece's Outfit
+ * keeps its Bottom Brand here too, left out of the Outfit but reserved (ADR-0003).
+ */
 export type BrandPicks = Record<BrandCategory, PickedBrand>;
+
+/** The Brand a Piece is built on: its Category's pick, the Top's for a One-Piece, or none for the Hairstyle. */
+export function pieceBrand(category: PieceCategory, picks: BrandPicks): PickedBrand | null {
+  if (category === "one_piece") return picks.top;
+  return isBrandCategory(category) ? picks[category] : null;
+}
 
 /** The entity IDs of the Brands each Category already uses, across the Outfits that will be current together. */
 export type UsedBrands = Record<BrandCategory, ReadonlySet<string>>;
 
-/** The Brands the Outfits' picks use, by Category. Outfits without Brands, such as Hairstyle-only ones, use none. */
+/**
+ * The Brands the Outfits' picks use, by Category, including a One-Piece's left-out Bottom Brand.
+ * Outfits without Brands, such as Hairstyle-only ones, use none.
+ */
 export function brandsUsedBy(outfits: readonly Record<BrandCategory, string | null>[]): UsedBrands {
   const used = (category: BrandCategory) => new Set(outfits.flatMap((picks) => picks[category] ?? []));
   return { top: used("top"), bottom: used("bottom"), shoes: used("shoes") };

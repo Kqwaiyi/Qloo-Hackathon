@@ -1,0 +1,1 @@
+ALTER TYPE "public"."category" ADD VALUE 'one_piece' BEFORE 'shoes';

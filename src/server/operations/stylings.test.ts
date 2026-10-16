@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import sharp from "sharp";
@@ -481,6 +481,56 @@ describe("a body photo's Outfits", () => {
       { category: "top", brandEntityId: "b-bolt", brandName: "Bolt", brandOfficialSite: "https://bolt.example/", brandPriceUsdMin: 20, brandPriceUsdMax: 120 },
       { category: "bottom", brandEntityId: "b-jeanery", brandName: "Jeanery", brandOfficialSite: null, brandPriceUsdMin: 50, brandPriceUsdMax: 110 },
       { category: "shoes", brandEntityId: "b-stride", brandName: "Stride", brandOfficialSite: "https://stride.example/", brandPriceUsdMin: 60, brandPriceUsdMax: 180 },
+    ]);
+  });
+
+  it("can make the Top and Bottom one One-Piece on the Top Brand, shown as one row, with the Bottom Brand left out but kept reserved", async () => {
+    harness.ai.styleIconScenarios = { "Ava Stone": "one-piece" };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "full_body");
+    await harness.stylings.runPending();
+
+    const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(outfits[0]).toEqual({
+      id: expect.any(String),
+      position: 1,
+      styleIconName: "Ava Stone",
+      preview: { state: "ready", url: expect.any(String) },
+      // Bolt 20–120 and Stride 60–180: Jeanery, the Bottom Brand Qloo picked, is left out.
+      priceRange: { min: 80, max: 300 },
+      pieces: [
+        expect.objectContaining({ category: "hairstyle", brand: null }),
+        {
+          category: "one_piece",
+          item: expect.any(String),
+          why: expect.stringContaining("Ava Stone"),
+          brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" },
+        },
+        expect.objectContaining({ category: "shoes", brand: { name: "Stride", priceRange: { min: 60, max: 180 }, visitUrl: "https://stride.example/" } }),
+      ],
+    });
+    expect(outfits[1]!.pieces.map((p) => p.category)).toEqual(["hairstyle", "top", "bottom", "shoes"]);
+    expect(harness.ai.previewRequests.map((request) => request.pieces.map((p) => p.category))).toContainEqual(["hairstyle", "one_piece", "shoes"]);
+    const [picks] = await harness.db
+      .select({ top: outfit.topBrandEntityId, bottom: outfit.bottomBrandEntityId, shoes: outfit.shoesBrandEntityId })
+      .from(outfit)
+      .where(and(eq(outfit.consultationId, consultationId), eq(outfit.position, 1)));
+    expect(picks).toEqual({ top: "b-bolt", bottom: "b-jeanery", shoes: "b-stride" });
+  });
+
+  it("never offer a One-Piece Outfit's left-out Bottom Brand to a later Outfit as its Bottom", async () => {
+    // Bea Marsh's tailoring fails, so Cleo Hart's Outfit is planned after Ava Stone's One-Piece is saved.
+    harness.ai.styleIconScenarios = { "Ava Stone": "one-piece", "Bea Marsh": "tailoring-fails" };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => [p.category, p.brand?.name])])).toEqual([
+      ["Ava Stone", [["one_piece", "Bolt"], ["shoes", "Stride"]]],
+      // Jeanery, denim in Qloo's top 10, would be the Bottom if Ava Stone's Outfit hadn't kept it reserved.
+      ["Cleo Hart", [["top", "Dune"], ["bottom", "Bolt"], ["shoes", "Sole"]]],
     ]);
   });
 

@@ -4,8 +4,8 @@ import type { Line } from "@/config/accounts";
 import {
   type AgeGroup,
   type BrandCategory,
-  CATEGORIES,
-  type Category,
+  PIECE_CATEGORIES,
+  type PieceCategory,
   type PhotoStyleWords,
   type PhotoType,
   type PriceRangeUsd,
@@ -89,13 +89,14 @@ export interface TailoringInput {
 }
 
 /**
- * The structured output a model is asked for: one Piece per Category it was given. Models don't
- * always keep to it, so our code checks every reply against it and our own rules.
+ * The structured output a model is asked for: one Piece per Category it was given, or one One-Piece
+ * in place of the Top and Bottom. Models don't always keep to it, so our code checks every reply
+ * against it and our own rules.
  */
 export const tailoredPiecesSchema = z.object({
   pieces: z.array(
     z.object({
-      category: z.enum(CATEGORIES),
+      category: z.enum(PIECE_CATEGORIES),
       /** A card label of about 6 words, colour included. For the Hairstyle, the cut. */
       item: z.string(),
       /** One sentence on colour, fabric, fit and cut, for the Preview. Not shown. */
@@ -115,7 +116,7 @@ export interface PreviewInput {
   /** A Face Photo's Preview changes only the hair; a Body-Only Preview never invents a face. */
   photoType: PhotoType;
   /** The Pieces the user is shown wearing, each by its `details`: only these change. */
-  pieces: readonly { category: Category; details: string }[];
+  pieces: readonly { category: PieceCategory; details: string }[];
 }
 
 /** The image the model drew, in whatever format it sent, or its refusal and why. */
@@ -131,6 +132,11 @@ export interface AiProvider {
    *
    * The model is told the rules: items are generic, never product or model names; never a price;
    * only an item the Brand plausibly makes; and the Top is one garment, the main visible upper layer.
+   *
+   * It may also make the Top and Bottom one One-Piece built on the Top Brand (ADR-0003), only when
+   * that Brand plausibly makes one and it fits the line: a dress for womenswear, a jumpsuit or
+   * overalls for either. The prompt prefers separates, with no cap. The Bottom Brand is then left
+   * out of the Outfit.
    */
   tailorPieces(input: TailoringInput): Promise<unknown>;
   /**

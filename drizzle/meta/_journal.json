@@ -50,6 +50,13 @@
       "when": 1792179912212,
       "tag": "0006_brand_pieces",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792183728099,
+      "tag": "0007_one_piece_category",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 
-import type { Category, PhotoType } from "@/config/consultations";
+import { type PhotoType, type PieceCategory, withOnePiece } from "@/config/consultations";
 
 import type {
   AiProvider,
@@ -35,10 +35,13 @@ import type {
  *
  * Tailoring makes generic items in the right Categories, each `why` naming the Style Icon, and the
  * cut known. Its scenarios pass every photo:
+ * - `one-piece`: the Top and Bottom, when both are asked for, become one One-Piece: a dress for
+ *   womenswear, a jumpsuit for menswear.
  * - `unknown-cut`: the Hairstyle's cut is marked unknown, based on the Outfit and Photo Style, and
  *   its `why` doesn't name the Style Icon.
  * - `tailoring-fails`: every reply breaks a rule, as a broken model's would: a price, an empty
- *   field, a missing Category, a Category twice, or not the schema at all, in turn.
+ *   field, a missing Category, a Category twice, an extra One-Piece, or not the schema at all, in
+ *   turn.
  *
  * A Preview is the user's own photo with a "Fake Preview" banner across its foot. Its scenarios
  * pass every photo and tailor as usual:
@@ -56,13 +59,14 @@ export const FAKE_AI_SCENARIOS = [
   "hair-not-visible",
   "hair-covered",
   "check-errors",
+  "one-piece",
   "unknown-cut",
   "tailoring-fails",
   "preview-refused",
   "preview-fails",
 ] as const;
 export type FakeAiScenario = (typeof FAKE_AI_SCENARIOS)[number];
-export type FakeTailoringScenario = Extract<FakeAiScenario, "pass" | "unknown-cut" | "tailoring-fails">;
+export type FakeTailoringScenario = Extract<FakeAiScenario, "pass" | "one-piece" | "unknown-cut" | "tailoring-fails">;
 export type FakePreviewScenario = Extract<FakeAiScenario, "pass" | "preview-refused" | "preview-fails">;
 
 /** About as long as a real photo check, so local development feels like the real thing. */
@@ -124,7 +128,9 @@ export class FakeAiProvider implements AiProvider {
     this.tailoringRequests.push({ ...rest, photo: fingerprint(photo) });
     await this.wait("tailorPieces");
     const scenario = this.styleIconScenarios[input.styleIconName] ?? this.scenario;
-    const tailored = { pieces: input.pieces.map(({ category }) => fakePiece(category, input, scenario !== "unknown-cut")) };
+    const categories = input.pieces.map(({ category }) => category);
+    const pieceCategories: readonly PieceCategory[] = (scenario === "one-piece" && withOnePiece(categories)) || categories;
+    const tailored = { pieces: pieceCategories.map((category) => fakePiece(category, input, scenario !== "unknown-cut")) };
     if (scenario !== "tailoring-fails") return tailored;
     const breakRule = BROKEN_TAILORING[(this.tailoringRequests.length - 1) % BROKEN_TAILORING.length]!;
     return breakRule(tailored);
@@ -199,6 +205,7 @@ function reportFor(scenario: Exclude<FakeAiScenario, "blocked" | "check-errors">
       return { ...passing, visible: { ...NOTHING_VISIBLE, face: true } };
     case "hair-covered":
       return { ...passing, visible: { ...VISIBLE_BY_PHOTO_TYPE.full_body, hair: false }, hairCovered: true };
+    case "one-piece":
     case "unknown-cut":
     case "tailoring-fails":
     case "preview-refused":
@@ -208,7 +215,7 @@ function reportFor(scenario: Exclude<FakeAiScenario, "blocked" | "check-errors">
 }
 
 /** A generic Piece, built from the tailoring's inputs. */
-function fakePiece(category: Category, { photoStyle, styleIconName }: TailoringInput, cutKnown: boolean): TailoredPieces["pieces"][number] {
+function fakePiece(category: PieceCategory, { photoStyle, styleIconName, line }: TailoringInput, cutKnown: boolean): TailoredPieces["pieces"][number] {
   const style = photoStyle[0];
   const styleWords = photoStyle.join(" and ");
   switch (category) {
@@ -242,6 +249,20 @@ function fakePiece(category: Category, { photoStyle, styleIconName }: TailoringI
         details: "Charcoal cotton chinos with a straight leg, a mid rise and a clean, pressed finish.",
         why: `Straight-leg chinos ${styleIconName} would reach for, keeping your ${styleWords} Outfit grounded.`,
       };
+    case "one_piece":
+      return line === "womenswear"
+        ? {
+            category,
+            item: "Navy belted cotton shirt dress",
+            details: "A navy cotton shirt dress with a self-tie belt, a point collar and a knee-length A-line skirt.",
+            why: `A one-and-done dress with ${styleIconName}'s ease, sharpened for your ${styleWords} Photo Style.`,
+          }
+        : {
+            category,
+            item: "Olive cotton twill utility jumpsuit",
+            details: "An olive cotton twill jumpsuit with a relaxed fit, a zip front, patch pockets and a tapered leg.",
+            why: `A utility jumpsuit in ${styleIconName}'s spirit, one easy piece for your ${styleWords} Photo Style.`,
+          };
     case "shoes":
       return {
         category,
@@ -258,6 +279,7 @@ const BROKEN_TAILORING: ((tailored: TailoredPieces) => unknown)[] = [
   ({ pieces }) => ({ pieces: pieces.map((tailored) => ({ ...tailored, item: " " })) }),
   ({ pieces }) => ({ pieces: pieces.slice(0, -1) }),
   ({ pieces }) => ({ pieces: [...pieces, pieces[0]] }),
+  ({ pieces }) => ({ pieces: [...pieces, { ...pieces[0]!, category: "one_piece" }] }),
   ({ pieces }) => ({ pieces: pieces.map(({ category, item }) => ({ category, item })) }),
 ];
 

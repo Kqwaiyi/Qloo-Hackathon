@@ -6,6 +6,7 @@ import {
   type BrandPicks,
   brandPriceRange,
   brandQueries,
+  brandsUsedBy,
   type BrandSearch,
   fullestPool,
   isThinPool,
@@ -526,6 +527,22 @@ describe("the Brands of the Outfits a Styling builds", () => {
     const plan = planOutfitBrands([{ styleIconId: "icon-3", line: "womenswear", brands: pool }], "no_budget", 1, used);
 
     expect(plan.picked.map(({ brands }) => pickedNames(brands))).toEqual([{ shoes: "Sole", top: "Dune", bottom: "Bolt" }]);
+  });
+
+  it("treat a One-Piece Outfit's left-out Bottom Brand as used for a Bottom, though not for a Top", () => {
+    const withDenim = [
+      brand("s1", "Stride", { tags: [FOOTWEAR], affinity: 0.95 }),
+      brand("s2", "Sole", { tags: [FOOTWEAR], affinity: 0.9 }),
+      brand("j", "Jeanery", { tags: [APPAREL, DENIM], affinity: 0.88 }),
+      brand("b", "Bolt", { tags: [APPAREL], affinity: 0.85 }),
+    ];
+    // That Outfit's Top and Bottom became one One-Piece on Bolt, so Jeanery was left out of it.
+    const used = brandsUsedBy([{ top: "b", bottom: "j", shoes: "s1" }]);
+
+    const plan = planOutfitBrands([{ styleIconId: "icon-2", line: "womenswear", brands: withDenim }], "no_budget", 1, used);
+
+    // Jeanery, denim in the raw top 10, would otherwise be the Bottom.
+    expect(plan.picked.map(({ brands }) => pickedNames(brands))).toEqual([{ shoes: "Sole", top: "Jeanery", bottom: "Bolt" }]);
   });
 
   it("skip a Style Icon that can't complete an Outfit for the next, and stop once there are enough", () => {

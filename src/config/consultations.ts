@@ -36,15 +36,29 @@ export interface PriceRangeUsd {
   max: number;
 }
 
-/** Sorts Pieces into Category order: Hairstyle, Top, Bottom, Shoes. */
-export function byCategoryOrder(a: { category: Category }, b: { category: Category }): number {
-  return CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category);
+/**
+ * What a Piece fills: one Category, or for a One-Piece both the Top and the Bottom, with one garment
+ * built on the Top Brand (ADR-0003). In card order, a One-Piece where the Top and Bottom would be.
+ */
+export const PIECE_CATEGORIES = ["hairstyle", "top", "bottom", "one_piece", "shoes"] as const;
+export type PieceCategory = (typeof PIECE_CATEGORIES)[number];
+
+/** The Categories with one One-Piece in place of their Top and Bottom, or null unless they have both. */
+export function withOnePiece(categories: readonly Category[]): PieceCategory[] | null {
+  if (!categories.includes("top") || !categories.includes("bottom")) return null;
+  return categories.filter((category) => category !== "bottom").map((category) => (category === "top" ? "one_piece" : category));
 }
 
-export const CATEGORY_LABELS: Record<Category, string> = {
+/** Sorts Pieces into card order: Hairstyle, Top, Bottom (or a One-Piece in their place), Shoes. */
+export function byCategoryOrder(a: { category: PieceCategory }, b: { category: PieceCategory }): number {
+  return PIECE_CATEGORIES.indexOf(a.category) - PIECE_CATEGORIES.indexOf(b.category);
+}
+
+export const CATEGORY_LABELS: Record<PieceCategory, string> = {
   hairstyle: "Hairstyle",
   top: "Top",
   bottom: "Bottom",
+  one_piece: "One-Piece",
   shoes: "Shoes",
 };
 

@@ -26,6 +26,7 @@ import {
   isThinPool,
   needsBrands,
   type PickedBrand,
+  pieceBrand,
   planOutfitBrands,
 } from "@/server/outfit-assembly/brands";
 import { outfitCategories } from "@/server/outfit-assembly/categories";
@@ -229,7 +230,7 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
         });
         await tx.insert(piece).values(
           pieces.map((tailored) => {
-            const brand = isBrandCategory(tailored.category) ? brands![tailored.category] : null;
+            const brand = brands && pieceBrand(tailored.category, brands);
             return {
               id: randomUUID(),
               outfitId,

@@ -5,9 +5,9 @@ import { LINES, STYLE_PREFERENCES } from "../../config/accounts";
 import {
   AGE_GROUPS,
   BUDGET_TIERS,
-  CATEGORIES,
   CONSULTATION_STATES,
   PHOTO_TYPES,
+  PIECE_CATEGORIES,
   type PhotoStyleWords,
 } from "../../config/consultations";
 import {
@@ -237,7 +237,8 @@ export const outfit = pgTable(
     // Why the image model refused it, when it did.
     previewRefusalReason: previewRefusalReasonEnum("preview_refusal_reason"),
     // Body photos only: the Qloo entity ID of the Brand picked for each Brand Category, fixed before
-    // tailoring and kept apart from the Pieces, so a Brand stays reserved even if no Piece shows it.
+    // tailoring and kept apart from the Pieces, so a Brand stays reserved even if no Piece shows it:
+    // a One-Piece leaves out the Bottom Brand.
     topBrandEntityId: text("top_brand_entity_id"),
     bottomBrandEntityId: text("bottom_brand_entity_id"),
     shoesBrandEntityId: text("shoes_brand_entity_id"),
@@ -257,9 +258,9 @@ export const outfit = pgTable(
   ],
 );
 
-export const categoryEnum = pgEnum("category", CATEGORIES);
+export const categoryEnum = pgEnum("category", PIECE_CATEGORIES);
 
-/** One per Category an Outfit fills, tailored by the AI. */
+/** One per Category an Outfit fills, or a One-Piece filling its Top and Bottom, tailored by the AI. */
 export const piece = pgTable(
   "piece",
   {
@@ -276,8 +277,8 @@ export const piece = pgTable(
     why: text("why").notNull(),
     // The Hairstyle only: the AI didn't know the Style Icon's signature cut, so based it on the Outfit.
     unknownCut: boolean("unknown_cut"),
-    // Every Piece but the Hairstyle: the Brand it's built on, as Qloo had it. The official site and
-    // prices can be missing.
+    // Every Piece but the Hairstyle: the Brand it's built on, as Qloo had it, which for a One-Piece is
+    // the Top Brand. The official site and prices can be missing.
     brandEntityId: text("brand_entity_id"),
     brandName: text("brand_name"),
     brandOfficialSite: text("brand_official_site"),

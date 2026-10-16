@@ -6,13 +6,13 @@ import {
   BUDGET_TIERS,
   type BudgetTier,
   byCategoryOrder,
-  type Category,
   type ConsultationState,
   DEFAULT_BUDGET_TIER,
   hasBudgetTier,
   PHOTO_TYPES,
   type PhotoStyleWords,
   type PhotoType,
+  type PieceCategory,
   type PriceRangeUsd,
   SIGNED_LINK_LIFETIME_SECONDS,
 } from "@/config/consultations";
@@ -134,9 +134,12 @@ export interface OutfitView {
   /** Shown by name, never with Qloo's image. */
   styleIconName: string;
   preview: PreviewView;
-  /** The whole Outfit's price range, from its Brand Pieces' price data, or null when none has any. */
+  /**
+   * The whole Outfit's price range, from its Brand Pieces' price data, or null when none has any. A
+   * One-Piece's left-out Bottom Brand isn't one of them.
+   */
   priceRange: PriceRangeUsd | null;
-  /** One row per Piece, in Category order, whether or not there's a Preview. */
+  /** One row per Piece, in Category order, whether or not there's a Preview: a One-Piece is one row. */
   pieces: PieceView[];
 }
 
@@ -145,7 +148,7 @@ export type PreviewView = { state: "ready"; url: string } | { state: "refused" |
 
 /** A Piece's row. Its `details` are for the Preview, never shown. */
 export interface PieceView {
-  category: Category;
+  category: PieceCategory;
   /** For the Hairstyle, the cut. */
   item: string;
   why: string;
