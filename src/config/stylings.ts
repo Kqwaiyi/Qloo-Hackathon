@@ -39,6 +39,19 @@ export const PREVIEWS_AT_ONCE = 2;
 /** A Styling makes up to this many Outfits, one per top unused Style Icon. */
 export const OUTFITS_PER_STYLING = 2;
 
+/**
+ * A body photo's first Styling fetches the Brands of this many Style Icons at once before its
+ * first Outfits, one spare in case a Style Icon can't complete an Outfit. Later fetches, and other
+ * kinds of Styling, fetch as needed.
+ */
+export const BRAND_FETCHES_UP_FRONT = 3;
+
+/** A Styling fetches Brands for at most this many Style Icons, so Style Icons whose Brands don't fit can't use up Qloo's calls. */
+export const MAX_BRAND_FETCHES_PER_STYLING = 6;
+
+/** A Styling never has more Qloo calls than this waiting at once. There's no shared rate limiter. */
+export const QLOO_CALLS_AT_ONCE = 3;
+
 /** How often a page waiting on a Styling asks for its status. */
 export const STYLING_STATUS_POLL_INTERVAL_MS = 1000;
 

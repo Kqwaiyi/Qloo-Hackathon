@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, index, integer, jsonb, pgEnum, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { boolean, check, doublePrecision, index, integer, jsonb, pgEnum, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
 
 import { LINES, STYLE_PREFERENCES } from "../../config/accounts";
 import {
@@ -236,10 +236,19 @@ export const outfit = pgTable(
     previewPathname: text("preview_pathname"),
     // Why the image model refused it, when it did.
     previewRefusalReason: previewRefusalReasonEnum("preview_refusal_reason"),
+    // Body photos only: the Qloo entity ID of the Brand picked for each Brand Category, fixed before
+    // tailoring and kept apart from the Pieces, so a Brand stays reserved even if no Piece shows it.
+    topBrandEntityId: text("top_brand_entity_id"),
+    bottomBrandEntityId: text("bottom_brand_entity_id"),
+    shoesBrandEntityId: text("shoes_brand_entity_id"),
   },
   (table) => [
     index("outfit_consultation_id_idx").on(table.consultationId),
     unique("outfit_styling_id_position_unique").on(table.stylingId, table.position),
+    check(
+      "outfit_brand_picks_together",
+      sql`(${table.topBrandEntityId} is null) = (${table.bottomBrandEntityId} is null) and (${table.bottomBrandEntityId} is null) = (${table.shoesBrandEntityId} is null)`,
+    ),
     check("outfit_preview_pathname_when_ready", sql`(${table.previewState} = 'ready') = (${table.previewPathname} is not null)`),
     check(
       "outfit_preview_refusal_reason_when_refused",
@@ -267,10 +276,21 @@ export const piece = pgTable(
     why: text("why").notNull(),
     // The Hairstyle only: the AI didn't know the Style Icon's signature cut, so based it on the Outfit.
     unknownCut: boolean("unknown_cut"),
+    // Every Piece but the Hairstyle: the Brand it's built on, as Qloo had it. The official site and
+    // prices can be missing.
+    brandEntityId: text("brand_entity_id"),
+    brandName: text("brand_name"),
+    brandOfficialSite: text("brand_official_site"),
+    brandPriceUsdMin: doublePrecision("brand_price_usd_min"),
+    brandPriceUsdMax: doublePrecision("brand_price_usd_max"),
   },
   (table) => [
     unique("piece_outfit_id_category_unique").on(table.outfitId, table.category),
     check("piece_unknown_cut_for_hairstyles", sql`(${table.category} = 'hairstyle') = (${table.unknownCut} is not null)`),
+    check(
+      "piece_brand_unless_hairstyle",
+      sql`(${table.category} = 'hairstyle') = (${table.brandEntityId} is null) and (${table.brandEntityId} is null) = (${table.brandName} is null)`,
+    ),
   ],
 );
 

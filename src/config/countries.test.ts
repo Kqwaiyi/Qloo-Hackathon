@@ -20,6 +20,17 @@ describe("the Country list", () => {
       expect(country.name).not.toBe("");
       expect(country.qlooLocation).not.toBe("");
     }
-    expect(findCountry("gb")).toEqual({ code: "GB", name: "United Kingdom", qlooLocation: "United Kingdom" });
+    expect(findCountry("gb")).toEqual({
+      code: "GB",
+      name: "United Kingdom",
+      qlooLocation: "United Kingdom",
+      qlooKeyMarket: "urn:tag:key_market:qloo:united_kingdom",
+    });
+  });
+
+  it("gives a Country Qloo's key_market tag for it, under Qloo's own name, only where Qloo has one", () => {
+    expect(findCountry("CI")?.qlooKeyMarket).toBe("urn:tag:key_market:qloo:ivory_coast");
+    expect(findCountry("FK")?.qlooKeyMarket).toBeNull();
+    expect(COUNTRIES.filter((country) => country.qlooKeyMarket !== null)).toHaveLength(213);
   });
 });

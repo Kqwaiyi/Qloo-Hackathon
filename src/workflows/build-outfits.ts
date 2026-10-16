@@ -1,8 +1,10 @@
 import type { Line } from "@/config/accounts";
 import { QLOO_STEP_MAX_RETRIES } from "@/config/qloo";
-import type { QlooPerson } from "@/server/qloo/client";
+import type { QlooBrand, QlooPerson } from "@/server/qloo/client";
 import {
+  type BrandsByStyleIcon,
   buildOutfits,
+  type OutfitPlan,
   type OutfitTry,
   type PeopleByLine,
   type StylingOutcome,
@@ -20,6 +22,7 @@ export async function buildOutfitsWorkflow(stylingId: string): Promise<void> {
     fetchStyleIcons,
     saveStyleIcons,
     planOutfits,
+    fetchBrands,
     tailorOutfit,
     planPreviews,
     renderPreview,
@@ -47,11 +50,19 @@ async function saveStyleIcons(stylingId: string, peopleByLine: PeopleByLine): Pr
   return runWorkflowStep((steps) => steps.saveStyleIcons(stylingId, peopleByLine));
 }
 
-async function planOutfits(stylingId: string): Promise<OutfitTry[]> {
+async function planOutfits(stylingId: string, brandsByStyleIcon: BrandsByStyleIcon): Promise<OutfitPlan> {
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.planOutfits(stylingId));
+  return runWorkflowStep((steps) => steps.planOutfits(stylingId, brandsByStyleIcon));
 }
+
+/** One Qloo call. */
+async function fetchBrands(stylingId: string, styleIconId: string): Promise<QlooBrand[]> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.fetchBrands(stylingId, styleIconId));
+}
+fetchBrands.maxRetries = QLOO_STEP_MAX_RETRIES;
 
 /** One AI call. */
 async function tailorOutfit(stylingId: string, outfitTry: OutfitTry, attempt: number): Promise<TailoringOutcome> {

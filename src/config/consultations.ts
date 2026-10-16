@@ -22,6 +22,20 @@ export const PHOTO_TYPE_HINTS: Record<PhotoType, string> = {
 export const CATEGORIES = ["hairstyle", "top", "bottom", "shoes"] as const;
 export type Category = (typeof CATEGORIES)[number];
 
+/** The Categories whose Pieces are built on a Brand: every one but the Hairstyle. */
+export const BRAND_CATEGORIES = ["top", "bottom", "shoes"] as const satisfies readonly Category[];
+export type BrandCategory = (typeof BRAND_CATEGORIES)[number];
+
+export function isBrandCategory(category: Category): category is BrandCategory {
+  return (BRAND_CATEGORIES as readonly Category[]).includes(category);
+}
+
+/** A price range in US dollars. Prices come only from Qloo's Brand data, never from the AI. */
+export interface PriceRangeUsd {
+  min: number;
+  max: number;
+}
+
 /** Sorts Pieces into Category order: Hairstyle, Top, Bottom, Shoes. */
 export function byCategoryOrder(a: { category: Category }, b: { category: Category }): number {
   return CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category);

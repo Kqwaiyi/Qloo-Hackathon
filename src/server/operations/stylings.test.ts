@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PhotoType } from "@/config/consultations";
+import { byCategoryOrder, type PhotoType } from "@/config/consultations";
 import { consultation, outfit, piece, qlooCache, styleIcon, styling, user } from "@/server/db/schema";
 import { readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
@@ -21,6 +21,19 @@ const SIX_WOMEN = [
   qlooPerson("w-4", "Dana Reed", 0.86),
   qlooPerson("w-5", "Esme Vale", 0.84),
   qlooPerson("w-6", "Fay Lowe", 0.8),
+];
+
+// Made-up Brands, shaped like Qloo's Brand entities, that every Style Icon's fans favour unless a
+// test says otherwise. The first Outfit is Stride, Bolt and Jeanery (denim, in the top 10, so the
+// Bottom), the second Sole, Dune and Bolt.
+const BRANDS = [
+  qlooBrand("b-stride", "Stride", { categories: ["footwear"], affinity: 0.97, price: [60, 180], officialSite: "https://stride.example/" }),
+  qlooBrand("b-bolt", "Bolt", { categories: ["apparel"], affinity: 0.95, price: [20, 120], officialSite: "https://bolt.example/" }),
+  qlooBrand("b-sole", "Sole", { categories: ["footwear", "sneakers"], affinity: 0.93, price: [40, 90], officialSite: "http://sole.example/" }),
+  qlooBrand("b-dune", "Dune", { categories: ["apparel", "outerwear"], affinity: 0.9, officialSite: "https://dune.example/" }),
+  qlooBrand("b-jeanery", "Jeanery", { categories: ["apparel", "denim"], affinity: 0.88, price: [50, 110] }),
+  qlooBrand("b-ember", "Ember", { categories: ["apparel"], affinity: 0.85, price: [15, 60], officialSite: "https://ember.example/" }),
+  qlooBrand("b-pace", "Pace", { categories: ["footwear"], affinity: 0.8, price: [30, 70], officialSite: "https://pace.example/" }),
 ];
 
 let harness: TestHarness;
@@ -40,7 +53,8 @@ beforeEach(async () => {
   harness.ai.duringCall = undefined;
   harness.stylings.pending.length = 0;
   harness.qloo.requests.length = 0;
-  harness.qloo.respond = peopleByGender({ female: WOMEN, male: MEN });
+  harness.qloo.respond = qlooAnswering({ female: WOMEN, male: MEN });
+  harness.qloo.duringRequest = undefined;
   await harness.db.delete(qlooCache);
 });
 
@@ -108,10 +122,10 @@ describe("a new Consultation's first Styling", () => {
     ]);
   });
 
-  it("asks Qloo once, for well-known people in the user's line, age group and Country, in tune with the Photo Style", async () => {
+  it("asks Qloo once for Style Icons: well-known people in the user's line, age group and Country, in tune with the Photo Style", async () => {
     const browser = await signedInUser({ stylePreference: "menswear", countryCode: "US", birthDate: { day: "2", month: "2", year: "1992" } });
 
-    await start(browser, "body_only");
+    await start(browser, "face");
     await harness.stylings.runPending();
 
     expect(harness.qloo.requests).toHaveLength(1);
@@ -141,13 +155,23 @@ describe("a new Consultation's first Styling", () => {
     harness.clock.set("2026-11-01T01:00:00Z");
     await harness.stylings.runPending();
 
-    expect(harness.qloo.requests.map((request) => Object.fromEntries(request.url.searchParams))).toEqual([
+    expect(personCalls().map((params) => Object.fromEntries(params))).toEqual([
       expect.objectContaining({
         "filter.gender": "male",
         "signal.location.query": "United States",
         "signal.demographics.age": "30_to_34",
       }),
     ]);
+    expect(brandCalls()).not.toHaveLength(0);
+    for (const params of brandCalls()) {
+      expect(Object.fromEntries(params)).toMatchObject({
+        "signal.demographics.gender": "male",
+        "signal.location.query": "United States",
+        "signal.demographics.age": "30_to_34",
+      });
+      expect(params.get("filter.tags")).toContain("urn:tag:target_age_group:qloo:adults");
+      expect(params.get("filter.tags")).toContain("urn:tag:key_market:qloo:united_states");
+    }
   });
 
   it("gives a no-preference user a womenswear and a menswear call, and Outfits from each line in turn", async () => {
@@ -156,10 +180,7 @@ describe("a new Consultation's first Styling", () => {
     const consultationId = await start(browser, "full_body");
     await harness.stylings.runPending();
 
-    expect(harness.qloo.requests.map((request) => request.url.searchParams.get("filter.gender")).toSorted()).toEqual([
-      "female",
-      "male",
-    ]);
+    expect(personCalls().map((params) => params.get("filter.gender")).toSorted()).toEqual(["female", "male"]);
     expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.styleIconName)).toEqual([
       "Ava Stone",
       "Dev Rowe",
@@ -189,7 +210,7 @@ describe("a new Consultation's first Styling", () => {
   });
 
   it("never picks a Style Icon on the denylist", async () => {
-    harness.qloo.respond = peopleByGender({ male: [qlooPerson("CB6258A6-C9B8-45C8-81CD-45D6077DD981", "Conor McGregor", 0.99), ...MEN] });
+    harness.qloo.respond = qlooAnswering({ male: [qlooPerson("CB6258A6-C9B8-45C8-81CD-45D6077DD981", "Conor McGregor", 0.99), ...MEN] });
     const browser = await signedInUser({ stylePreference: "menswear" });
 
     const consultationId = await start(browser, "full_body");
@@ -215,16 +236,19 @@ describe("each Outfit's Pieces", () => {
         position: 1,
         styleIconName: "Ava Stone",
         preview: { state: "ready", url: expect.any(String) },
-        pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone") }],
+        priceRange: null,
+        pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone"), brand: null }],
       },
       {
         id: expect.any(String),
         position: 2,
         styleIconName: "Bea Marsh",
         preview: { state: "ready", url: expect.any(String) },
-        pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Bea Marsh") }],
+        priceRange: null,
+        pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Bea Marsh"), brand: null }],
       },
     ]);
+    expect(brandCalls()).toEqual([]);
     expect(await piecesOf(consultationId)).toEqual([
       { category: "hairstyle", item: expect.any(String), details: expect.any(String), why: expect.stringContaining("Ava Stone"), unknownCut: false },
       { category: "hairstyle", item: expect.any(String), details: expect.any(String), why: expect.stringContaining("Bea Marsh"), unknownCut: false },
@@ -274,7 +298,7 @@ describe("each Outfit's Pieces", () => {
   });
 
   it("stop coming from substitutes after 2, so a broken model can't burn through the Style Icons", async () => {
-    harness.qloo.respond = peopleByGender({ female: SIX_WOMEN });
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
     harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails", "Cleo Hart": "tailoring-fails", "Dana Reed": "tailoring-fails" };
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
@@ -298,7 +322,7 @@ describe("each Outfit's Pieces", () => {
   });
 
   it("fail the Styling as nothing could be built when tailoring keeps failing, after 2 substitutes", async () => {
-    harness.qloo.respond = peopleByGender({ female: SIX_WOMEN });
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
     harness.ai.scenario = "tailoring-fails";
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
@@ -321,8 +345,8 @@ describe("each Outfit's Pieces", () => {
     expect(harness.ai.tailoringRequests).toHaveLength(8);
   });
 
-  it("are tailored from the photo itself and the Outfit, never the Country or the Budget Tier", async () => {
-    harness.qloo.respond = peopleByGender({ male: [MEN[0]!] });
+  it("are tailored from the photo itself and the Outfit, with each Brand Piece's Brand, never the Country or the Budget Tier", async () => {
+    harness.qloo.respond = qlooAnswering({ male: [MEN[0]!] });
     const browser = await signedInUser({ stylePreference: "menswear", countryCode: "FR", birthDate: { day: "2", month: "2", year: "1992" } });
 
     const consultationId = await start(browser, "full_body");
@@ -337,13 +361,272 @@ describe("each Outfit's Pieces", () => {
         photoStyle: ["casual"],
         line: "menswear",
         styleIconName: "Dev Rowe",
-        pieces: [{ category: "hairstyle" }],
+        pieces: [
+          { category: "hairstyle" },
+          { category: "top", brand: { name: "Bolt", categoryTags: ["apparel"], priceRangeUsd: { min: 20, max: 120 } } },
+          { category: "bottom", brand: { name: "Jeanery", categoryTags: ["apparel", "denim"], priceRangeUsd: { min: 50, max: 110 } } },
+          { category: "shoes", brand: { name: "Stride", categoryTags: ["footwear"], priceRangeUsd: { min: 60, max: 180 } } },
+        ],
       },
     ]);
-    // A Full-Body Photo's Outfits get a Hairstyle too.
-    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toEqual([
-      expect.objectContaining({ styleIconName: "Dev Rowe", pieces: [expect.objectContaining({ category: "hairstyle" })] }),
+  });
+});
+
+describe("a body photo's Outfits", () => {
+  it("are built on Brands: a Full-Body Photo's have a Hairstyle, Top, Bottom and Shoes, with each Brand's price range and Visit link", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "full_body");
+    await harness.stylings.runPending();
+
+    const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(outfits).toEqual([
+      {
+        id: expect.any(String),
+        position: 1,
+        styleIconName: "Ava Stone",
+        preview: { state: "ready", url: expect.any(String) },
+        // Stride 60–180, Bolt 20–120 and Jeanery 50–110.
+        priceRange: { min: 130, max: 410 },
+        pieces: [
+          { category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone"), brand: null },
+          {
+            category: "top",
+            item: expect.any(String),
+            why: expect.stringContaining("Ava Stone"),
+            brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" },
+          },
+          // Jeanery has no official site, so no Visit link.
+          { category: "bottom", item: expect.any(String), why: expect.any(String), brand: { name: "Jeanery", priceRange: { min: 50, max: 110 }, visitUrl: null } },
+          {
+            category: "shoes",
+            item: expect.any(String),
+            why: expect.any(String),
+            brand: { name: "Stride", priceRange: { min: 60, max: 180 }, visitUrl: "https://stride.example/" },
+          },
+        ],
+      },
+      expect.objectContaining({
+        position: 2,
+        styleIconName: "Bea Marsh",
+        // Sole 40–90 and Bolt 20–120; Dune has no price data.
+        priceRange: { min: 60, max: 210 },
+        pieces: [
+          expect.objectContaining({ category: "hairstyle", brand: null }),
+          expect.objectContaining({ category: "top", brand: { name: "Dune", priceRange: null, visitUrl: "https://dune.example/" } }),
+          expect.objectContaining({ category: "bottom", brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" } }),
+          // Sole's official site is http, so no Visit link.
+          expect.objectContaining({ category: "shoes", brand: { name: "Sole", priceRange: { min: 40, max: 90 }, visitUrl: null } }),
+        ],
+      }),
     ]);
+  });
+
+  it("leave out the Hairstyle when the hair is covered", async () => {
+    harness.ai.scenario = "hair-covered";
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "full_body");
+    await harness.stylings.runPending();
+
+    const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(outfits.map((o) => o.pieces.map((p) => p.category))).toEqual([
+      ["top", "bottom", "shoes"],
+      ["top", "bottom", "shoes"],
+    ]);
+    expect(harness.ai.tailoringRequests.map((request) => request.pieces.map((p) => p.category))).toEqual([
+      ["top", "bottom", "shoes"],
+      ["top", "bottom", "shoes"],
+    ]);
+    expect(harness.ai.previewRequests.map((request) => request.pieces.map((p) => p.category))).toEqual([
+      ["top", "bottom", "shoes"],
+      ["top", "bottom", "shoes"],
+    ]);
+  });
+
+  it("are a Body-Only Photo's Top, Bottom and Shoes", async () => {
+    const browser = await signedInUser({ stylePreference: "menswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(outfits.map((o) => [o.styleIconName, o.pieces.map((p) => [p.category, p.brand?.name])])).toEqual([
+      ["Dev Rowe", [["top", "Bolt"], ["bottom", "Jeanery"], ["shoes", "Stride"]]],
+      ["Eli Frost", [["top", "Dune"], ["bottom", "Bolt"], ["shoes", "Sole"]]],
+    ]);
+  });
+
+  it("keep each Outfit's Brand picks apart from its Pieces, and each Brand Piece's Brand", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    const stored = await harness.db
+      .select({ top: outfit.topBrandEntityId, bottom: outfit.bottomBrandEntityId, shoes: outfit.shoesBrandEntityId })
+      .from(outfit)
+      .where(eq(outfit.consultationId, consultationId))
+      .orderBy(asc(outfit.position));
+    // No Brand repeats within a Category across the Styling's Outfits.
+    expect(stored).toEqual([
+      { top: "b-bolt", bottom: "b-jeanery", shoes: "b-stride" },
+      { top: "b-dune", bottom: "b-bolt", shoes: "b-sole" },
+    ]);
+    const [first] = await brandPiecesOf(consultationId);
+    expect(first).toEqual([
+      { category: "top", brandEntityId: "b-bolt", brandName: "Bolt", brandOfficialSite: "https://bolt.example/", brandPriceUsdMin: 20, brandPriceUsdMax: 120 },
+      { category: "bottom", brandEntityId: "b-jeanery", brandName: "Jeanery", brandOfficialSite: null, brandPriceUsdMin: 50, brandPriceUsdMax: 110 },
+      { category: "shoes", brandEntityId: "b-stride", brandName: "Stride", brandOfficialSite: "https://stride.example/", brandPriceUsdMin: 60, brandPriceUsdMax: 180 },
+    ]);
+  });
+
+  it("skip a Style Icon whose fans' Brands can't complete an Outfit, without counting it as a tailoring failure", async () => {
+    harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) => (styleIconId === "w-1" ? BRANDS.filter((b) => b.name !== "Stride" && b.name !== "Sole" && b.name !== "Pace") : BRANDS));
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.styleIconName)).toEqual([
+      "Bea Marsh",
+      "Cleo Hart",
+    ]);
+    expect(await styleIconStatuses(consultationId)).toEqual([
+      ["Ava Stone", "skipped"],
+      ["Bea Marsh", "used"],
+      ["Cleo Hart", "used"],
+    ]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 0 })]);
+    expect(harness.ai.tailoringRequests.map((request) => request.styleIconName)).not.toContain("Ava Stone");
+  });
+
+  it("give a Style Icon held back by a planned Outfit's Brands its turn once that Outfit's tailoring fails", async () => {
+    // Bea Marsh's fans favour only the Brands Ava Stone's Outfit is planned with.
+    const avasBrands = BRANDS.filter((b) => ["Stride", "Bolt", "Jeanery"].includes(b.name));
+    harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) => (styleIconId === "w-2" ? avasBrands : BRANDS));
+    harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails" };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Bea Marsh", ["Bolt", "Jeanery", "Stride"]],
+      ["Cleo Hart", ["Dune", "Bolt", "Sole"]],
+    ]);
+    expect(await styleIconStatuses(consultationId)).toEqual([
+      ["Ava Stone", "skipped"],
+      ["Bea Marsh", "used"],
+      ["Cleo Hart", "used"],
+    ]);
+  });
+
+  it("fail the Styling as nothing could be built when no Style Icon's fans' Brands complete an Outfit", async () => {
+    harness.qloo.respond = qlooAnswering({ female: WOMEN }, () => []);
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "no_outfits", outfits: [] });
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "failed", failureReason: "nothing_built" })]);
+    expect(harness.ai.tailoringRequests).toEqual([]);
+  });
+});
+
+describe("the Brand calls", () => {
+  it("ask for each Style Icon's fans' Brands, popular with the Consultation's age group and Country, never the Photo Style", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "GB", birthDate: { day: "2", month: "2", year: "2004" } });
+
+    await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(brandCalls().map((params) => Object.fromEntries(params))).toEqual([
+      {
+        "filter.type": "urn:entity:brand",
+        "signal.interests.entities": "w-1",
+        "signal.demographics.age": "24_and_younger",
+        "signal.demographics.gender": "female",
+        "signal.location.query": "United Kingdom",
+        "operator.filter.tags": "intersection",
+        "filter.tags": "urn:tag:genre:brand:fashion,urn:tag:key_market:qloo:united_kingdom,urn:tag:target_age_group:qloo:young_adults",
+        "filter.popularity.min": "0.98",
+        take: "50",
+      },
+    ]);
+  });
+
+  it("are made for the first 3 Style Icons at once, and no more while 2 of them complete Outfits", async () => {
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
+    let inFlight = 0;
+    let mostInFlight = 0;
+    harness.qloo.duringRequest = async () => {
+      inFlight += 1;
+      mostInFlight = Math.max(mostInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+    };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(brandCalls().map((params) => params.get("signal.interests.entities")).toSorted()).toEqual(["w-1", "w-2", "w-3"]);
+    expect(mostInFlight).toBe(3);
+  });
+
+  it("use each Style Icon's own line for a no-preference user", async () => {
+    const browser = await signedInUser({ stylePreference: "no_preference" });
+
+    await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(
+      Object.fromEntries(brandCalls().map((params) => [params.get("signal.interests.entities"), params.get("signal.demographics.gender")])),
+    ).toEqual({ "w-1": "female", "m-1": "male", "w-2": "female" });
+  });
+
+  it("are made for later Style Icons as needed, one at a time, and for at most 6 Style Icons in a Styling", async () => {
+    const eightWomen = [...SIX_WOMEN, qlooPerson("w-7", "Gia Penn", 0.78), qlooPerson("w-8", "Hana Moor", 0.76)];
+    // Only Ava Stone's and Gia Penn's fans favour Brands that make a whole Outfit.
+    harness.qloo.respond = qlooAnswering({ female: eightWomen }, (styleIconId) => (styleIconId === "w-1" || styleIconId === "w-7" ? BRANDS : []));
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    const fetched = brandCalls().map((params) => params.get("signal.interests.entities"));
+    expect(fetched.slice(0, 3).toSorted()).toEqual(["w-1", "w-2", "w-3"]);
+    expect(fetched.slice(3)).toEqual(["w-4", "w-5", "w-6"]);
+    expect(await styleIconStatuses(consultationId)).toEqual([
+      ["Ava Stone", "used"],
+      ["Bea Marsh", "skipped"],
+      ["Cleo Hart", "skipped"],
+      ["Dana Reed", "skipped"],
+      ["Esme Vale", "skipped"],
+      ["Fay Lowe", "skipped"],
+      ["Gia Penn", "unused"],
+      ["Hana Moor", "unused"],
+    ]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1, tailoringFailures: 0 })]);
+  });
+
+  it("are made for the next Style Icon when a substitute for failed tailoring needs one, with the failed Outfit's Brands free again", async () => {
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
+    harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails", "Bea Marsh": "tailoring-fails" };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(brandCalls().map((params) => params.get("signal.interests.entities")).toSorted()).toEqual(["w-1", "w-2", "w-3", "w-4"]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Cleo Hart", ["Bolt", "Jeanery", "Stride"]],
+      ["Dana Reed", ["Dune", "Bolt", "Sole"]],
+    ]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 2 })]);
   });
 });
 
@@ -378,19 +661,20 @@ describe("each Outfit's Preview", () => {
   });
 
   it("is drawn from the photo, the Photo Type and each Piece's details, never the Style Icon", async () => {
-    harness.qloo.respond = peopleByGender({ female: [WOMEN[0]!] });
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
     const consultationId = await start(browser, "full_body");
     await harness.stylings.runPending();
 
     const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
-    const [hairstyle] = await piecesOf(consultationId);
+    const pieces = (await piecesOf(consultationId)).toSorted(byCategoryOrder);
+    expect(pieces.map((p) => p.category)).toEqual(["hairstyle", "top", "bottom", "shoes"]);
     expect(harness.ai.previewRequests).toEqual([
       {
         photo: { mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) },
         photoType: "full_body",
-        pieces: [{ category: "hairstyle", details: hairstyle!.details }],
+        pieces: pieces.map(({ category, details }) => ({ category, details })),
       },
     ]);
     expect(JSON.stringify(harness.ai.previewRequests)).not.toContain("Ava Stone");
@@ -446,20 +730,6 @@ describe("each Outfit's Preview", () => {
     ]);
   });
 
-  it("isn't asked for when the Outfit has no Pieces to put on, so it fails without an AI call", async () => {
-    const browser = await signedInUser({ stylePreference: "womenswear" });
-    // Until the Brands stage (ticket 14), a Body-Only Photo's Outfits have no Pieces.
-    const consultationId = await start(browser, "body_only");
-
-    await harness.stylings.runPending();
-
-    expect(harness.ai.previewRequests).toEqual([]);
-    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.preview)).toEqual([
-      { state: "failed" },
-      { state: "failed" },
-    ]);
-  });
-
   it("hints at a different photo only when every Preview was refused", async () => {
     harness.ai.previewScenarios = ["preview-refused"];
     const browser = await signedInUser({ stylePreference: "womenswear" });
@@ -493,7 +763,8 @@ describe("what Qloo receives", () => {
       stylingId!,
       stored!.photoPathname,
     ];
-    expect(harness.qloo.requests).toHaveLength(2);
+    // Two person calls, and Brand calls for the first 3 Style Icons.
+    expect(harness.qloo.requests).toHaveLength(5);
     for (const request of harness.qloo.requests) {
       expect([...request.headers.keys()]).toEqual(["x-api-key"]);
       for (const sent of [decodeURIComponent(request.url.href), ...request.headers.values()]) {
@@ -508,11 +779,12 @@ describe("what Qloo receives", () => {
     await harness.stylings.runPending();
     await harness.db.delete(qlooCache);
 
-    await start(await signedInUser(profile), "face");
+    await start(await signedInUser(profile), "full_body");
     await harness.stylings.runPending();
 
-    const [first, second] = harness.qloo.requests;
-    expect(second!.url.href).toBe(first!.url.href);
+    const firstUser = harness.qloo.requests.slice(0, harness.qloo.requests.length / 2);
+    const secondUser = harness.qloo.requests.slice(harness.qloo.requests.length / 2);
+    expect(secondUser.map((request) => request.url.href).toSorted()).toEqual(firstUser.map((request) => request.url.href).toSorted());
   });
 });
 
@@ -552,7 +824,7 @@ describe("a first Styling that can't build anything", () => {
   });
 
   it("makes the one Outfit it can when Qloo finds a single Style Icon, and succeeds", async () => {
-    harness.qloo.respond = peopleByGender({ male: [MEN[0]!, { ...MEN[1]!, properties: { date_of_death: "2020-01-01" } }] });
+    harness.qloo.respond = qlooAnswering({ male: [MEN[0]!, { ...MEN[1]!, properties: { date_of_death: "2020-01-01" } }] });
     const browser = await signedInUser({ stylePreference: "menswear" });
     const consultationId = await start(browser, "full_body");
 
@@ -614,7 +886,7 @@ describe("the Styling status", () => {
   });
 
   it("counts Previews of the Outfits the Styling made, once it made fewer than it meant to", async () => {
-    harness.qloo.respond = peopleByGender({ male: [MEN[0]!] });
+    harness.qloo.respond = qlooAnswering({ male: [MEN[0]!] });
     const browser = await signedInUser({ stylePreference: "menswear" });
     const consultationId = await start(browser, "face");
     const checklist = watchChecklist(browser, consultationId);
@@ -683,12 +955,61 @@ function qlooPerson(entityId: string, name: string, affinity: number) {
   return { entity_id: entityId, name, type: "urn:entity", subtype: "urn:entity:person", properties: {}, query: { affinity } };
 }
 
-/** Answers each person call with the people for its `filter.gender`, or no one. */
-function peopleByGender(people: { female?: readonly object[]; male?: readonly object[] }) {
+/** A Qloo Brand entity, as Qloo sends it, for everyone unless `targetGender` says otherwise. */
+function qlooBrand(
+  entityId: string,
+  name: string,
+  {
+    categories,
+    affinity,
+    price,
+    officialSite = null,
+    targetGender = ["Male", "Female"],
+  }: { categories: string[]; affinity: number; price?: [number, number]; officialSite?: string | null; targetGender?: string[] },
+) {
+  return {
+    entity_id: entityId,
+    name,
+    type: "urn:entity",
+    subtype: "urn:entity:brand",
+    properties: {
+      target_gender: targetGender,
+      price_range_usd_min: price?.[0] ?? null,
+      price_range_usd_max: price?.[1] ?? null,
+      official_site: officialSite,
+    },
+    tags: [
+      { id: "urn:tag:genre:brand:fashion", type: "urn:tag:genre:brand" },
+      ...categories.map((category) => ({ id: `urn:tag:product_category:qloo:${category}`, type: "urn:tag:product_category:qloo" })),
+    ],
+    query: { affinity },
+  };
+}
+
+/**
+ * Answers each person call with the people for its `filter.gender`, or no one, and each Brand call
+ * with the Brands for its Style Icon: BRANDS unless `brands` says otherwise.
+ */
+function qlooAnswering(
+  people: { female?: readonly object[]; male?: readonly object[] },
+  brands: (styleIconEntityId: string) => readonly object[] = () => BRANDS,
+) {
   return (request: RecordedQlooRequest) => {
-    const gender = request.url.searchParams.get("filter.gender");
+    const params = request.url.searchParams;
+    if (params.get("filter.type") === "urn:entity:brand") return qlooResponse(brands(params.get("signal.interests.entities") ?? ""));
+    const gender = params.get("filter.gender");
     return qlooResponse((gender === "female" || gender === "male" ? people[gender] : undefined) ?? []);
   };
+}
+
+/** The Qloo requests that went out for Style Icons. */
+function personCalls(): URLSearchParams[] {
+  return harness.qloo.requests.map((request) => request.url.searchParams).filter((params) => params.get("filter.type") === "urn:entity:person");
+}
+
+/** The Qloo requests that went out for Brands. */
+function brandCalls(): URLSearchParams[] {
+  return harness.qloo.requests.map((request) => request.url.searchParams).filter((params) => params.get("filter.type") === "urn:entity:brand");
 }
 
 /** What a page polling the Styling status would show: `seen` holds each change, in order, as `look()` finds it. */
@@ -733,6 +1054,31 @@ async function piecesOf(consultationId: string) {
     .innerJoin(outfit, eq(outfit.id, piece.outfitId))
     .where(eq(outfit.consultationId, consultationId))
     .orderBy(asc(outfit.position));
+}
+
+/** Each of the Consultation's Outfits' Brand Pieces with the Brand it keeps, in Outfit and Category order. */
+async function brandPiecesOf(consultationId: string) {
+  const rows = await harness.db
+    .select({
+      position: outfit.position,
+      category: piece.category,
+      brandEntityId: piece.brandEntityId,
+      brandName: piece.brandName,
+      brandOfficialSite: piece.brandOfficialSite,
+      brandPriceUsdMin: piece.brandPriceUsdMin,
+      brandPriceUsdMax: piece.brandPriceUsdMax,
+    })
+    .from(piece)
+    .innerJoin(outfit, eq(outfit.id, piece.outfitId))
+    .where(eq(outfit.consultationId, consultationId))
+    .orderBy(asc(outfit.position));
+  const positions = [...new Set(rows.map((row) => row.position))];
+  return positions.map((position) =>
+    rows
+      .filter((row) => row.position === position && row.category !== "hairstyle")
+      .toSorted(byCategoryOrder)
+      .map(({ position: _, ...brandPiece }) => brandPiece),
+  );
 }
 
 /** What each of the Consultation's Outfits stored about its Preview, in Outfit order. */

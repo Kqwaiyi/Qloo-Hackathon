@@ -43,6 +43,13 @@
       "when": 1792174086149,
       "tag": "0005_previews",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792179912212,
+      "tag": "0006_brand_pieces",
+      "breakpoints": true
     }
   ]
 }

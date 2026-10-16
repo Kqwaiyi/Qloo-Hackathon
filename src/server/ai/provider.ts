@@ -1,7 +1,15 @@
 import * as z from "zod";
 
 import type { Line } from "@/config/accounts";
-import { type AgeGroup, CATEGORIES, type Category, type PhotoStyleWords, type PhotoType } from "@/config/consultations";
+import {
+  type AgeGroup,
+  type BrandCategory,
+  CATEGORIES,
+  type Category,
+  type PhotoStyleWords,
+  type PhotoType,
+  type PriceRangeUsd,
+} from "@/config/consultations";
 import type { PreviewRefusalReason } from "@/config/stylings";
 
 // Our own AI provider interface (spec: "AI provider interface"). The domain depends only on this,
@@ -50,9 +58,21 @@ export interface PhotoCheckReport {
 /** What the model reported, or that Google blocked the photo, so the model reported nothing. */
 export type PhotoCheckResult = { blocked: true } | { blocked: false; report: PhotoCheckReport };
 
+/** What tailoring is told about the Brand a Piece is built on. */
+export interface TailoringBrand {
+  name: string;
+  /** Qloo's product categories for it, such as apparel, footwear or denim: what it plausibly makes. */
+  categoryTags: readonly string[];
+  /** Its price range in US dollars, when Qloo has one, to pitch the item. Never repeated in the reply. */
+  priceRangeUsd: PriceRangeUsd | null;
+}
+
+/** One Piece to tailor: the Hairstyle, from the Style Icon's name alone, or a Piece built on its Brand. */
+export type TailoringPiece = { category: "hairstyle" } | { category: BrandCategory; brand: TailoringBrand };
+
 /**
  * What one Outfit's Pieces are tailored from. Never the Country or the Budget Tier: the Brands
- * already reflect them. Ticket 14 adds each Brand Piece's Brand.
+ * already reflect them.
  */
 export interface TailoringInput {
   /** The photo itself, never a stored text description of the person. */
@@ -64,8 +84,8 @@ export interface TailoringInput {
   line: Line;
   /** The Hairstyle is built from the Style Icon's name alone, never Qloo's image of them. */
   styleIconName: string;
-  /** One per Piece to tailor. */
-  pieces: readonly { category: Category }[];
+  /** One per Piece to tailor, in Category order. */
+  pieces: readonly TailoringPiece[];
 }
 
 /**
@@ -108,6 +128,9 @@ export interface AiProvider {
    * Tailors one Outfit's Pieces to the photo, returning the model's reply as it came: meant to match
    * `tailoredPiecesSchema`, but unchecked. A reply that doesn't match still comes back rather than
    * throwing, since our code checks it and asks again. Throws only on errors worth retrying.
+   *
+   * The model is told the rules: items are generic, never product or model names; never a price;
+   * only an item the Brand plausibly makes; and the Top is one garment, the main visible upper layer.
    */
   tailorPieces(input: TailoringInput): Promise<unknown>;
   /**

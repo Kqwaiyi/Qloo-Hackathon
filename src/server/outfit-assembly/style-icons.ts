@@ -1,6 +1,5 @@
 import { type Line, LINES, type StylePreference } from "@/config/accounts";
 import type { AgeGroup, PhotoStyle, PhotoStyleWords } from "@/config/consultations";
-import { findCountry } from "@/config/countries";
 import { STYLE_ICON_DENYLIST } from "@/config/denylists";
 import {
   STYLE_ICON_EXCLUDED_TAGS,
@@ -8,7 +7,9 @@ import {
   STYLE_ICON_POPULARITY_FLOOR,
   STYLE_ICONS_PER_CALL,
 } from "@/config/qloo";
-import type { QlooAge, QlooGender, QlooPerson, QlooQuery, QlooTagId } from "@/server/qloo/client";
+import type { QlooPerson, QlooQuery, QlooTagId } from "@/server/qloo/client";
+
+import { consultationCountry, lineGender, qlooAge } from "./signals";
 
 // Picking Style Icons (spec: "Outfit assembly", Style Icons): the person query for each line, and
 // the ranked Style Icons from what Qloo sends back. Pure: the caller fetches and saves.
@@ -27,19 +28,6 @@ export interface RankedStyleIcon {
   line: Line;
 }
 
-/** Qloo's age bucket for each age group. Qloo's oldest is 55 and older. */
-const QLOO_AGES: Record<AgeGroup, QlooAge> = {
-  "18_24": "24_and_younger",
-  "25_29": "25_to_29",
-  "30_34": "30_to_34",
-  "35_44": "35_to_44",
-  "45_54": "45_to_54",
-  "55_64": "55_and_older",
-  "65_plus": "55_and_older",
-};
-
-const LINE_GENDERS: Record<Line, QlooGender> = { menswear: "male", womenswear: "female" };
-
 /** The lines a user's Style Icons come from: one person call each. */
 export function styleIconLines(stylePreference: StylePreference): Line[] {
   return stylePreference === "no_preference" ? [...LINES] : [stylePreference];
@@ -47,15 +35,13 @@ export function styleIconLines(stylePreference: StylePreference): Line[] {
 
 /** The person query for one line. Qloo's client adds `filter.type=urn:entity:person`. */
 export function styleIconQuery({ ageGroup, countryCode, photoStyle }: StyleIconSearch, line: Line): QlooQuery {
-  const country = findCountry(countryCode);
-  if (!country) throw new Error(`No Country has the code ${countryCode}.`);
   return {
     "filter.tags": STYLE_ICON_OCCUPATION_TAGS,
     "filter.exclude.tags": STYLE_ICON_EXCLUDED_TAGS,
-    "filter.gender": LINE_GENDERS[line],
-    "signal.demographics.gender": LINE_GENDERS[line],
-    "signal.demographics.age": QLOO_AGES[ageGroup],
-    "signal.location.query": country.qlooLocation,
+    "filter.gender": lineGender(line),
+    "signal.demographics.gender": lineGender(line),
+    "signal.demographics.age": qlooAge(ageGroup),
+    "signal.location.query": consultationCountry(countryCode).qlooLocation,
     "signal.interests.tags": photoStyle.map(photoStyleTag),
     "filter.popularity.min": STYLE_ICON_POPULARITY_FLOOR,
     take: STYLE_ICONS_PER_CALL,

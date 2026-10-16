@@ -1,6 +1,7 @@
 import type { Line } from "@/config/accounts";
 import { PREVIEWS_AT_ONCE } from "@/config/stylings";
-import type { QlooPerson } from "@/server/qloo/client";
+import type { BrandPicks } from "@/server/outfit-assembly/brands";
+import type { QlooBrand, QlooPerson } from "@/server/qloo/client";
 
 // The "build Outfits" Styling, as the order of its steps. The Vercel Workflow runs each step as a
 // durable step with its own retries; tests run the same steps inline. This module only orders
@@ -9,10 +10,24 @@ import type { QlooPerson } from "@/server/qloo/client";
 /** Each line's people, as its person call ranked them. */
 export type PeopleByLine = Partial<Record<Line, QlooPerson[]>>;
 
-/** One Outfit to tailor: its position in the Styling and the Style Icon inspiring it. */
+/** Each Style Icon's Brands, by its ID, as its Brand call ranked them: only those fetched so far. */
+export type BrandsByStyleIcon = Record<string, QlooBrand[]>;
+
+/**
+ * One Outfit to tailor: its position in the Styling, the Style Icon inspiring it and, for a body
+ * photo, the Brands its Top, Bottom and Shoes are built on, picked before tailoring.
+ */
 export interface OutfitTry {
   position: number;
   styleIconId: string;
+  brands: BrandPicks | null;
+}
+
+/** What Building Outfits does next: fetch some Style Icons' Brands, or tailor some Outfits. Neither once it's done. */
+export interface OutfitPlan {
+  /** The IDs of the Style Icons whose Brands to fetch, all at once, before planning again. */
+  fetchBrandsFor: string[];
+  tries: OutfitTry[];
 }
 
 /** What one tailoring call came to: its Outfit saved or its Style Icon skipped, or a bad reply to ask again. */
@@ -31,9 +46,14 @@ export interface BuildOutfitsSteps {
   saveStyleIcons(stylingId: string, peopleByLine: PeopleByLine): Promise<void>;
   /**
    * The Outfits to tailor next: one per position still open, each from the next unused Style Icon,
-   * while substitutes for failed tailoring are left. None once every position is filled.
+   * while substitutes for failed tailoring are left. For a body photo, each also gets its Brands
+   * from `brandsByStyleIcon`, skipping Style Icons that can't complete an Outfit, and when the
+   * Style Icons it needs haven't had their Brands fetched it asks for that instead. Nothing once
+   * every position is filled or nothing more can be tried.
    */
-  planOutfits(stylingId: string): Promise<OutfitTry[]>;
+  planOutfits(stylingId: string, brandsByStyleIcon: BrandsByStyleIcon): Promise<OutfitPlan>;
+  /** One Style Icon's Brand call. */
+  fetchBrands(stylingId: string, styleIconId: string): Promise<QlooBrand[]>;
   /**
    * One AI call, the `attempt`th for this Outfit: tailors its Pieces and saves it. A bad reply is
    * asked again once; when the last attempt is bad too, the Style Icon is skipped.
@@ -65,10 +85,22 @@ export async function buildOutfits(stylingId: string, steps: BuildOutfitsSteps):
     );
     await steps.saveStyleIcons(stylingId, peopleByLine);
     // Building Outfits: each round tailors the open positions at once, and a failed one's
-    // substitute waits for the next round. Every try uses up a Style Icon, so the rounds end.
-    for (let tries = await steps.planOutfits(stylingId); tries.length > 0; tries = await steps.planOutfits(stylingId)) {
+    // substitute waits for the next round. A body photo's Style Icons need their Brands first,
+    // fetched as the plan asks. Every try and every fetch uses up a Style Icon, so the rounds end.
+    const brandsByStyleIcon: BrandsByStyleIcon = {};
+    for (;;) {
+      const plan = await steps.planOutfits(stylingId, brandsByStyleIcon);
+      if (plan.fetchBrandsFor.length > 0) {
+        await waitForAll(
+          plan.fetchBrandsFor.map(async (styleIconId) => {
+            brandsByStyleIcon[styleIconId] = await steps.fetchBrands(stylingId, styleIconId);
+          }),
+        );
+        continue;
+      }
+      if (plan.tries.length === 0) break;
       await waitForAll(
-        tries.map(async (outfitTry) => {
+        plan.tries.map(async (outfitTry) => {
           let attempt = 1;
           while ((await steps.tailorOutfit(stylingId, outfitTry, attempt)) === "ask-again") attempt += 1;
         }),

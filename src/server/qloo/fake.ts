@@ -15,10 +15,13 @@ export interface RecordedQlooRequest {
 export class FakeQlooTransport {
   readonly requests: RecordedQlooRequest[] = [];
   respond: (request: RecordedQlooRequest) => Response = () => qlooResponse([]);
+  /** Runs while each request waits for its answer, so a test can see which requests are in flight together. */
+  duringRequest?: (request: RecordedQlooRequest) => Promise<void>;
 
   readonly send: QlooTransport = async (request) => {
     const recorded = { method: request.method, url: new URL(request.url), headers: new Headers(request.headers) };
     this.requests.push(recorded);
+    await this.duringRequest?.(recorded);
     return this.respond(recorded);
   };
 }

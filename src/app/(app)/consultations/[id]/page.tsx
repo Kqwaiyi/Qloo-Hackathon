@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { LocalDate } from "@/components/local-date";
-import { CATEGORY_LABELS, PHOTO_TYPE_LABELS } from "@/config/consultations";
+import { textLink } from "@/components/ui";
+import { CATEGORY_LABELS, PHOTO_TYPE_LABELS, type PriceRangeUsd } from "@/config/consultations";
 import { COPY } from "@/config/copy";
 import { getConsultation, getStylingStatus } from "@/server/data/consultations";
 import type { OutfitView, PieceView, PreviewView } from "@/server/operations/consultations";
@@ -90,6 +91,7 @@ function OutfitCard({ outfit }: { outfit: OutfitView }) {
         <h2 className="text-lg font-semibold">
           Outfit {outfit.position} · Inspired by {outfit.styleIconName}
         </h2>
+        {outfit.priceRange && <p className="text-sm text-stone-600">Whole Outfit about {usdRange(outfit.priceRange)}</p>}
         {outfit.pieces.length > 0 && (
           <ul aria-label="Pieces" className="mt-3">
             {outfit.pieces.map((piece) => (
@@ -126,16 +128,40 @@ function OutfitPreview({ preview, styleIconName }: { preview: PreviewView; style
   );
 }
 
-/** A Piece's row. The Hairstyle names its Style Icon and has no price or link: it isn't something to buy. */
+/**
+ * A Piece's row. A Brand Piece names its Brand, with the Brand's price range and a "Visit <Brand>"
+ * link when it has them. The Hairstyle names its Style Icon instead, with no price or link: it
+ * isn't something to buy.
+ */
 function PieceRow({ piece, styleIconName }: { piece: PieceView; styleIconName: string }) {
+  const { brand } = piece;
   return (
-    <div className="grid grid-cols-[80px_1fr] gap-3 border-t border-stone-100 py-3">
+    <div className="grid grid-cols-[80px_1fr] gap-x-3 gap-y-1 border-t border-stone-100 py-3 sm:grid-cols-[80px_1fr_auto]">
       <div className="text-xs font-semibold tracking-wide text-stone-500 uppercase">{CATEGORY_LABELS[piece.category]}</div>
       <div>
         <div className="font-medium">{piece.item}</div>
-        {piece.category === "hairstyle" && <div className="text-sm text-stone-600">Style Icon: {styleIconName}</div>}
+        <div className="text-sm text-stone-600">{brand ? brand.name : `Style Icon: ${styleIconName}`}</div>
         <p className="mt-1 text-sm text-stone-600 italic">{piece.why}</p>
       </div>
+      {brand && (brand.priceRange || brand.visitUrl) && (
+        <div className="col-start-2 text-sm sm:col-start-auto sm:text-right">
+          {brand.priceRange && <div className="font-medium">{usdRange(brand.priceRange)}</div>}
+          {brand.visitUrl && (
+            <a href={brand.visitUrl} target="_blank" rel="noopener noreferrer" className={textLink}>
+              Visit {brand.name}
+              {/* U+FE0E keeps the arrow a plain glyph, not an emoji. */}
+              <span aria-hidden="true"> {"↗︎"}</span>
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+/** A price range in whole US dollars, such as "$20–$120". */
+function usdRange({ min, max }: PriceRangeUsd): string {
+  const usd = (amount: number) => `$${Math.round(amount).toLocaleString("en-US")}`;
+  return min === max ? usd(min) : `${usd(min)}–${usd(max)}`;
 }

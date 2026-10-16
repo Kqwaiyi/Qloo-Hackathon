@@ -10,6 +10,7 @@ import {
   PHOTO_TYPES,
   type PhotoStyleWords,
   type PhotoType,
+  type PriceRangeUsd,
   SIGNED_LINK_LIFETIME_SECONDS,
 } from "@/config/consultations";
 import type { PreviewState } from "@/config/stylings";
@@ -21,6 +22,7 @@ import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
+import { brandPriceRange, outfitPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
 import { checkStylingStart, createStyling, launchStyling, type StylingStartRefusal } from "@/server/stylings/start";
 
 /** The shape of what "Get my Outfits" sends. The server action parses its form with this. */
@@ -125,6 +127,8 @@ export interface OutfitView {
   /** Shown by name, never with Qloo's image. */
   styleIconName: string;
   preview: PreviewView;
+  /** The whole Outfit's price range, from its Brand Pieces' price data, or null when none has any. */
+  priceRange: PriceRangeUsd | null;
   /** One row per Piece, in Category order, whether or not there's a Preview. */
   pieces: PieceView[];
 }
@@ -138,6 +142,16 @@ export interface PieceView {
   /** For the Hairstyle, the cut. */
   item: string;
   why: string;
+  /** The Brand it's built on, or null for the Hairstyle, which isn't something to buy. */
+  brand: BrandView | null;
+}
+
+export interface BrandView {
+  name: string;
+  /** Its `price_range_usd_min`–`max`, or null when Qloo has no price for it. */
+  priceRange: PriceRangeUsd | null;
+  /** Where "Visit <Brand>" goes: its official site when that's an https URL, or null for no link. */
+  visitUrl: string | null;
 }
 
 /** One of the signed-in user's own Consultations, or null for anyone else's or one that doesn't exist. */
@@ -169,7 +183,16 @@ export async function readConsultation(
     outfitRows.length === 0
       ? []
       : await ctx.db
-          .select({ outfitId: piece.outfitId, category: piece.category, item: piece.item, why: piece.why })
+          .select({
+            outfitId: piece.outfitId,
+            category: piece.category,
+            item: piece.item,
+            why: piece.why,
+            brandName: piece.brandName,
+            brandOfficialSite: piece.brandOfficialSite,
+            brandPriceUsdMin: piece.brandPriceUsdMin,
+            brandPriceUsdMax: piece.brandPriceUsdMax,
+          })
           .from(piece)
           .where(
             inArray(
@@ -178,16 +201,28 @@ export async function readConsultation(
             ),
           );
   const outfits = await Promise.all(
-    outfitRows.map(async ({ id, position, styleIconName, previewState, previewPathname }) => ({
-      id,
-      position,
-      styleIconName,
-      preview: await previewView(ctx.blob, previewState, previewPathname, linkValidUntil),
-      pieces: pieceRows
+    outfitRows.map(async ({ id, position, styleIconName, previewState, previewPathname }): Promise<OutfitView> => {
+      const pieces = pieceRows
         .filter((pieceRow) => pieceRow.outfitId === id)
         .toSorted(byCategoryOrder)
-        .map(({ category, item, why }) => ({ category, item, why })),
-    })),
+        .map(({ category, item, why, brandName, brandOfficialSite, brandPriceUsdMin, brandPriceUsdMax }) => ({
+          category,
+          item,
+          why,
+          brand:
+            brandName === null
+              ? null
+              : { name: brandName, priceRange: brandPriceRange(brandPriceUsdMin, brandPriceUsdMax), visitUrl: visitUrl(brandOfficialSite) },
+        }));
+      return {
+        id,
+        position,
+        styleIconName,
+        preview: await previewView(ctx.blob, previewState, previewPathname, linkValidUntil),
+        priceRange: outfitPriceRange(pieces.filter((pieceView) => pieceView.brand).map((pieceView) => pieceView.brand!.priceRange)),
+        pieces,
+      };
+    }),
   );
   return {
     id: row.id,
