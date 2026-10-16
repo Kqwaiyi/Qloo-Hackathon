@@ -1,6 +1,6 @@
 import "server-only";
 
-import { start } from "workflow/api";
+import { getRun, start } from "workflow/api";
 
 import { buildOutfitsWorkflow } from "@/workflows/build-outfits";
 
@@ -11,5 +11,9 @@ export const workflowStylingRunner: StylingRunner = {
   async start(stylingId) {
     const run = await start(buildOutfitsWorkflow, [stylingId]);
     return run.runId;
+  },
+
+  async cancel(runId) {
+    await getRun(runId).cancel();
   },
 };

@@ -16,6 +16,7 @@ import { type AiProvider, isPhotoMediaType, type Photo, type TailoringBrand } fr
 import { checkTailoredPieces } from "@/server/ai/tailoring";
 import type { BlobStore } from "@/server/blob/store";
 import type { Clock } from "@/server/clock";
+import { previewPathnameFor } from "@/server/consultations/blob-pathnames";
 import type { Database, Transaction } from "@/server/db/database";
 import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
 import {
@@ -279,7 +280,9 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
         await savePreview(ctx.db, stylingId, outfitId, { previewState: "refused", previewRefusalReason: preview.reason });
         return;
       }
-      const pathname = previewPathname(toRender.consultationId, outfitId);
+      // The image model took a while: a Styling stopped or deleted meanwhile stores no Preview.
+      await readRunningStyling(ctx.db, stylingId);
+      const pathname = previewPathnameFor(toRender.consultationId, outfitId);
       // A try cut short between storing the Preview and saving it leaves it behind: store it afresh.
       await ctx.blob.delete(pathname);
       await ctx.blob.put(pathname, new Uint8Array(await sharp(preview.image).webp().toBuffer()), "image/webp");
@@ -306,11 +309,6 @@ function brandsBudgetTier(stylingId: string, budgetTier: BudgetTier | null): Bud
 /** What tailoring is told about a picked Brand: never its entity ID or official site. */
 function tailoringBrand({ name, categoryTags, priceRangeUsdMin, priceRangeUsdMax }: PickedBrand): TailoringBrand {
   return { name, categoryTags, priceRangeUsd: brandPriceRange(priceRangeUsdMin, priceRangeUsdMax) };
-}
-
-/** Where an Outfit's Preview is stored: beside its Consultation's photo. */
-function previewPathname(consultationId: string, outfitId: string): string {
-  return `consultations/${consultationId}/previews/${outfitId}.webp`;
 }
 
 /** Saves a pending Preview's outcome, only while its Styling runs. */

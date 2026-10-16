@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as z from "zod";
 
@@ -19,14 +19,17 @@ import {
 import type { PreviewState } from "@/config/stylings";
 import type { PhotoCheckResult } from "@/server/ai/provider";
 import type { BlobStore } from "@/server/blob/store";
+import type { Clock } from "@/server/clock";
+import { consultationFolder, photoPathnameFor } from "@/server/consultations/blob-pathnames";
 import { judgePhotoCheck, type PhotoRejection } from "@/server/consultations/photo-check";
-import { PHOTO_EXTENSIONS, readPhotoFile } from "@/server/consultations/photo-file";
-import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
+import { readPhotoFile } from "@/server/consultations/photo-file";
+import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
 import { brandPriceRange, outfitPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
 import { checkStylingStart, createStyling, launchStyling, type StylingStartRefusal } from "@/server/stylings/start";
+import { finishStyling } from "@/server/stylings/steps";
 
 /** The shape of what "Get my Outfits" sends. The server action parses its form with this. */
 export const startConsultationInputSchema = z.object({
@@ -74,7 +77,7 @@ export async function startConsultation(
   const { report } = verdict;
 
   const id = randomUUID();
-  const photoPathname = `consultations/${id}/photo.${PHOTO_EXTENSIONS[photo.mediaType]}`;
+  const photoPathname = photoPathnameFor(id, photo.mediaType);
   await ctx.blob.put(photoPathname, photo.bytes, photo.mediaType);
   let stylingId: string;
   try {
@@ -176,7 +179,7 @@ export async function readConsultation(
     .from(consultation)
     .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)));
   if (!row) return null;
-  const linkValidUntil = new Date(ctx.clock.now().getTime() + SIGNED_LINK_LIFETIME_SECONDS * 1000);
+  const linkValidUntil = signedLinkValidUntil(ctx.clock);
   const outfitRows = await ctx.db
     .select({
       id: outfit.id,
@@ -245,6 +248,105 @@ export async function readConsultation(
     outfits,
     everyPreviewRefused: outfits.length > 0 && outfits.every((outfitView) => outfitView.preview.state === "refused"),
   };
+}
+
+/** One row of My Consultations. */
+export interface ConsultationSummary {
+  id: string;
+  /** A signed link to the photo, valid for 1 hour from now. */
+  photoUrl: string;
+  photoType: PhotoType;
+  createdAt: Date;
+  /** The current Budget Tier, or null for a Face Photo, which has none. */
+  budgetTier: BudgetTier | null;
+  state: ConsultationState;
+  /** How many Outfits it shows now. */
+  outfitCount: number;
+}
+
+/** My Consultations: the signed-in user's own Consultations, newest first. None for a signed-out visitor. */
+export async function listConsultations(
+  ctx: Pick<OperationContext, "auth" | "db" | "blob" | "clock" | "requestHeaders">,
+): Promise<ConsultationSummary[]> {
+  const user = await readSignedInUser(ctx);
+  if (!user) return [];
+  const rows = await ctx.db
+    .select({
+      id: consultation.id,
+      photoPathname: consultation.photoPathname,
+      photoType: consultation.photoType,
+      createdAt: consultation.createdAt,
+      budgetTier: consultation.budgetTier,
+      state: consultation.state,
+      outfitCount: sql<number>`(
+        select count(*)::int from ${outfit}
+        where ${and(eq(outfit.consultationId, consultation.id), eq(outfit.current, true))}
+      )`,
+    })
+    .from(consultation)
+    .where(eq(consultation.userId, user.id))
+    .orderBy(desc(consultation.createdAt));
+  const linkValidUntil = signedLinkValidUntil(ctx.clock);
+  return Promise.all(
+    rows.map(async ({ photoPathname, ...row }) => ({ ...row, photoUrl: await ctx.blob.signedUrl(photoPathname, linkValidUntil) })),
+  );
+}
+
+/** A Consultation that isn't the user's is not found, just like one that doesn't exist. */
+export type DeleteConsultationRefusal = { refusal: "signed-out" | "not-found" };
+
+/**
+ * Deletes one of the signed-in user's own Consultations for good, even while it's Styling. A running
+ * Styling's Workflow run is cancelled first. Then its Stylings, Style Icons, Outfits and Pieces go,
+ * with everything in its Blob folder, its photo and Previews included.
+ */
+export async function deleteConsultation(
+  ctx: Pick<OperationContext, "auth" | "db" | "blob" | "clock" | "stylings" | "requestHeaders">,
+  consultationId: string,
+): Promise<Result<object, DeleteConsultationRefusal>> {
+  const user = await readSignedInUser(ctx);
+  if (!user) return { ok: false, refusal: "signed-out" };
+  const [owned] = await ctx.db
+    .select({ id: consultation.id })
+    .from(consultation)
+    .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)));
+  if (!owned) return { ok: false, refusal: "not-found" };
+
+  // A running Styling stops first, as a stuck one does: its run is cancelled, so it starts no more
+  // steps, and it's finished, so a step under way saves nothing. A run that can't be cancelled
+  // doesn't keep the Consultation, since its steps find the Styling no longer running.
+  const runningStylings = await ctx.db
+    .select({ id: styling.id, workflowRunId: styling.workflowRunId })
+    .from(styling)
+    .where(and(eq(styling.consultationId, consultationId), eq(styling.status, "running")));
+  for (const runningStyling of runningStylings) {
+    if (runningStyling.workflowRunId) {
+      await ctx.stylings.cancel(runningStyling.workflowRunId).catch((error: unknown) => {
+        console.error("A Styling's run couldn't be cancelled:", error instanceof Error ? error.message : "unknown error");
+      });
+    }
+    await finishStyling(ctx, runningStyling.id, "broke");
+  }
+
+  // The Blob folder goes in the rows' transaction, which holds them meanwhile: a Blob delete that
+  // fails keeps the Consultation, its Styling stopped, to delete again. A Preview that a step under
+  // way stores after the folder goes is deleted by that step, which finds its Styling gone.
+  const deleted = await ctx.db.transaction(async (tx) => {
+    // Its Stylings, Style Icons, Outfits and Pieces go with it.
+    const [row] = await tx
+      .delete(consultation)
+      .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)))
+      .returning({ id: consultation.id });
+    if (!row) return false;
+    await ctx.blob.deleteFolder(consultationFolder(consultationId));
+    return true;
+  });
+  return deleted ? { ok: true } : { ok: false, refusal: "not-found" };
+}
+
+/** When a signed link made now stops working. */
+function signedLinkValidUntil(clock: Clock): Date {
+  return new Date(clock.now().getTime() + SIGNED_LINK_LIFETIME_SECONDS * 1000);
 }
 
 async function previewView(

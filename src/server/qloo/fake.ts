@@ -26,6 +26,11 @@ export class FakeQlooTransport {
   };
 }
 
+/** A Qloo person entity, as Qloo sends it. */
+export function qlooPerson(entityId: string, name: string, affinity: number) {
+  return { entity_id: entityId, name, type: "urn:entity", subtype: "urn:entity:person", properties: {}, query: { affinity } };
+}
+
 /** A successful Insights response holding `entities`, as Qloo sends it. */
 export function qlooResponse(entities: readonly object[]): Response {
   return Response.json({ success: true, results: { entities } });

@@ -9,6 +9,11 @@ import { type StylingContext, stylingSteps } from "./steps";
 export class InlineStylingRunner implements StylingRunner {
   /** The Stylings started and not yet run, oldest first. */
   readonly pending: string[] = [];
+  /** The IDs of the runs cancelled, oldest first. */
+  readonly cancelled: string[] = [];
+  /** Makes `cancel` throw, as it does when the Workflow can't be reached. */
+  cancelFails = false;
+  private readonly stylingOfRun = new Map<string, string>();
   private runCount = 0;
 
   constructor(private readonly ctx: StylingContext) {}
@@ -16,7 +21,20 @@ export class InlineStylingRunner implements StylingRunner {
   async start(stylingId: string): Promise<string> {
     this.pending.push(stylingId);
     this.runCount += 1;
-    return `inline-run-${this.runCount}`;
+    const runId = `inline-run-${this.runCount}`;
+    this.stylingOfRun.set(runId, stylingId);
+    return runId;
+  }
+
+  /**
+   * A pending run never runs. One under way can't be stopped in this process, so it carries on as
+   * if the cancel came too late, and its steps' own checks are what stop it.
+   */
+  async cancel(runId: string): Promise<void> {
+    if (this.cancelFails) throw new Error("The Workflow couldn't be reached.");
+    this.cancelled.push(runId);
+    const index = this.pending.indexOf(this.stylingOfRun.get(runId) ?? "");
+    if (index !== -1) this.pending.splice(index, 1);
   }
 
   /** Runs every pending Styling to its finish, one after another. */

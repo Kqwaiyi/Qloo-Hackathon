@@ -1,4 +1,4 @@
-import { del, get, issueSignedToken, presignUrl, put } from "@vercel/blob";
+import { del, get, issueSignedToken, list, presignUrl, put } from "@vercel/blob";
 
 import type { BlobStore, StoredBlob } from "./store";
 
@@ -23,5 +23,17 @@ export class VercelBlobStore implements BlobStore {
 
   async delete(pathname: string): Promise<void> {
     await del(pathname);
+  }
+
+  async deleteFolder(folder: string): Promise<void> {
+    // Listing is an advanced operation, which the Hobby plan counts: one page holds a Consultation.
+    const pathnames: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await list({ prefix: `${folder}/`, cursor });
+      pathnames.push(...page.blobs.map((blob) => blob.pathname));
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+    if (pathnames.length > 0) await del(pathnames);
   }
 }

@@ -1,15 +1,19 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import sharp, { type Sharp } from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { BudgetTier, PhotoType } from "@/config/consultations";
 import type { FakeAiScenario } from "@/server/ai/fake";
 import type { PhotoRejection } from "@/server/consultations/photo-check";
-import { consultation } from "@/server/db/schema";
-import { readConsultation, startConsultation } from "@/server/operations/consultations";
+import { consultation, outfit, piece, qlooCache, styleIcon, styling } from "@/server/db/schema";
+import { deleteConsultation, listConsultations, readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
+import { qlooPerson, qlooResponse } from "@/server/qloo/fake";
 import { createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
+
+// Made-up people, shaped like Qloo's person entities: enough Style Icons for a Face Photo's two Outfits.
+const STYLE_ICONS = [qlooPerson("p-1", "Ava Stone", 0.94), qlooPerson("p-2", "Bea Marsh", 0.91), qlooPerson("p-3", "Cleo Hart", 0.88)];
 
 let harness: TestHarness;
 
@@ -17,11 +21,21 @@ beforeAll(async () => {
   harness = await createTestHarness();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   harness.clock.set("2026-10-16T12:00:00Z");
   harness.blob.objects.clear();
   harness.ai.scenario = "pass";
   harness.ai.photoCheckCount = 0;
+  harness.stylings.pending.length = 0;
+  harness.stylings.cancelled.length = 0;
+  harness.stylings.cancelFails = false;
+  harness.blob.stored.length = 0;
+  harness.blob.deleteFolderFails = false;
+  harness.qloo.requests.length = 0;
+  harness.qloo.respond = () => qlooResponse([]);
+  harness.qloo.duringRequest = undefined;
+  harness.ai.duringCall = undefined;
+  await harness.db.delete(qlooCache);
 });
 
 describe("starting a Consultation", () => {
@@ -300,6 +314,206 @@ describe("opening a Consultation", () => {
   });
 });
 
+describe("My Consultations", () => {
+  it("lists the user's Consultations, newest first, each with its photo through a link valid for 1 hour, Photo Type, date and Budget Tier", async () => {
+    const browser = await signedInUser();
+    harness.clock.set("2026-10-15T09:00:00Z");
+    const older = await start(browser, "face");
+    harness.clock.set("2026-10-16T18:30:00Z");
+    const newer = await start(browser, "body_only", "low");
+    const [olderPhoto, newerPhoto] = (await consultationsOf(browser)).map((row) => row.photoPathname);
+    harness.clock.set("2026-10-17T08:00:00Z");
+
+    const listed = await listConsultations(harness.context(browser));
+
+    expect(listed).toEqual([
+      {
+        id: newer,
+        photoUrl: await harness.blob.signedUrl(newerPhoto!, new Date("2026-10-17T09:00:00Z")),
+        photoType: "body_only",
+        createdAt: new Date("2026-10-16T18:30:00Z"),
+        budgetTier: "low",
+        state: "styling",
+        outfitCount: 0,
+      },
+      {
+        id: older,
+        photoUrl: await harness.blob.signedUrl(olderPhoto!, new Date("2026-10-17T09:00:00Z")),
+        photoType: "face",
+        createdAt: new Date("2026-10-15T09:00:00Z"),
+        budgetTier: null,
+        state: "styling",
+        outfitCount: 0,
+      },
+    ]);
+  });
+
+  it("counts the Outfits each one shows once its Styling finishes, and shows No Outfits when none could be built", async () => {
+    const browser = await signedInUser();
+    harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+    harness.clock.set("2026-10-16T12:10:00Z");
+    const styled = await start(browser, "face");
+    await harness.stylings.runPending();
+    await harness.db.delete(qlooCache);
+    harness.qloo.respond = () => qlooResponse([]);
+    harness.clock.set("2026-10-16T12:20:00Z");
+    const unbuilt = await start(browser, "face");
+    await harness.stylings.runPending();
+
+    const listed = await listConsultations(harness.context(browser));
+
+    expect(listed.map(({ id, state, outfitCount }) => ({ id, state, outfitCount }))).toEqual([
+      { id: unbuilt, state: "no_outfits", outfitCount: 0 },
+      { id: styled, state: "ready", outfitCount: 2 },
+    ]);
+  });
+
+  it("never lists another user's Consultations, and lists nothing for a signed-out visitor", async () => {
+    const owner = await signedInUser();
+    await start(owner, "full_body");
+    const someoneElse = await signedInUser();
+
+    expect(await listConsultations(harness.context(someoneElse))).toEqual([]);
+    expect(await listConsultations(harness.context(new TestBrowser()))).toEqual([]);
+  });
+});
+
+describe("deleting a Consultation", () => {
+  it("deletes it for good: its Stylings, Style Icons, Outfits and Pieces, its photo and its Previews", async () => {
+    const browser = await signedInUser();
+    harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+    const outfitIds = (await harness.db.select({ id: outfit.id }).from(outfit).where(eq(outfit.consultationId, consultationId))).map(
+      ({ id }) => id,
+    );
+    expect(outfitIds).toHaveLength(2);
+    expect(harness.blob.objects.size).toBe(3);
+
+    const result = await deleteConsultation(harness.context(browser), consultationId);
+
+    expect(result).toEqual({ ok: true });
+    expect(await readConsultation(harness.context(browser), consultationId)).toBeNull();
+    expect(await listConsultations(harness.context(browser))).toEqual([]);
+    expect(await rowsStoredFor(consultationId, outfitIds)).toEqual({ stylings: [], styleIcons: [], outfits: [], pieces: [] });
+    expect(harness.blob.objects.size).toBe(0);
+  });
+
+  it("keeps the user's other Consultations and their photos", async () => {
+    const browser = await signedInUser();
+    const kept = await start(browser, "full_body");
+    const deleted = await start(browser, "face");
+
+    await deleteConsultation(harness.context(browser), deleted);
+
+    expect((await listConsultations(harness.context(browser))).map(({ id }) => id)).toEqual([kept]);
+    expect([...harness.blob.objects.keys()]).toEqual([(await consultationsOf(browser))[0]!.photoPathname]);
+  });
+
+  it("leaves another user's Consultation alone, as if it didn't exist", async () => {
+    const owner = await signedInUser();
+    const consultationId = await start(owner, "full_body");
+
+    const result = await deleteConsultation(harness.context(await signedInUser()), consultationId);
+
+    expect(result).toEqual({ ok: false, refusal: "not-found" });
+    expect((await listConsultations(harness.context(owner))).map(({ id }) => id)).toEqual([consultationId]);
+    expect(harness.blob.objects.size).toBe(1);
+  });
+
+  it("refuses a signed-out visitor, deleting nothing", async () => {
+    const owner = await signedInUser();
+    const consultationId = await start(owner, "full_body");
+
+    const result = await deleteConsultation(harness.context(new TestBrowser()), consultationId);
+
+    expect(result).toEqual({ ok: false, refusal: "signed-out" });
+    expect((await listConsultations(harness.context(owner))).map(({ id }) => id)).toEqual([consultationId]);
+    expect(harness.blob.objects.size).toBe(1);
+  });
+
+  it("cancels a running Styling's Workflow run, so it never builds anything", async () => {
+    const browser = await signedInUser();
+    harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+    const consultationId = await start(browser, "face");
+    const [running] = await harness.db.select().from(styling).where(eq(styling.consultationId, consultationId));
+
+    await deleteConsultation(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    expect(harness.stylings.cancelled).toEqual([running!.workflowRunId]);
+    expect(harness.qloo.requests).toEqual([]);
+    expect(await rowsStoredFor(consultationId, [])).toEqual({ stylings: [], styleIcons: [], outfits: [], pieces: [] });
+    expect(harness.blob.objects.size).toBe(0);
+  });
+
+  it.each([
+    ["Finding Style Icons, as Qloo answers", "style-icons"],
+    ["Building Outfits, as the AI tailors them", "tailoring"],
+    ["Generating Previews", "previews"],
+  ] as const)("mid-Styling, while %s, leaves the step nothing to save into, and nothing more is stored", async (_name, moment) => {
+    const browser = await signedInUser();
+    harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+    const consultationId = await start(browser, "face");
+    let deleted = false;
+    let storedBeforeDeleting = 0;
+    const deleteOnce = async () => {
+      if (deleted) return;
+      deleted = true;
+      expect(await deleteConsultation(harness.context(browser), consultationId)).toEqual({ ok: true });
+      storedBeforeDeleting = harness.blob.stored.length;
+    };
+    if (moment === "style-icons") harness.qloo.duringRequest = deleteOnce;
+    else harness.ai.duringCall = async (call) => {
+      if (call === (moment === "tailoring" ? "tailorPieces" : "renderPreview")) await deleteOnce();
+    };
+
+    await harness.stylings.runPending();
+
+    expect(deleted).toBe(true);
+    expect(await rowsStoredFor(consultationId, [])).toEqual({ stylings: [], styleIcons: [], outfits: [], pieces: [] });
+    expect(harness.blob.objects.size).toBe(0);
+    expect(harness.blob.stored.slice(storedBeforeDeleting)).toEqual([]);
+  });
+
+  it("still deletes everything when the run can't be cancelled, and the run then saves nothing", async () => {
+    const browser = await signedInUser();
+    harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+    const consultationId = await start(browser, "face");
+    harness.stylings.cancelFails = true;
+
+    const result = await deleteConsultation(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    expect(result).toEqual({ ok: true });
+    expect(await rowsStoredFor(consultationId, [])).toEqual({ stylings: [], styleIcons: [], outfits: [], pieces: [] });
+    expect(harness.blob.objects.size).toBe(0);
+    expect(harness.qloo.requests).toEqual([]);
+  });
+
+  it("keeps a Consultation whose Blob objects couldn't be deleted, its Styling stopped, to delete again", async () => {
+    const browser = await signedInUser();
+    harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+    const consultationId = await start(browser, "face");
+    harness.blob.deleteFolderFails = true;
+
+    await expect(deleteConsultation(harness.context(browser), consultationId)).rejects.toThrow("Blob storage is down.");
+    harness.blob.deleteFolderFails = false;
+
+    expect(await listConsultations(harness.context(browser))).toEqual([
+      expect.objectContaining({ id: consultationId, state: "no_outfits" }),
+    ]);
+    expect(await deleteConsultation(harness.context(browser), consultationId)).toEqual({ ok: true });
+    expect(harness.blob.objects.size).toBe(0);
+  });
+
+  it("finds nothing to delete for an id that doesn't exist", async () => {
+    const browser = await signedInUser();
+
+    expect(await deleteConsultation(harness.context(browser), "no-such-consultation")).toEqual({ ok: false, refusal: "not-found" });
+  });
+});
+
 /** Starts a Consultation with a plain JPEG, returning its id. */
 async function start(browser: TestBrowser, photoType: PhotoType, budgetTier?: BudgetTier): Promise<string> {
   const result = await getMyOutfits(browser, photoType, budgetTier);
@@ -340,6 +554,16 @@ async function signedInUser(overrides: Partial<SignUpInput> = {}): Promise<TestB
 async function consultationsOf(browser: TestBrowser) {
   const user = await readSignedInUser(harness.context(browser));
   return harness.db.select().from(consultation).where(eq(consultation.userId, user!.id)).orderBy(consultation.createdAt);
+}
+
+/** Every row still stored for the Consultation: its Stylings, Style Icons and Outfits, and the Pieces of the Outfits given. */
+async function rowsStoredFor(consultationId: string, outfitIds: string[]) {
+  return {
+    stylings: await harness.db.select().from(styling).where(eq(styling.consultationId, consultationId)),
+    styleIcons: await harness.db.select().from(styleIcon).where(eq(styleIcon.consultationId, consultationId)),
+    outfits: await harness.db.select().from(outfit).where(eq(outfit.consultationId, consultationId)),
+    pieces: outfitIds.length === 0 ? [] : await harness.db.select().from(piece).where(inArray(piece.outfitId, outfitIds)),
+  };
 }
 
 /** A small, plain image in the given format. */

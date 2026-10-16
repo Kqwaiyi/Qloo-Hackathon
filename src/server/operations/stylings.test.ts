@@ -10,7 +10,7 @@ import { readConsultation, startConsultation } from "@/server/operations/consult
 import { readSignedInUser } from "@/server/operations/session";
 import { readStylingStatus, type StylingProgressView } from "@/server/operations/stylings";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
-import { qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
+import { qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
 import { createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities.
@@ -1086,11 +1086,6 @@ it("starts no Styling for a rejected photo", async () => {
     expect.objectContaining({ userId: (await readSignedInUser(harness.context(browser)))!.id }),
   );
 });
-
-/** A Qloo person entity, as Qloo sends it. */
-function qlooPerson(entityId: string, name: string, affinity: number) {
-  return { entity_id: entityId, name, type: "urn:entity", subtype: "urn:entity:person", properties: {}, query: { affinity } };
-}
 
 /** A Qloo Brand entity, as Qloo sends it, for everyone unless `targetGender` says otherwise. */
 function qlooBrand(

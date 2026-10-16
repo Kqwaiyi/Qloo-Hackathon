@@ -9,12 +9,6 @@ const MEDIA_TYPES: Partial<Record<string, PhotoMediaType>> = {
   webp: "image/webp",
 };
 
-export const PHOTO_EXTENSIONS: Record<PhotoMediaType, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-};
-
 // Far above any photo the browser sends (1600 px on its long side), but low enough that a small
 // file can't expand into a huge image when decoded.
 const MAX_PIXELS = 50_000_000;

@@ -33,6 +33,10 @@ export class LocalBlobStore implements BlobStore {
     await Promise.all([rm(file, { force: true }), rm(`${file}.content-type`, { force: true })]);
   }
 
+  async deleteFolder(folder: string): Promise<void> {
+    await rm(this.fileFor(folder), { recursive: true, force: true });
+  }
+
   private fileFor(pathname: string): string {
     const file = path.resolve(this.folder, pathname);
     if (!file.startsWith(path.resolve(this.folder) + path.sep)) throw new Error(`Bad blob pathname: ${pathname}`);

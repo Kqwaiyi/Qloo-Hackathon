@@ -16,4 +16,6 @@ export interface BlobStore {
   signedUrl(pathname: string, validUntil: Date): Promise<string>;
   /** Deletes the object, if there is one. */
   delete(pathname: string): Promise<void>;
+  /** Deletes every object whose pathname starts with `folder/`, if there are any. */
+  deleteFolder(folder: string): Promise<void>;
 }
