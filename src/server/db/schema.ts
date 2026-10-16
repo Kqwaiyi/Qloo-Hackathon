@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, index, integer, pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, check, index, integer, jsonb, pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 import { STYLE_PREFERENCES } from "../../config/accounts";
 import { AGE_GROUPS, BUDGET_TIERS, PHOTO_TYPES, type PhotoStyleWords } from "../../config/consultations";
@@ -119,3 +119,12 @@ export const consultation = pgTable(
     check("consultation_budget_tier_for_body_photos", sql`(${table.photoType} = 'face') = (${table.budgetTier} is null)`),
   ],
 );
+
+// The Qloo cache: every Qloo response, trimmed to the fields the app uses, for QLOO_CACHE_LIFETIME_DAYS.
+
+export const qlooCache = pgTable("qloo_cache", {
+  // The canonical request, with its parameters sorted and their values normalised.
+  requestKey: text("request_key").primaryKey(),
+  body: jsonb("body").notNull(),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+});

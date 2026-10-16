@@ -15,6 +15,13 @@
       "when": 1792131140505,
       "tag": "0001_consultations",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792154620688,
+      "tag": "0002_qloo_cache",
+      "breakpoints": true
     }
   ]
 }

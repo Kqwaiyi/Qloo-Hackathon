@@ -19,7 +19,7 @@ npm run typecheck
 npm run test:e2e
 ```
 
-- `npm test` runs the server operations against a fresh in-memory PGlite per test file, with the real migrations and Better Auth running for real, the fake AI adapter with no delay, and an in-memory Blob store. It also runs the Gmail purge's Apps Script against a fake Gmail mailbox.
+- `npm test` runs the server operations against a fresh in-memory PGlite per test file, with the real migrations and Better Auth running for real, the fake AI adapter with no delay, and an in-memory Blob store. It also runs the Qloo client against a fake Qloo transport, and the Gmail purge's Apps Script against a fake Gmail mailbox. No test calls Qloo or Gemini.
 - `npm run test:e2e` runs the Playwright smoke tests against a dev server on port 3100 with an in-memory database. Stop any other `npm run dev` in this folder first, since Next.js allows one dev server per folder. Run `npx playwright install chromium` once, or set `PLAYWRIGHT_CHANNEL=chrome` to use an installed Chrome.
 
 ## Team Gmail
