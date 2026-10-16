@@ -19,8 +19,18 @@ npm run typecheck
 npm run test:e2e
 ```
 
-- `npm test` runs the server operations against a fresh in-memory PGlite per test file, with the real migrations and Better Auth running for real.
+- `npm test` runs the server operations against a fresh in-memory PGlite per test file, with the real migrations and Better Auth running for real. It also runs the Gmail purge's Apps Script against a fake Gmail mailbox.
 - `npm run test:e2e` runs the Playwright smoke tests against a dev server on port 3100 with an in-memory database. Stop any other `npm run dev` in this folder first, since Next.js allows one dev server per folder. Run `npx playwright install chromium` once, or set `PLAYWRIGHT_CHANNEL=chrome` to use an installed Chrome.
+
+## Team Gmail
+
+Every email the app sends goes out over SMTP from a throwaway team Gmail account. To set it up, or to make a new app password after the account's password changes, run:
+
+```bash
+bash scripts/setup-team-gmail.sh
+```
+
+The wizard walks through the account, 2-Step Verification and the app password, and writes `GMAIL_USER` and `GMAIL_APP_PASSWORD` to `.env.local`. Next it sends a test email to the account's `+demo` address, which the Demo Account uses, then has you add both variables to Vercel for Production. Finally it installs [scripts/gmail-purge](scripts/gmail-purge/), an Apps Script in the account that permanently deletes sent mail older than a day, every day. That covers everything in Sent, the team's own replies included.
 
 ## Database changes
 
