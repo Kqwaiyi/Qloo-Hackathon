@@ -228,10 +228,12 @@ copy_to_clipboard() {
   fi
 }
 
+# Answers drop spaces and invisible characters, such as the one Ctrl+V types in Git Bash.
 ask_gmail_user() {
   while :; do
     ask GMAIL_USER "The account's address (name@gmail.com):"
-    [[ "$GMAIL_USER" =~ ^[^@+[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] && break
+    GMAIL_USER="${GMAIL_USER//[^[:graph:]]/}"
+    [[ "$GMAIL_USER" =~ ^[^@+]+@[^@]+\.[^@]+$ ]] && break
     warn "That doesn't look like an email address without a +tag."
   done
   write_env GMAIL_USER "$GMAIL_USER"
@@ -240,7 +242,7 @@ ask_gmail_user() {
 ask_app_password() {
   while :; do
     ask_secret GMAIL_APP_PASSWORD "Paste the app password (hidden):"
-    GMAIL_APP_PASSWORD="${GMAIL_APP_PASSWORD// /}" # Google shows it in groups of four
+    GMAIL_APP_PASSWORD="${GMAIL_APP_PASSWORD//[^[:graph:]]/}" # Google shows it in groups of four
     [[ "$GMAIL_APP_PASSWORD" =~ ^[a-z]{16}$ ]] && break
     warn "An app password is 16 letters. Paste it again."
   done
@@ -269,6 +271,7 @@ open_url "https://accounts.google.com/signup"
 step "Create a personal Gmail account named \"Outfit Recommender\". Google may ask for a phone number."
 step "Keep its password in the team's password manager, never in the repo."
 step "Add a teammate's phone or email for recovery, so nobody gets locked out."
+note "To paste in Git Bash, right-click or press Shift+Insert. Ctrl+V doesn't paste there."
 ask_gmail_user
 
 stage "Turn on 2-Step Verification"
