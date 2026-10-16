@@ -1,11 +1,18 @@
-import type { PhotoStyleWords, PhotoType } from "@/config/consultations";
+import * as z from "zod";
+
+import type { Line } from "@/config/accounts";
+import { type AgeGroup, CATEGORIES, type Category, type PhotoStyleWords, type PhotoType } from "@/config/consultations";
 
 // Our own AI provider interface (spec: "AI provider interface"). The domain depends only on this,
-// never on the AI SDK or Gemini. It has nothing for age, ethnicity, skin tone, body measurements or
-// health (ADR-0005).
+// never on the AI SDK or Gemini. Nothing it returns guesses age, ethnicity, skin tone, body
+// measurements or health (ADR-0005): the age group tailoring receives comes from sign-up.
 
 export const PHOTO_MEDIA_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 export type PhotoMediaType = (typeof PHOTO_MEDIA_TYPES)[number];
+
+export function isPhotoMediaType(contentType: string): contentType is PhotoMediaType {
+  return (PHOTO_MEDIA_TYPES as readonly string[]).includes(contentType);
+}
 
 /** A photo's bytes, exactly as the browser shrank them. */
 export interface Photo {
@@ -42,7 +49,52 @@ export interface PhotoCheckReport {
 /** What the model reported, or that Google blocked the photo, so the model reported nothing. */
 export type PhotoCheckResult = { blocked: true } | { blocked: false; report: PhotoCheckReport };
 
+/**
+ * What one Outfit's Pieces are tailored from. Never the Country or the Budget Tier: the Brands
+ * already reflect them. Ticket 14 adds each Brand Piece's Brand.
+ */
+export interface TailoringInput {
+  /** The photo itself, never a stored text description of the person. */
+  photo: Photo;
+  photoType: PhotoType;
+  ageGroup: AgeGroup;
+  photoStyle: PhotoStyleWords;
+  /** The Outfit's line. The model never guesses it from the photo. */
+  line: Line;
+  /** The Hairstyle is built from the Style Icon's name alone, never Qloo's image of them. */
+  styleIconName: string;
+  /** One per Piece to tailor. */
+  pieces: readonly { category: Category }[];
+}
+
+/**
+ * The structured output a model is asked for: one Piece per Category it was given. Models don't
+ * always keep to it, so our code checks every reply against it and our own rules.
+ */
+export const tailoredPiecesSchema = z.object({
+  pieces: z.array(
+    z.object({
+      category: z.enum(CATEGORIES),
+      /** A card label of about 6 words, colour included. For the Hairstyle, the cut. */
+      item: z.string(),
+      /** One sentence on colour, fabric, fit and cut, for the Preview. Not shown. */
+      details: z.string(),
+      /** One line of about 20 words, in English and second person, on why it suits the user. */
+      why: z.string(),
+      /** The Hairstyle only: the model didn't know the Style Icon's signature cut, so based it on the Outfit. */
+      unknownCut: z.boolean().optional(),
+    }),
+  ),
+});
+export type TailoredPieces = z.infer<typeof tailoredPiecesSchema>;
+
 export interface AiProvider {
   /** Checks a photo and reads its Photo Style. Throws if the check still errors after the AI SDK's own retries. */
   checkPhoto(input: PhotoCheckInput): Promise<PhotoCheckResult>;
+  /**
+   * Tailors one Outfit's Pieces to the photo, returning the model's reply as it came: meant to match
+   * `tailoredPiecesSchema`, but unchecked. A reply that doesn't match still comes back rather than
+   * throwing, since our code checks it and asks again. Throws only on errors worth retrying.
+   */
+  tailorPieces(input: TailoringInput): Promise<unknown>;
 }

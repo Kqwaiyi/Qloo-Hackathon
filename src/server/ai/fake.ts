@@ -1,6 +1,17 @@
-import type { PhotoType } from "@/config/consultations";
+import { createHash } from "node:crypto";
 
-import type { AiProvider, PhotoCheckInput, PhotoCheckReport, PhotoCheckResult, PhotoVisibility } from "./provider";
+import type { Category, PhotoType } from "@/config/consultations";
+
+import type {
+  AiProvider,
+  PhotoCheckInput,
+  PhotoCheckReport,
+  PhotoCheckResult,
+  PhotoMediaType,
+  PhotoVisibility,
+  TailoredPieces,
+  TailoringInput,
+} from "./provider";
 
 /**
  * Which outcome the fake adapter plays. `pass` passes every photo with Photo Style casual: the photo
@@ -17,6 +28,13 @@ import type { AiProvider, PhotoCheckInput, PhotoCheckReport, PhotoCheckResult, P
  *   chosen.
  * - `check-errors`: the photo check throws, as a real one does when it still errors after the AI
  *   SDK's own retries.
+ *
+ * Tailoring makes generic items in the right Categories, each `why` naming the Style Icon, and the
+ * cut known. Its scenarios pass every photo:
+ * - `unknown-cut`: the Hairstyle's cut is marked unknown, based on the Outfit and Photo Style, and
+ *   its `why` doesn't name the Style Icon.
+ * - `tailoring-fails`: every reply breaks a rule, as a broken model's would: a price, an empty
+ *   field, a missing Category, a Category twice, or not the schema at all, in turn.
  */
 export const FAKE_AI_SCENARIOS = [
   "pass",
@@ -29,11 +47,17 @@ export const FAKE_AI_SCENARIOS = [
   "hair-not-visible",
   "hair-covered",
   "check-errors",
+  "unknown-cut",
+  "tailoring-fails",
 ] as const;
 export type FakeAiScenario = (typeof FAKE_AI_SCENARIOS)[number];
+export type FakeTailoringScenario = Extract<FakeAiScenario, "pass" | "unknown-cut" | "tailoring-fails">;
 
 /** About as long as a real photo check, so local development feels like the real thing. */
 export const DEFAULT_FAKE_AI_DELAY_MS = 1000;
+
+/** A tailoring the fake was asked for, with the photo as its fingerprint: it never keeps a photo. */
+export type FakeTailoringRequest = Omit<TailoringInput, "photo"> & { photo: { mediaType: PhotoMediaType; sha256: string } };
 
 export interface FakeAiOptions {
   scenario?: FakeAiScenario;
@@ -50,6 +74,10 @@ export class FakeAiProvider implements AiProvider {
   delayMs: number;
   /** How many photo checks it has been asked for. Only a count: it never keeps a photo. */
   photoCheckCount = 0;
+  /** Scenarios for tailoring particular Style Icons' Outfits, by name, in place of `scenario`. */
+  styleIconScenarios: Partial<Record<string, FakeTailoringScenario>> = {};
+  /** Every tailoring it has been asked for, oldest first. */
+  readonly tailoringRequests: FakeTailoringRequest[] = [];
 
   constructor({ scenario = "pass", delayMs = DEFAULT_FAKE_AI_DELAY_MS }: FakeAiOptions = {}) {
     this.scenario = scenario;
@@ -62,6 +90,17 @@ export class FakeAiProvider implements AiProvider {
     if (this.scenario === "check-errors") throw new Error("The fake photo check errored, as its scenario asks.");
     if (this.scenario === "blocked") return { blocked: true };
     return { blocked: false, report: reportFor(this.scenario, input.photoType) };
+  }
+
+  async tailorPieces(input: TailoringInput): Promise<unknown> {
+    const { photo, ...rest } = input;
+    this.tailoringRequests.push({ ...rest, photo: { mediaType: photo.mediaType, sha256: createHash("sha256").update(photo.bytes).digest("hex") } });
+    await this.wait();
+    const scenario = this.styleIconScenarios[input.styleIconName] ?? this.scenario;
+    const tailored = { pieces: input.pieces.map(({ category }) => fakePiece(category, input, scenario !== "unknown-cut")) };
+    if (scenario !== "tailoring-fails") return tailored;
+    const breakRule = BROKEN_TAILORING[(this.tailoringRequests.length - 1) % BROKEN_TAILORING.length]!;
+    return breakRule(tailored);
   }
 
   private async wait(): Promise<void> {
@@ -105,7 +144,68 @@ function reportFor(scenario: Exclude<FakeAiScenario, "blocked" | "check-errors">
       return { ...passing, visible: { ...NOTHING_VISIBLE, face: true } };
     case "hair-covered":
       return { ...passing, visible: { ...VISIBLE_BY_PHOTO_TYPE.full_body, hair: false }, hairCovered: true };
+    case "unknown-cut":
+    case "tailoring-fails":
+      return passing;
   }
+}
+
+/** A generic Piece, built from the tailoring's inputs. */
+function fakePiece(category: Category, { photoStyle, styleIconName }: TailoringInput, cutKnown: boolean): TailoredPieces["pieces"][number] {
+  const style = photoStyle[0];
+  const styleWords = photoStyle.join(" and ");
+  switch (category) {
+    case "hairstyle":
+      return cutKnown
+        ? {
+            category,
+            item: `${capitalised(style)} textured cut with soft layers`,
+            details: `A ${style} textured cut with soft layers, a little shorter at the sides, in your own hair colour.`,
+            why: `${styleIconName}'s signature cut, reworked so your current hair carries it with your ${styleWords} Photo Style.`,
+            unknownCut: false,
+          }
+        : {
+            category,
+            item: `${capitalised(style)} soft layered cut`,
+            details: `A ${style} soft layered cut, trimmed to shape from your current length, in your own hair colour.`,
+            why: `A ${styleWords} cut picked to go with this Outfit, and easy to reach from the hair you have now.`,
+            unknownCut: true,
+          };
+    case "top":
+      return {
+        category,
+        item: "Navy relaxed cotton overshirt",
+        details: "A navy cotton overshirt with a relaxed fit, a straight hem and two chest pockets.",
+        why: `An easy layer in the spirit of ${styleIconName}, at home with your ${styleWords} Photo Style.`,
+      };
+    case "bottom":
+      return {
+        category,
+        item: "Charcoal straight-leg cotton chinos",
+        details: "Charcoal cotton chinos with a straight leg, a mid rise and a clean, pressed finish.",
+        why: `Straight-leg chinos ${styleIconName} would reach for, keeping your ${styleWords} Outfit grounded.`,
+      };
+    case "shoes":
+      return {
+        category,
+        item: "White low-top leather trainers",
+        details: "White leather low-top trainers with a slim gum sole and tonal laces.",
+        why: `Clean trainers that finish the Outfit the way ${styleIconName} does, and suit your ${styleWords} style.`,
+      };
+  }
+}
+
+/** Ways a broken model's reply breaks our rules, each made from a good reply. */
+const BROKEN_TAILORING: ((tailored: TailoredPieces) => unknown)[] = [
+  ({ pieces }) => ({ pieces: pieces.map((tailored) => ({ ...tailored, why: `${tailored.why} Yours for about $40.` })) }),
+  ({ pieces }) => ({ pieces: pieces.map((tailored) => ({ ...tailored, item: " " })) }),
+  ({ pieces }) => ({ pieces: pieces.slice(0, -1) }),
+  ({ pieces }) => ({ pieces: [...pieces, pieces[0]] }),
+  ({ pieces }) => ({ pieces: pieces.map(({ category, item }) => ({ category, item })) }),
+];
+
+function capitalised(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
 /** The fake adapter as local development configures it: FAKE_AI_SCENARIO and FAKE_AI_DELAY_MS. */

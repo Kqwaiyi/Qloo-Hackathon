@@ -24,3 +24,12 @@ export const OUTFITS_PER_STYLING = 2;
 
 /** How often a page waiting on a Styling asks for its status. */
 export const STYLING_STATUS_POLL_INTERVAL_MS = 1000;
+
+/** The AI gets this many tries at an Outfit's Pieces: bad output is retried once, then tailoring has failed. */
+export const TAILORING_ATTEMPTS = 2;
+
+/**
+ * A Style Icon whose tailoring failed is skipped for the next unused one, at most this many times
+ * per Styling, so a broken model can't burn through the Style Icons.
+ */
+export const MAX_TAILORING_SUBSTITUTES = 2;

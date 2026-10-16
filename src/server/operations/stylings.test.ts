@@ -1,9 +1,10 @@
 import { asc, eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { PhotoType } from "@/config/consultations";
-import { consultation, qlooCache, styleIcon, styling, user } from "@/server/db/schema";
+import { consultation, outfit, piece, qlooCache, styleIcon, styling, user } from "@/server/db/schema";
 import { readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
 import { readStylingStatus } from "@/server/operations/stylings";
@@ -14,6 +15,12 @@ import { createTestHarness, TestBrowser, type TestHarness } from "@/test/harness
 // Made-up people, shaped like Qloo's person entities.
 const WOMEN = [qlooPerson("w-1", "Ava Stone", 0.94), qlooPerson("w-2", "Bea Marsh", 0.91), qlooPerson("w-3", "Cleo Hart", 0.88)];
 const MEN = [qlooPerson("m-1", "Dev Rowe", 0.93), qlooPerson("m-2", "Eli Frost", 0.9), qlooPerson("m-3", "Finn Ash", 0.85)];
+const SIX_WOMEN = [
+  ...WOMEN,
+  qlooPerson("w-4", "Dana Reed", 0.86),
+  qlooPerson("w-5", "Esme Vale", 0.84),
+  qlooPerson("w-6", "Fay Lowe", 0.8),
+];
 
 let harness: TestHarness;
 
@@ -25,6 +32,8 @@ beforeEach(async () => {
   harness.clock.set("2026-10-16T12:00:00Z");
   harness.blob.objects.clear();
   harness.ai.scenario = "pass";
+  harness.ai.styleIconScenarios = {};
+  harness.ai.tailoringRequests.length = 0;
   harness.stylings.pending.length = 0;
   harness.qloo.requests.length = 0;
   harness.qloo.respond = peopleByGender({ female: WOMEN, male: MEN });
@@ -53,6 +62,7 @@ describe("a new Consultation's first Styling", () => {
         stageMovedAt: new Date("2026-10-16T12:30:00Z"),
         outfitsWanted: 2,
         outfitsMade: 0,
+        tailoringFailures: 0,
         failureReason: null,
         workflowRunId: expect.any(String),
         startedAt: new Date("2026-10-16T12:30:00Z"),
@@ -181,6 +191,149 @@ describe("a new Consultation's first Styling", () => {
     expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.styleIconName)).toEqual([
       "Dev Rowe",
       "Eli Frost",
+    ]);
+  });
+});
+
+describe("each Outfit's Pieces", () => {
+  it("are a Face Photo's Hairstyle only, each Outfit the next Style Icon's, tailored to the photo", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear", birthDate: { day: "2", month: "2", year: "1992" } });
+
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toEqual([
+      {
+        id: expect.any(String),
+        position: 1,
+        styleIconName: "Ava Stone",
+        pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone") }],
+      },
+      {
+        id: expect.any(String),
+        position: 2,
+        styleIconName: "Bea Marsh",
+        pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Bea Marsh") }],
+      },
+    ]);
+    expect(await piecesOf(consultationId)).toEqual([
+      { category: "hairstyle", item: expect.any(String), details: expect.any(String), why: expect.stringContaining("Ava Stone"), unknownCut: false },
+      { category: "hairstyle", item: expect.any(String), details: expect.any(String), why: expect.stringContaining("Bea Marsh"), unknownCut: false },
+    ]);
+  });
+
+  it("keep the Style Icon when the AI doesn't know their signature cut, marking the Hairstyle's cut unknown", async () => {
+    harness.ai.scenario = "unknown-cut";
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+
+    const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(outfits.map((o) => o.styleIconName)).toEqual(["Ava Stone", "Bea Marsh"]);
+    expect(await piecesOf(consultationId)).toEqual([
+      expect.objectContaining({ category: "hairstyle", unknownCut: true, why: expect.not.stringContaining("Ava Stone") }),
+      expect.objectContaining({ category: "hairstyle", unknownCut: true, why: expect.not.stringContaining("Bea Marsh") }),
+    ]);
+  });
+
+  it("come from the next Style Icon, quietly taking the place of one whose tailoring failed after its retry", async () => {
+    harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails" };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toEqual([
+      expect.objectContaining({ position: 1, styleIconName: "Cleo Hart", pieces: [expect.objectContaining({ category: "hairstyle" })] }),
+      expect.objectContaining({ position: 2, styleIconName: "Bea Marsh", pieces: [expect.objectContaining({ category: "hairstyle" })] }),
+    ]);
+    expect(await styleIconStatuses(consultationId)).toEqual([
+      ["Ava Stone", "skipped"],
+      ["Bea Marsh", "used"],
+      ["Cleo Hart", "used"],
+    ]);
+    expect(await stylingsOf(consultationId)).toEqual([
+      expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 1 }),
+    ]);
+    expect(harness.ai.tailoringRequests.map((request) => request.styleIconName).toSorted()).toEqual([
+      "Ava Stone",
+      "Ava Stone",
+      "Bea Marsh",
+      "Cleo Hart",
+    ]);
+  });
+
+  it("stop coming from substitutes after 2, so a broken model can't burn through the Style Icons", async () => {
+    harness.qloo.respond = peopleByGender({ female: SIX_WOMEN });
+    harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails", "Cleo Hart": "tailoring-fails", "Dana Reed": "tailoring-fails" };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toEqual([
+      expect.objectContaining({ position: 1, styleIconName: "Bea Marsh" }),
+    ]);
+    expect(await styleIconStatuses(consultationId)).toEqual([
+      ["Ava Stone", "skipped"],
+      ["Bea Marsh", "used"],
+      ["Cleo Hart", "skipped"],
+      ["Dana Reed", "skipped"],
+      ["Esme Vale", "unused"],
+      ["Fay Lowe", "unused"],
+    ]);
+    expect(await stylingsOf(consultationId)).toEqual([
+      expect.objectContaining({ status: "succeeded", outfitsWanted: 2, outfitsMade: 1, tailoringFailures: 3 }),
+    ]);
+  });
+
+  it("fail the Styling as nothing could be built when tailoring keeps failing, after 2 substitutes", async () => {
+    harness.qloo.respond = peopleByGender({ female: SIX_WOMEN });
+    harness.ai.scenario = "tailoring-fails";
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "no_outfits", outfits: [] });
+    expect(await stylingsOf(consultationId)).toEqual([
+      expect.objectContaining({ status: "failed", failureReason: "nothing_built", outfitsMade: 0, tailoringFailures: 4 }),
+    ]);
+    expect((await styleIconStatuses(consultationId)).map(([, status]) => status)).toEqual([
+      "skipped",
+      "skipped",
+      "skipped",
+      "skipped",
+      "unused",
+      "unused",
+    ]);
+    // Each Style Icon's bad reply was retried once.
+    expect(harness.ai.tailoringRequests).toHaveLength(8);
+  });
+
+  it("are tailored from the photo itself and the Outfit, never the Country or the Budget Tier", async () => {
+    harness.qloo.respond = peopleByGender({ male: [MEN[0]!] });
+    const browser = await signedInUser({ stylePreference: "menswear", countryCode: "FR", birthDate: { day: "2", month: "2", year: "1992" } });
+
+    const consultationId = await start(browser, "full_body");
+    await harness.stylings.runPending();
+
+    const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+    expect(harness.ai.tailoringRequests).toEqual([
+      {
+        photo: { mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) },
+        photoType: "full_body",
+        ageGroup: "30_34",
+        photoStyle: ["casual"],
+        line: "menswear",
+        styleIconName: "Dev Rowe",
+        pieces: [{ category: "hairstyle" }],
+      },
+    ]);
+    // A Full-Body Photo's Outfits get a Hairstyle too.
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toEqual([
+      expect.objectContaining({ styleIconName: "Dev Rowe", pieces: [expect.objectContaining({ category: "hairstyle" })] }),
     ]);
   });
 });
@@ -338,6 +491,30 @@ async function start(browser: TestBrowser, photoType: PhotoType): Promise<string
 
 async function stylingsOf(consultationId: string) {
   return harness.db.select().from(styling).where(eq(styling.consultationId, consultationId));
+}
+
+/** Each ranked Style Icon's name and whether it was used, best first. */
+async function styleIconStatuses(consultationId: string) {
+  const icons = await harness.db
+    .select({ name: styleIcon.name, status: styleIcon.status })
+    .from(styleIcon)
+    .where(eq(styleIcon.consultationId, consultationId))
+    .orderBy(asc(styleIcon.position));
+  return icons.map(({ name, status }) => [name, status]);
+}
+
+/** The stored Pieces of the Consultation's Outfits, in Outfit order. */
+async function piecesOf(consultationId: string) {
+  return harness.db
+    .select({ category: piece.category, item: piece.item, details: piece.details, why: piece.why, unknownCut: piece.unknownCut })
+    .from(piece)
+    .innerJoin(outfit, eq(outfit.id, piece.outfitId))
+    .where(eq(outfit.consultationId, consultationId))
+    .orderBy(asc(outfit.position));
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 let userCount = 0;

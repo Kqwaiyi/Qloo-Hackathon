@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { LocalDate } from "@/components/local-date";
-import { PHOTO_TYPE_LABELS } from "@/config/consultations";
+import { CATEGORY_LABELS, PHOTO_TYPE_LABELS } from "@/config/consultations";
 import { getConsultation } from "@/server/data/consultations";
-import type { OutfitView } from "@/server/operations/consultations";
+import type { OutfitView, PieceView } from "@/server/operations/consultations";
 
 import { StylingProgress } from "./styling-progress";
 
@@ -63,6 +63,29 @@ function OutfitCard({ outfit }: { outfit: OutfitView }) {
       <h2 className="text-lg font-semibold">
         Outfit {outfit.position} · Inspired by {outfit.styleIconName}
       </h2>
+      {outfit.pieces.length > 0 && (
+        <ul aria-label="Pieces" className="mt-3">
+          {outfit.pieces.map((piece) => (
+            <li key={piece.category}>
+              <PieceRow piece={piece} styleIconName={outfit.styleIconName} />
+            </li>
+          ))}
+        </ul>
+      )}
     </article>
+  );
+}
+
+/** A Piece's row. The Hairstyle names its Style Icon and has no price or link: it isn't something to buy. */
+function PieceRow({ piece, styleIconName }: { piece: PieceView; styleIconName: string }) {
+  return (
+    <div className="grid grid-cols-[80px_1fr] gap-3 border-t border-stone-100 py-3">
+      <div className="text-xs font-semibold tracking-wide text-stone-500 uppercase">{CATEGORY_LABELS[piece.category]}</div>
+      <div>
+        <div className="font-medium">{piece.item}</div>
+        {piece.category === "hairstyle" && <div className="text-sm text-stone-600">Style Icon: {styleIconName}</div>}
+        <p className="mt-1 text-sm text-stone-600 italic">{piece.why}</p>
+      </div>
+    </div>
   );
 }

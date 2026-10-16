@@ -1,7 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { BlobStore } from "./store";
+import type { BlobStore, StoredBlob } from "./store";
 
 /**
  * Local development's Blob store when no BLOB_READ_WRITE_TOKEN is set: files in a folder, shown
@@ -17,10 +17,15 @@ export class LocalBlobStore implements BlobStore {
     await writeFile(`${file}.content-type`, contentType);
   }
 
-  async signedUrl(pathname: string): Promise<string> {
+  async get(pathname: string): Promise<StoredBlob> {
     const file = this.fileFor(pathname);
     const [bytes, contentType] = await Promise.all([readFile(file), readFile(`${file}.content-type`, "utf8")]);
-    return `data:${contentType};base64,${bytes.toString("base64")}`;
+    return { bytes: new Uint8Array(bytes), contentType };
+  }
+
+  async signedUrl(pathname: string): Promise<string> {
+    const { bytes, contentType } = await this.get(pathname);
+    return `data:${contentType};base64,${Buffer.from(bytes).toString("base64")}`;
   }
 
   async delete(pathname: string): Promise<void> {

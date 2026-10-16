@@ -2,7 +2,14 @@ import { sql } from "drizzle-orm";
 import { boolean, check, index, integer, jsonb, pgEnum, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
 
 import { LINES, STYLE_PREFERENCES } from "../../config/accounts";
-import { AGE_GROUPS, BUDGET_TIERS, CONSULTATION_STATES, PHOTO_TYPES, type PhotoStyleWords } from "../../config/consultations";
+import {
+  AGE_GROUPS,
+  BUDGET_TIERS,
+  CATEGORIES,
+  CONSULTATION_STATES,
+  PHOTO_TYPES,
+  type PhotoStyleWords,
+} from "../../config/consultations";
 import {
   STYLE_ICON_STATUSES,
   STYLING_FAILURE_REASONS,
@@ -161,6 +168,9 @@ export const styling = pgTable(
     stageMovedAt: timestamp("stage_moved_at", { withTimezone: true }).notNull(),
     outfitsWanted: integer("outfits_wanted").notNull(),
     outfitsMade: integer("outfits_made").notNull(),
+    // Style Icons it skipped because their tailoring failed. Each is replaced by the next unused
+    // Style Icon, up to MAX_TAILORING_SUBSTITUTES times.
+    tailoringFailures: integer("tailoring_failures").notNull(),
     failureReason: stylingFailureReasonEnum("failure_reason"),
     workflowRunId: text("workflow_run_id"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
@@ -220,6 +230,32 @@ export const outfit = pgTable(
   (table) => [
     index("outfit_consultation_id_idx").on(table.consultationId),
     unique("outfit_styling_id_position_unique").on(table.stylingId, table.position),
+  ],
+);
+
+export const categoryEnum = pgEnum("category", CATEGORIES);
+
+/** One per Category an Outfit fills, tailored by the AI. */
+export const piece = pgTable(
+  "piece",
+  {
+    id: text("id").primaryKey(),
+    outfitId: text("outfit_id")
+      .notNull()
+      .references(() => outfit.id, { onDelete: "cascade" }),
+    category: categoryEnum("category").notNull(),
+    // A card label of about 6 words; for the Hairstyle, the cut.
+    item: text("item").notNull(),
+    // One sentence on colour, fabric, fit and cut, for the Preview. Never shown.
+    details: text("details").notNull(),
+    // One line on why it suits the user.
+    why: text("why").notNull(),
+    // The Hairstyle only: the AI didn't know the Style Icon's signature cut, so based it on the Outfit.
+    unknownCut: boolean("unknown_cut"),
+  },
+  (table) => [
+    unique("piece_outfit_id_category_unique").on(table.outfitId, table.category),
+    check("piece_unknown_cut_for_hairstyles", sql`(${table.category} = 'hairstyle') = (${table.unknownCut} is not null)`),
   ],
 );
 

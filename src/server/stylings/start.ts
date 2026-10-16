@@ -48,6 +48,7 @@ export async function createStyling(tx: Transaction, now: Date, newStyling: NewS
     stageMovedAt: now,
     outfitsWanted: OUTFITS_PER_STYLING,
     outfitsMade: 0,
+    tailoringFailures: 0,
     startedAt: now,
   });
   await tx.update(consultation).set({ state: "styling" }).where(eq(consultation.id, newStyling.consultationId));

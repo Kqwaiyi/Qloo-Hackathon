@@ -8,6 +8,15 @@ import type { QlooPerson } from "@/server/qloo/client";
 /** Each line's people, as its person call ranked them. */
 export type PeopleByLine = Partial<Record<Line, QlooPerson[]>>;
 
+/** One Outfit to tailor: its position in the Styling and the Style Icon inspiring it. */
+export interface OutfitTry {
+  position: number;
+  styleIconId: string;
+}
+
+/** What one tailoring call came to: its Outfit saved or its Style Icon skipped, or a bad reply to ask again. */
+export type TailoringOutcome = "saved" | "ask-again";
+
 /** How the Styling's steps ended: all done, or one still failing after its retries. */
 export type StylingOutcome = "completed" | "broke";
 
@@ -19,8 +28,16 @@ export interface BuildOutfitsSteps {
   fetchStyleIcons(stylingId: string, line: Line): Promise<QlooPerson[]>;
   /** Ranks the Style Icons from the person calls and saves them. */
   saveStyleIcons(stylingId: string, peopleByLine: PeopleByLine): Promise<void>;
-  /** Makes one Outfit per top unused Style Icon, up to the Outfits wanted. */
-  makeOutfits(stylingId: string): Promise<void>;
+  /**
+   * The Outfits to tailor next: one per position still open, each from the next unused Style Icon,
+   * while substitutes for failed tailoring are left. None once every position is filled.
+   */
+  planOutfits(stylingId: string): Promise<OutfitTry[]>;
+  /**
+   * One AI call, the `attempt`th for this Outfit: tailors its Pieces and saves it. A bad reply is
+   * asked again once; when the last attempt is bad too, the Style Icon is skipped.
+   */
+  tailorOutfit(stylingId: string, outfitTry: OutfitTry, attempt: number): Promise<TailoringOutcome>;
   /** Switches in the Outfits made all at once, or fails the Styling if it made none. */
   finish(stylingId: string, outcome: StylingOutcome): Promise<void>;
 }
@@ -36,10 +53,25 @@ export async function buildOutfits(stylingId: string, steps: BuildOutfitsSteps):
       }),
     );
     await steps.saveStyleIcons(stylingId, peopleByLine);
-    await steps.makeOutfits(stylingId);
+    // Building Outfits: each round tailors the open positions at once, and a failed one's
+    // substitute waits for the next round. Every try uses up a Style Icon, so the rounds end.
+    for (let tries = await steps.planOutfits(stylingId); tries.length > 0; tries = await steps.planOutfits(stylingId)) {
+      await waitForAll(
+        tries.map(async (outfitTry) => {
+          let attempt = 1;
+          while ((await steps.tailorOutfit(stylingId, outfitTry, attempt)) === "ask-again") attempt += 1;
+        }),
+      );
+    }
   } catch (error) {
     console.error("A Styling step failed:", error instanceof Error ? error.message : "unknown error");
     outcome = "broke";
   }
   await steps.finish(stylingId, outcome);
+}
+
+/** Waits for every step, so an Outfit saved beside a failing one still counts, then rethrows the first failure. */
+async function waitForAll(running: Promise<void>[]): Promise<void> {
+  const failed = (await Promise.allSettled(running)).find((settled) => settled.status === "rejected");
+  if (failed) throw failed.reason;
 }

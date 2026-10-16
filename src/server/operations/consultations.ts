@@ -1,8 +1,10 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as z from "zod";
 
 import {
+  CATEGORIES,
+  type Category,
   type ConsultationState,
   DEFAULT_BUDGET_TIER,
   PHOTO_LINK_LIFETIME_SECONDS,
@@ -13,7 +15,7 @@ import {
 import type { PhotoCheckResult } from "@/server/ai/provider";
 import { judgePhotoCheck, type PhotoRejection } from "@/server/consultations/photo-check";
 import { PHOTO_EXTENSIONS, readPhotoFile } from "@/server/consultations/photo-file";
-import { consultation, outfit, styleIcon } from "@/server/db/schema";
+import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
@@ -118,6 +120,16 @@ export interface OutfitView {
   position: number;
   /** Shown by name, never with Qloo's image. */
   styleIconName: string;
+  /** One row per Piece, in Category order. */
+  pieces: PieceView[];
+}
+
+/** A Piece's row. Its `details` are for the Preview, never shown. */
+export interface PieceView {
+  category: Category;
+  /** For the Hairstyle, the cut. */
+  item: string;
+  why: string;
 }
 
 /** One of the signed-in user's own Consultations, or null for anyone else's or one that doesn't exist. */
@@ -133,12 +145,31 @@ export async function readConsultation(
     .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)));
   if (!row) return null;
   const linkValidUntil = new Date(ctx.clock.now().getTime() + PHOTO_LINK_LIFETIME_SECONDS * 1000);
-  const outfits = await ctx.db
+  const outfitRows = await ctx.db
     .select({ id: outfit.id, position: outfit.position, styleIconName: styleIcon.name })
     .from(outfit)
     .innerJoin(styleIcon, eq(styleIcon.id, outfit.styleIconId))
     .where(and(eq(outfit.consultationId, row.id), eq(outfit.current, true)))
     .orderBy(asc(outfit.position));
+  const pieceRows =
+    outfitRows.length === 0
+      ? []
+      : await ctx.db
+          .select({ outfitId: piece.outfitId, category: piece.category, item: piece.item, why: piece.why })
+          .from(piece)
+          .where(
+            inArray(
+              piece.outfitId,
+              outfitRows.map((outfitRow) => outfitRow.id),
+            ),
+          );
+  const outfits = outfitRows.map((outfitRow) => ({
+    ...outfitRow,
+    pieces: pieceRows
+      .filter((pieceRow) => pieceRow.outfitId === outfitRow.id)
+      .toSorted((a, b) => CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category))
+      .map(({ category, item, why }) => ({ category, item, why })),
+  }));
   return {
     id: row.id,
     photoUrl: await ctx.blob.signedUrl(row.photoPathname, linkValidUntil),

@@ -100,7 +100,7 @@ export async function createTestHarness(): Promise<TestHarness> {
   const blob = new MemoryBlobStore();
   const qloo = new FakeQlooTransport();
   const qlooClient = new QlooClient({ db, clock, transport: qloo.send, apiUrl: "https://qloo.test", apiKey: "test-qloo-key" });
-  const stylings = new InlineStylingRunner({ db, clock, qloo: qlooClient });
+  const stylings = new InlineStylingRunner({ db, clock, qloo: qlooClient, ai, blob });
 
   return {
     db,

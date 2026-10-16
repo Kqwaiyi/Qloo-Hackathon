@@ -1,10 +1,14 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
-import type { StylingStage } from "@/config/stylings";
+import { MAX_TAILORING_SUBSTITUTES, type StylingStage, TAILORING_ATTEMPTS } from "@/config/stylings";
+import { type AiProvider, isPhotoMediaType, type Photo } from "@/server/ai/provider";
+import { checkTailoredPieces } from "@/server/ai/tailoring";
+import type { BlobStore } from "@/server/blob/store";
 import type { Clock } from "@/server/clock";
 import type { Database, Transaction } from "@/server/db/database";
-import { consultation, outfit, styleIcon, styling } from "@/server/db/schema";
+import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
+import { outfitCategories } from "@/server/outfit-assembly/categories";
 import { rankStyleIcons, styleIconLines, styleIconQuery } from "@/server/outfit-assembly/style-icons";
 import type { QlooClient } from "@/server/qloo/client";
 
@@ -15,6 +19,9 @@ export interface StylingContext {
   db: Database;
   clock: Clock;
   qloo: QlooClient;
+  ai: AiProvider;
+  /** Where the Consultation's photo is kept. Steps pass its pathname, never its bytes. */
+  blob: BlobStore;
 }
 
 /** The Styling has finished, been cancelled or deleted, so its steps stop without saving. */
@@ -63,38 +70,71 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
       });
     },
 
-    async makeOutfits(stylingId) {
+    async planOutfits(stylingId) {
+      const running = await readRunningStyling(ctx.db, stylingId);
+      const made = await ctx.db.select({ position: outfit.position }).from(outfit).where(eq(outfit.stylingId, stylingId));
+      const filled = new Set(made.map((outfitMade) => outfitMade.position));
+      const open = Array.from({ length: running.outfitsWanted }, (_, index) => index + 1).filter((position) => !filled.has(position));
+      // Each failed tailoring was a try beyond the Outfits wanted: a substitute.
+      const triesLeft = running.outfitsWanted + MAX_TAILORING_SUBSTITUTES - made.length - running.tailoringFailures;
+      const count = Math.min(open.length, triesLeft);
+      if (count <= 0) return [];
+      const icons = await ctx.db
+        .select({ id: styleIcon.id })
+        .from(styleIcon)
+        .where(and(eq(styleIcon.stylingId, stylingId), eq(styleIcon.status, "unused")))
+        .orderBy(asc(styleIcon.position))
+        .limit(count);
+      return icons.map((icon, index) => ({ position: open[index]!, styleIconId: icon.id }));
+    },
+
+    async tailorOutfit(stylingId, { position, styleIconId }, attempt) {
+      const toTailor = await readOutfitToTailor(ctx.db, stylingId, styleIconId);
+      // A retry after the save went through has nothing left to do.
+      if (toTailor.styleIconStatus !== "unused") return "saved";
+      // Only the Hairstyle until the Brands stage (ticket 14) gives body photos their Top, Bottom and Shoes.
+      const categories = outfitCategories(toTailor).filter((category) => category === "hairstyle");
+      const pieces =
+        categories.length === 0
+          ? []
+          : checkTailoredPieces(
+              await ctx.ai.tailorPieces({
+                photo: await readPhoto(ctx.blob, toTailor.photoPathname),
+                photoType: toTailor.photoType,
+                ageGroup: toTailor.ageGroup,
+                photoStyle: toTailor.photoStyle,
+                line: toTailor.line,
+                styleIconName: toTailor.styleIconName,
+                pieces: categories.map((category) => ({ category })),
+              }),
+              categories,
+            );
+      // A bad reply is asked again, as its own AI call, before tailoring counts as failed.
+      if (!pieces && attempt < TAILORING_ATTEMPTS) return "ask-again";
       await whileRunning(ctx.db, stylingId, async (tx, running) => {
-        const [made] = await tx.select({ id: outfit.id }).from(outfit).where(eq(outfit.stylingId, stylingId)).limit(1);
-        if (made) return;
-        const icons = await tx
-          .select({ id: styleIcon.id })
-          .from(styleIcon)
-          .where(and(eq(styleIcon.stylingId, stylingId), eq(styleIcon.status, "unused")))
-          .orderBy(asc(styleIcon.position))
-          .limit(running.outfitsWanted);
-        if (icons.length === 0) return;
-        await tx.insert(outfit).values(
-          icons.map((icon, index) => ({
-            id: randomUUID(),
-            consultationId: running.consultationId,
-            stylingId,
-            position: index + 1,
-            styleIconId: icon.id,
-            current: false,
-          })),
-        );
+        const [icon] = await tx.select({ status: styleIcon.status }).from(styleIcon).where(eq(styleIcon.id, styleIconId));
+        if (icon?.status !== "unused") return;
+        if (!pieces) {
+          // Skipped quietly: the next unused Style Icon takes its place, if a substitute is left.
+          await tx.update(styleIcon).set({ status: "skipped" }).where(eq(styleIcon.id, styleIconId));
+          await tx
+            .update(styling)
+            .set({ tailoringFailures: sql`${styling.tailoringFailures} + 1` })
+            .where(eq(styling.id, stylingId));
+          return;
+        }
+        const outfitId = randomUUID();
+        await tx.insert(outfit).values({ id: outfitId, consultationId: running.consultationId, stylingId, position, styleIconId, current: false });
+        if (pieces.length > 0) {
+          await tx.insert(piece).values(pieces.map((tailored) => ({ id: randomUUID(), outfitId, ...tailored })));
+        }
+        await tx.update(styleIcon).set({ status: "used" }).where(eq(styleIcon.id, styleIconId));
         await tx
-          .update(styleIcon)
-          .set({ status: "used" })
-          .where(
-            inArray(
-              styleIcon.id,
-              icons.map((icon) => icon.id),
-            ),
-          );
-        await tx.update(styling).set({ outfitsMade: icons.length }).where(eq(styling.id, stylingId));
+          .update(styling)
+          .set({ outfitsMade: sql`${styling.outfitsMade} + 1` })
+          .where(eq(styling.id, stylingId));
       });
+      return "saved";
     },
 
     finish: (stylingId, outcome) => finishStyling(ctx, stylingId, outcome),
@@ -111,8 +151,16 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
   await ctx.db.transaction(async (tx) => {
     const running = await lockRunningStyling(tx, stylingId);
     if (!running) return;
-    const made = await tx.select({ id: outfit.id }).from(outfit).where(eq(outfit.stylingId, stylingId));
+    const made = await tx
+      .select({ id: outfit.id, position: outfit.position })
+      .from(outfit)
+      .where(eq(outfit.stylingId, stylingId))
+      .orderBy(asc(outfit.position));
     if (made.length > 0) {
+      // A position whose Style Icons all failed tailoring leaves a gap: the rest move up, in order.
+      for (const [index, outfitMade] of made.entries()) {
+        if (outfitMade.position !== index + 1) await tx.update(outfit).set({ position: index + 1 }).where(eq(outfit.id, outfitMade.id));
+      }
       await tx.update(outfit).set({ current: true }).where(eq(outfit.stylingId, stylingId));
       await tx.update(styling).set({ status: "succeeded", outfitsMade: made.length, finishedAt }).where(eq(styling.id, stylingId));
       await tx.update(consultation).set({ state: "ready" }).where(eq(consultation.id, running.consultationId));
@@ -137,6 +185,8 @@ async function readRunningStyling(db: Database, stylingId: string) {
   const [row] = await db
     .select({
       photoStyle: styling.photoStyle,
+      outfitsWanted: styling.outfitsWanted,
+      tailoringFailures: styling.tailoringFailures,
       stylePreference: consultation.stylePreference,
       countryCode: consultation.countryCode,
       ageGroup: consultation.ageGroup,
@@ -146,6 +196,34 @@ async function readRunningStyling(db: Database, stylingId: string) {
     .where(and(eq(styling.id, stylingId), eq(styling.status, "running")));
   if (!row) throw new StylingNotRunningError(stylingId);
   return row;
+}
+
+/** What one Outfit is tailored from: its Style Icon, the photo and the Styling's Photo Style. Throws if the Styling isn't running. */
+async function readOutfitToTailor(db: Database, stylingId: string, styleIconId: string) {
+  const [row] = await db
+    .select({
+      styleIconName: styleIcon.name,
+      styleIconStatus: styleIcon.status,
+      line: styleIcon.line,
+      photoStyle: styling.photoStyle,
+      photoPathname: consultation.photoPathname,
+      photoType: consultation.photoType,
+      hairCovered: consultation.hairCovered,
+      ageGroup: consultation.ageGroup,
+    })
+    .from(styleIcon)
+    .innerJoin(styling, eq(styling.id, stylingId))
+    .innerJoin(consultation, eq(consultation.id, styling.consultationId))
+    .where(and(eq(styleIcon.id, styleIconId), eq(styleIcon.consultationId, consultation.id), eq(styling.status, "running")));
+  if (!row) throw new StylingNotRunningError(stylingId);
+  return row;
+}
+
+/** The Consultation's photo, exactly as it was stored. */
+async function readPhoto(blob: BlobStore, pathname: string): Promise<Photo> {
+  const { bytes, contentType } = await blob.get(pathname);
+  if (!isPhotoMediaType(contentType)) throw new Error("The stored photo isn't a JPEG, PNG or WebP image.");
+  return { bytes, mediaType: contentType };
 }
 
 /** Saves in one transaction, holding the Styling so it can't finish meanwhile, and only while it runs. */
