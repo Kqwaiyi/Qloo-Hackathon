@@ -21,7 +21,8 @@ test("a photo that looks like another Photo Type is sent again as that type with
   await expect(page.getByRole("img", { name: "Your Full-Body Photo" })).toBeVisible();
   await page.getByRole("button", { name: "Use it as a Face Photo" }).click();
 
-  await expect(page).toHaveURL(/\/consultations\/[0-9a-f-]{36}$/);
+  // In development, the first visit compiles the Consultation page while its first Styling starts.
+  await expect(page).toHaveURL(/\/consultations\/[0-9a-f-]{36}$/, { timeout: 15_000 });
   await expect(page.getByRole("heading", { name: "Your Outfits" })).toBeVisible();
   await expect(page.getByText(/^Face Photo ·/)).toBeVisible();
 });

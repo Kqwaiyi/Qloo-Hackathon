@@ -76,6 +76,10 @@ export const AGE_GROUP_FLOORS: Record<AgeGroup, number> = {
   "65_plus": 65,
 };
 
+/** Styling while a Styling runs; then ready with its Outfits, or No Outfits when none were ever built. */
+export const CONSULTATION_STATES = ["styling", "ready", "no_outfits"] as const;
+export type ConsultationState = (typeof CONSULTATION_STATES)[number];
+
 // Photo intake.
 
 /** The picker refuses bigger files before anything is sent. */

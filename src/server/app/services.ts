@@ -11,6 +11,9 @@ import { VercelBlobStore } from "@/server/blob/vercel";
 import { type Clock, systemClock } from "@/server/clock";
 import { connectDatabase } from "@/server/db/connect";
 import type { Database } from "@/server/db/database";
+import { type QlooClient, qlooClientFromEnvironment } from "@/server/qloo/client";
+import type { StylingRunner } from "@/server/stylings/runner";
+import { workflowStylingRunner } from "@/server/stylings/workflow-runner";
 
 export interface Services {
   db: Database;
@@ -18,6 +21,9 @@ export interface Services {
   clock: Clock;
   ai: AiProvider;
   blob: BlobStore;
+  /** Real Qloo everywhere, local development included, through the cache. */
+  qloo: QlooClient;
+  stylings: StylingRunner;
 }
 
 // One set per server process. Kept on globalThis so Next.js's module reloading in development
@@ -38,7 +44,8 @@ async function createServices(): Promise<Services> {
   const auth = createAuth({ db, clock, ...authUrls(), secret: authSecret() });
   // The fake adapter until the Gemini adapter (ticket 34) can be switched on.
   const ai = fakeAiFromEnvironment();
-  return { db, auth, clock, ai, blob: blobStore() };
+  const qloo = qlooClientFromEnvironment({ db, clock });
+  return { db, auth, clock, ai, blob: blobStore(), qloo, stylings: workflowStylingRunner };
 }
 
 /** The private Vercel Blob store when its token is set (always, on Vercel); otherwise a local folder. */

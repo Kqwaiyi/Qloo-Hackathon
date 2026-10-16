@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withWorkflow } from "workflow/next";
 
 const nextConfig: NextConfig = {
   // PGlite (the local development database) loads its WebAssembly from its own package files.
@@ -12,4 +13,5 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Turns on Vercel Workflow's "use workflow" and "use step" directives, for Stylings.
+export default withWorkflow(nextConfig);

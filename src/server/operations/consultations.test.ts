@@ -55,6 +55,7 @@ describe("starting a Consultation", () => {
         stylePreference: "womenswear",
         countryCode: "GB",
         ageGroup: "35_44",
+        state: "styling",
       },
     ]);
     expect([...harness.blob.objects.keys()]).toEqual([stored[0]!.photoPathname]);
@@ -251,6 +252,8 @@ describe("opening a Consultation", () => {
       photoType: "body_only",
       createdAt: new Date("2026-10-16T09:15:00Z"),
       photoStyle: ["casual"],
+      state: "styling",
+      outfits: [],
     });
   });
 

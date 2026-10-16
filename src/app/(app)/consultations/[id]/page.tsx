@@ -4,6 +4,9 @@ import { notFound } from "next/navigation";
 import { LocalDate } from "@/components/local-date";
 import { PHOTO_TYPE_LABELS } from "@/config/consultations";
 import { getConsultation } from "@/server/data/consultations";
+import type { OutfitView } from "@/server/operations/consultations";
+
+import { StylingProgress } from "./styling-progress";
 
 export const metadata: Metadata = { title: "Your Outfits" };
 
@@ -36,9 +39,30 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           </p>
         </div>
       </header>
-      <p className="mt-8 rounded-xl border-2 border-dashed border-stone-200 p-8 text-center text-stone-600">
-        Your Outfits will appear here soon.
-      </p>
+      {consultation.state === "styling" ? (
+        <StylingProgress consultationId={consultation.id} />
+      ) : consultation.outfits.length > 0 ? (
+        <ol aria-label="Outfits" className="mt-8 space-y-5">
+          {consultation.outfits.map((outfit) => (
+            <li key={outfit.id}>
+              <OutfitCard outfit={outfit} />
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="mt-8 rounded-xl border-2 border-dashed border-stone-200 p-8 text-center text-stone-600">No Outfits</p>
+      )}
     </>
+  );
+}
+
+/** One Outfit. Its Style Icon is shown by name only, never with Qloo's image of them. */
+function OutfitCard({ outfit }: { outfit: OutfitView }) {
+  return (
+    <article className="rounded-xl border border-stone-200 bg-white p-5">
+      <h2 className="text-lg font-semibold">
+        Outfit {outfit.position} · Inspired by {outfit.styleIconName}
+      </h2>
+    </article>
   );
 }

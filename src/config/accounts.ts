@@ -9,6 +9,13 @@ export const STYLE_PREFERENCE_LABELS: Record<StylePreference, string> = {
   no_preference: "No preference",
 };
 
+/**
+ * An Outfit's line: menswear or womenswear. A menswear or womenswear user's Outfits are all in that
+ * line; a no-preference user's alternate, womenswear first.
+ */
+export const LINES = ["womenswear", "menswear"] as const;
+export type Line = (typeof LINES)[number];
+
 /** Outfit Recommender is for adults only (ADR-0004). */
 export const MINIMUM_AGE = 18;
 

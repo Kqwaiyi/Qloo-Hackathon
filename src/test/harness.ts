@@ -6,6 +6,9 @@ import type { Database } from "@/server/db/database";
 import { openPgliteDatabase } from "@/server/db/pglite";
 import { type CookieToSet, forwardSetCookies, type ResponseCookies } from "@/server/http/cookies";
 import type { OperationContext } from "@/server/operations/context";
+import { QlooClient } from "@/server/qloo/client";
+import { FakeQlooTransport } from "@/server/qloo/fake";
+import { InlineStylingRunner } from "@/server/stylings/inline-runner";
 
 const BASE_URL = "http://localhost:3000";
 
@@ -74,6 +77,10 @@ export interface TestHarness {
   /** The fake AI adapter, with no delay. Tests set its scenario. */
   ai: FakeAiProvider;
   blob: MemoryBlobStore;
+  /** Qloo: it answers with no one until a test sets `respond`, and records every request. */
+  qloo: FakeQlooTransport;
+  /** Runs started Stylings when the test calls `runPending()`, through the real Qloo client and cache. */
+  stylings: InlineStylingRunner;
   /** A server operation's context for a request coming from this browser. */
   context(browser: TestBrowser): OperationContext;
   /** Sends a request straight to Better Auth's HTTP handler, as a script skipping our forms could. */
@@ -82,8 +89,8 @@ export interface TestHarness {
 
 /**
  * A fresh database with the real migrations, Better Auth running for real against it, a clock the
- * test controls (starting at 2026-10-16 12:00 UTC), the fake AI adapter and an in-memory Blob
- * store. Create one per test file.
+ * test controls (starting at 2026-10-16 12:00 UTC), the fake AI adapter, an in-memory Blob store,
+ * a fake Qloo and Stylings run inline. Create one per test file.
  */
 export async function createTestHarness(): Promise<TestHarness> {
   const db = await openPgliteDatabase();
@@ -91,6 +98,9 @@ export async function createTestHarness(): Promise<TestHarness> {
   const auth = createAuth({ db, clock, baseURL: BASE_URL, secret: "test-secret-that-is-at-least-32-characters-long" });
   const ai = new FakeAiProvider({ delayMs: 0 });
   const blob = new MemoryBlobStore();
+  const qloo = new FakeQlooTransport();
+  const qlooClient = new QlooClient({ db, clock, transport: qloo.send, apiUrl: "https://qloo.test", apiKey: "test-qloo-key" });
+  const stylings = new InlineStylingRunner({ db, clock, qloo: qlooClient });
 
   return {
     db,
@@ -98,12 +108,15 @@ export async function createTestHarness(): Promise<TestHarness> {
     clock,
     ai,
     blob,
+    qloo,
+    stylings,
     context: (browser) => ({
       db,
       auth,
       clock,
       ai,
       blob,
+      stylings,
       requestHeaders: browser.requestHeaders(),
       responseCookies: browser.responseCookies,
     }),

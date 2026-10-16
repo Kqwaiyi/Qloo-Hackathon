@@ -14,6 +14,10 @@ next-env.d.ts
 # Local PGlite database for development
 .data/
 
+# Vercel Workflow's Local World runs in development
+.workflow-data/
+
 # Playwright
 test-results/
 playwright-report/
+/.swc
