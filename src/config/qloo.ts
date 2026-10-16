@@ -1,6 +1,6 @@
 // Qloo rules. Every number and word list lives here so it can change without hunting through code.
 
-import type { AgeGroup } from "./consultations";
+import type { AgeGroup, BudgetTier } from "./consultations";
 
 /**
  * Every Qloo response is cached for this long, so a repeat request costs nothing. Qloo's data isn't
@@ -63,23 +63,88 @@ export const STYLE_ICONS_PER_CALL = 50;
  */
 export const BRAND_FASHION_TAG = "urn:tag:genre:brand:fashion";
 
+type TargetAgeGroupTag = `urn:tag:target_age_group:qloo:${string}`;
+
 /**
- * The `target_age_group` tag each age group's Brands must carry. Qloo publishes no ages for them,
- * so the mapping is ours. The age signal alone never reorders Brands: this filter is what makes
- * them age-appropriate.
+ * The `target_age_group` tag each age group's Brands must carry, and the next age group's that a
+ * thin pool widens to, if any. Qloo publishes no ages for them, so the mapping is ours. The age
+ * signal alone never reorders Brands: this filter is what makes them age-appropriate.
  */
-export const BRAND_TARGET_AGE_GROUPS: Record<AgeGroup, `urn:tag:target_age_group:qloo:${string}`> = {
-  "18_24": "urn:tag:target_age_group:qloo:young_adults",
-  "25_29": "urn:tag:target_age_group:qloo:young_adults",
-  "30_34": "urn:tag:target_age_group:qloo:adults",
-  "35_44": "urn:tag:target_age_group:qloo:adults",
-  "45_54": "urn:tag:target_age_group:qloo:middle_aged",
-  "55_64": "urn:tag:target_age_group:qloo:middle_aged",
-  "65_plus": "urn:tag:target_age_group:qloo:seniors",
+export const BRAND_TARGET_AGE_GROUPS: Record<AgeGroup, { tag: TargetAgeGroupTag; widenTo: TargetAgeGroupTag | null }> = {
+  "18_24": { tag: "urn:tag:target_age_group:qloo:young_adults", widenTo: "urn:tag:target_age_group:qloo:adults" },
+  "25_29": { tag: "urn:tag:target_age_group:qloo:young_adults", widenTo: "urn:tag:target_age_group:qloo:adults" },
+  "30_34": { tag: "urn:tag:target_age_group:qloo:adults", widenTo: null },
+  "35_44": { tag: "urn:tag:target_age_group:qloo:adults", widenTo: null },
+  "45_54": { tag: "urn:tag:target_age_group:qloo:middle_aged", widenTo: "urn:tag:target_age_group:qloo:adults" },
+  "55_64": { tag: "urn:tag:target_age_group:qloo:middle_aged", widenTo: "urn:tag:target_age_group:qloo:adults" },
+  "65_plus": { tag: "urn:tag:target_age_group:qloo:seniors", widenTo: "urn:tag:target_age_group:qloo:middle_aged" },
 };
 
 /** Lower than the Style Icons' floor: Brands sit very high on popularity, and this keeps currently popular ones. */
 export const BRAND_POPULARITY_FLOOR = 0.98;
+
+/** The floor a thin pool widens to. Fashion Brands at 0.95 are still among the top thousand or so. */
+export const BRAND_WIDENED_POPULARITY_FLOOR = 0.95;
+
+// Thin pools: a Brand call whose Brands leave too few usable ones widens quietly, one step at a
+// time, all within one Brand fetch, until a query gives enough or none is left to try.
+
+/** A Brand call with fewer usable Brands than this is a thin pool. */
+export const THIN_POOL_USABLE_BRANDS = 10;
+
+/**
+ * How a thin pool's Brand query widens, in order, each step on top of the ones before: the next age
+ * group, then no `key_market` tag (the location signal stays), then the lower popularity floor, then
+ * no age tag. A step that would change nothing, such as the next age group for one with none, is
+ * skipped.
+ */
+export const BRAND_WIDENING_STEPS = ["next_age_group", "drop_key_market", "lower_popularity_floor", "drop_age_tag"] as const;
+export type BrandWideningStep = (typeof BRAND_WIDENING_STEPS)[number];
+
+// The Budget Tiers. Qloo's `target_income_level` tags describe a Brand's customers' income, which
+// tracks its prices; the price guard catches the Brands whose prices don't.
+
+type IncomeLevelTag = `urn:tag:target_income_level:qloo:${string}`;
+
+/** A Brand's `price_range_usd_min` or `_max` must be at most, or at least, `usd`. A Brand without that price fails. */
+export interface BrandPriceGuard {
+  end: "min" | "max";
+  bound: "at_most" | "at_least";
+  usd: number;
+}
+
+export interface BudgetTierBrandFilter {
+  /** The Brand must carry every one of these, as every tag in `filter.tags` must match. */
+  required: readonly IncomeLevelTag[];
+  /** The Brand must carry none of these. */
+  excluded: readonly IncomeLevelTag[];
+  /** Its prices must pass this to be usable, or there's no guard. */
+  priceGuard: BrandPriceGuard | null;
+}
+
+/**
+ * Each Budget Tier's income levels and price guard. The tiers don't overlap. Medium requires both
+ * `medium` and `medium_to_high`, so Brands spanning to High, such as Nike and Ralph Lauren, are
+ * Medium. No Budget filters nothing, so one Outfit may mix tiers.
+ */
+export const BUDGET_TIER_BRAND_FILTERS: Record<BudgetTier, BudgetTierBrandFilter> = {
+  no_budget: { required: [], excluded: [], priceGuard: null },
+  low: {
+    required: ["urn:tag:target_income_level:qloo:low_to_medium"],
+    excluded: ["urn:tag:target_income_level:qloo:medium_to_high", "urn:tag:target_income_level:qloo:high"],
+    priceGuard: { end: "max", bound: "at_most", usd: 300 },
+  },
+  medium: {
+    required: ["urn:tag:target_income_level:qloo:medium", "urn:tag:target_income_level:qloo:medium_to_high"],
+    excluded: ["urn:tag:target_income_level:qloo:low"],
+    priceGuard: { end: "min", bound: "at_most", usd: 150 },
+  },
+  expensive: {
+    required: ["urn:tag:target_income_level:qloo:high"],
+    excluded: ["urn:tag:target_income_level:qloo:low", "urn:tag:target_income_level:qloo:low_to_medium", "urn:tag:target_income_level:qloo:medium"],
+    priceGuard: { end: "min", bound: "at_least", usd: 100 },
+  },
+};
 
 /** One page is enough to pick an Outfit's Top, Bottom and Shoes, with room for the filters and de-duplication. */
 export const BRANDS_PER_CALL = 50;

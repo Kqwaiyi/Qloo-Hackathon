@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { LocalDate } from "@/components/local-date";
 import { textLink } from "@/components/ui";
-import { CATEGORY_LABELS, PHOTO_TYPE_LABELS, type PriceRangeUsd } from "@/config/consultations";
+import { BUDGET_TIER_LABELS, CATEGORY_LABELS, PHOTO_TYPE_LABELS, type PriceRangeUsd } from "@/config/consultations";
 import { COPY } from "@/config/copy";
 import { getConsultation, getStylingStatus } from "@/server/data/consultations";
 import type { OutfitView, PieceView, PreviewView } from "@/server/operations/consultations";
@@ -49,6 +49,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           <h1 className="text-2xl font-semibold tracking-tight">Your Outfits</h1>
           <p className="text-sm text-stone-600">
             {PHOTO_TYPE_LABELS[consultation.photoType]} · <LocalDate date={consultation.createdAt} />
+            {consultation.budgetTier && <> · Budget Tier: {BUDGET_TIER_LABELS[consultation.budgetTier]}</>}
           </p>
           <p className="mt-2 flex flex-wrap items-center gap-1 text-sm">
             <span className="text-stone-600">Photo Style</span>

@@ -8,9 +8,16 @@ import {
 } from "@/server/operations/consultations";
 import type { Result } from "@/server/operations/context";
 
-/** "Get my Outfits". A form without a photo file or a known Photo Type is refused like an unusable file. */
+/**
+ * "Get my Outfits". A form without a photo file or a known Photo Type, or with an unknown Budget
+ * Tier, is refused like an unusable file.
+ */
 export async function startConsultationAction(form: FormData): Promise<Result<{ consultationId: string }, StartConsultationRefusal>> {
-  const input = startConsultationInputSchema.safeParse({ photo: form.get("photo"), photoType: form.get("photoType") });
+  const input = startConsultationInputSchema.safeParse({
+    photo: form.get("photo"),
+    photoType: form.get("photoType"),
+    budgetTier: form.get("budgetTier") ?? undefined,
+  });
   if (!input.success) return { ok: false, refusal: "unusable-file" };
   return startConsultation(await getOperationContext(), input.data);
 }

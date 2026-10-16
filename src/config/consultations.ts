@@ -80,6 +80,18 @@ export type BudgetTier = (typeof BUDGET_TIERS)[number];
 /** Body photos start at No Budget. A Face Photo has no Budget Tier, since a Hairstyle has no price. */
 export const DEFAULT_BUDGET_TIER: BudgetTier = "no_budget";
 
+export const BUDGET_TIER_LABELS: Record<BudgetTier, string> = {
+  no_budget: "No Budget",
+  low: "Low",
+  medium: "Medium",
+  expensive: "Expensive",
+};
+
+/** Whether a photo of this Photo Type has a Budget Tier: only those whose Outfits are built on Brands. */
+export function hasBudgetTier(photoType: PhotoType): boolean {
+  return PHOTO_TYPE_CATEGORIES[photoType].some(isBrandCategory);
+}
+
 /** Age groups, 18+ only (ADR-0004). Each Consultation keeps the user's age group from when it started. */
 export const AGE_GROUPS = ["18_24", "25_29", "30_34", "35_44", "45_54", "55_64", "65_plus"] as const;
 export type AgeGroup = (typeof AGE_GROUPS)[number];

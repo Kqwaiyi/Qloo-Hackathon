@@ -3,6 +3,7 @@ import {
   type AgeGroup,
   BRAND_CATEGORIES,
   type BrandCategory,
+  type BudgetTier,
   type Category,
   isBrandCategory,
   type PriceRangeUsd,
@@ -15,9 +16,15 @@ import {
   BRAND_FASHION_TAG,
   BRAND_FOOTWEAR_TAGS,
   BRAND_POPULARITY_FLOOR,
+  type BrandPriceGuard,
   BRAND_PRODUCT_CATEGORY_TAG,
   BRAND_TARGET_AGE_GROUPS,
+  BRAND_WIDENED_POPULARITY_FLOOR,
+  BRAND_WIDENING_STEPS,
+  type BrandWideningStep,
   BRANDS_PER_CALL,
+  BUDGET_TIER_BRAND_FILTERS,
+  THIN_POOL_USABLE_BRANDS,
 } from "@/config/qloo";
 import type { QlooBrand, QlooBrandQuery, QlooTagId } from "@/server/qloo/client";
 
@@ -26,10 +33,11 @@ import { consultationCountry, lineGender, qlooAge } from "./signals";
 // Building Outfits on Brands (spec: "Outfit assembly", Brands): the Brand query for each Style Icon,
 // and the Top, Bottom and Shoes picked from what Qloo sends back. Pure: the caller fetches and saves.
 
-/** What a Consultation's Brand queries are built from. Never the Photo Style (ADR-0002). */
+/** What a Styling's Brand queries are built from. Never the Photo Style (ADR-0002). */
 export interface BrandSearch {
   ageGroup: AgeGroup;
   countryCode: string;
+  budgetTier: BudgetTier;
 }
 
 /** The Style Icon whose fans' Brands an Outfit is built on, in the Outfit's line. */
@@ -43,31 +51,93 @@ export function needsBrands(categories: readonly Category[]): boolean {
   return categories.some(isBrandCategory);
 }
 
-/** One Style Icon's Brand query. Qloo's client adds `filter.type=urn:entity:brand`. */
-export function brandQuery({ ageGroup, countryCode }: BrandSearch, styleIcon: BrandStyleIcon): QlooBrandQuery {
+/**
+ * One Style Icon's Brand queries, in the order to try them: the query itself, then each wider one a
+ * thin pool widens to, one step at a time (`BRAND_WIDENING_STEPS`). Every one keeps the Budget
+ * Tier's income levels, the age and gender signals and the Country's location. Qloo's client adds
+ * `filter.type=urn:entity:brand`.
+ */
+export function brandQueries({ ageGroup, countryCode, budgetTier }: BrandSearch, styleIcon: BrandStyleIcon): [QlooBrandQuery, ...QlooBrandQuery[]] {
   const country = consultationCountry(countryCode);
-  const tags: QlooTagId[] = [BRAND_FASHION_TAG, BRAND_TARGET_AGE_GROUPS[ageGroup]];
-  if (country.qlooKeyMarket) tags.push(country.qlooKeyMarket);
-  return {
+  const { required, excluded } = BUDGET_TIER_BRAND_FILTERS[budgetTier];
+  const ageGroupTags = BRAND_TARGET_AGE_GROUPS[ageGroup];
+  const query = ({ ageTag, keyMarket, popularityFloor }: WidenableFilters): QlooBrandQuery => ({
     "signal.interests.entities": [styleIcon.entityId],
     "signal.demographics.age": qlooAge(ageGroup),
     "signal.demographics.gender": lineGender(styleIcon.line),
     "signal.location.query": country.qlooLocation,
     "operator.filter.tags": "intersection",
-    "filter.tags": tags,
-    "filter.popularity.min": BRAND_POPULARITY_FLOOR,
+    "filter.tags": [BRAND_FASHION_TAG, ...(ageTag ? [ageTag] : []), ...(keyMarket ? [keyMarket] : []), ...required],
+    ...(excluded.length > 0 && { "filter.exclude.tags": excluded }),
+    "filter.popularity.min": popularityFloor,
     take: BRANDS_PER_CALL,
-  };
+  });
+  let widest: WidenableFilters = { ageTag: ageGroupTags.tag, keyMarket: country.qlooKeyMarket, popularityFloor: BRAND_POPULARITY_FLOOR };
+  const queries: [QlooBrandQuery, ...QlooBrandQuery[]] = [query(widest)];
+  for (const step of BRAND_WIDENING_STEPS) {
+    const wider = widen(widest, step, ageGroupTags.widenTo);
+    if (wider === widest) continue;
+    queries.push(query(wider));
+    widest = wider;
+  }
+  return queries;
+}
+
+/** The filters a thin pool's widening steps loosen. */
+interface WidenableFilters {
+  ageTag: QlooTagId | null;
+  keyMarket: QlooTagId | null;
+  popularityFloor: number;
+}
+
+/** The filters one widening step looser, or the same filters when the step changes nothing for them. */
+function widen(filters: WidenableFilters, step: BrandWideningStep, nextAgeTag: QlooTagId | null): WidenableFilters {
+  switch (step) {
+    case "next_age_group":
+      return filters.ageTag && nextAgeTag ? { ...filters, ageTag: nextAgeTag } : filters;
+    case "drop_key_market":
+      return filters.keyMarket ? { ...filters, keyMarket: null } : filters;
+    case "lower_popularity_floor":
+      return filters.popularityFloor > BRAND_WIDENED_POPULARITY_FLOOR
+        ? { ...filters, popularityFloor: BRAND_WIDENED_POPULARITY_FLOOR }
+        : filters;
+    case "drop_age_tag":
+      return filters.ageTag ? { ...filters, ageTag: null } : filters;
+  }
 }
 
 /**
- * The Brands from a Style Icon's Brand call that the Outfit's line can use, in Qloo's order: those
- * making clothes or Shoes, which drops watches, jewellery, eyewear and lingerie.
+ * Whether a Brand call's Brands are a thin pool: fewer usable for the Outfit's line at the Budget
+ * Tier than `THIN_POOL_USABLE_BRANDS`. The caller then tries the next of `brandQueries`.
  */
-export function usableBrands(brands: readonly QlooBrand[], line: Line): QlooBrand[] {
+export function isThinPool(brands: readonly QlooBrand[], line: Line, budgetTier: BudgetTier): boolean {
+  return usableBrands(brands, line, budgetTier).length < THIN_POOL_USABLE_BRANDS;
+}
+
+/**
+ * The Brands an Outfit is built on, from each of `brandQueries`' calls tried so far, in order: the
+ * ones with the most usable Brands for the line at the Budget Tier. That's the last, once it isn't
+ * a thin pool. On a tie it's the narrower query's, closer to the age group and Country, since a
+ * wider query still returns one page, which unusable Brands can crowd.
+ */
+export function fullestPool<Pool extends readonly QlooBrand[]>(tried: readonly Pool[], line: Line, budgetTier: BudgetTier): Pool {
+  const usableCount = (brands: readonly QlooBrand[]) => usableBrands(brands, line, budgetTier).length;
+  return tried.reduce((fullest, brands) => (usableCount(brands) > usableCount(fullest) ? brands : fullest));
+}
+
+/**
+ * The Brands from a Style Icon's Brand call that the Outfit's line can use at the Budget Tier, in
+ * Qloo's order: those making clothes or Shoes, which drops watches, jewellery, eyewear and
+ * lingerie, off the denylists, and with prices that pass the tier's price guard.
+ */
+export function usableBrands(brands: readonly QlooBrand[], line: Line, budgetTier: BudgetTier): QlooBrand[] {
+  const { priceGuard } = BUDGET_TIER_BRAND_FILTERS[budgetTier];
   return brands.filter(
     (candidate) =>
-      suitsLine(candidate, line) && (makesApparel(candidate) || makesFootwear(candidate)) && !DENYLISTED.has(candidate.entityId),
+      suitsLine(candidate, line) &&
+      (makesApparel(candidate) || makesFootwear(candidate)) &&
+      !DENYLISTED.has(candidate.entityId) &&
+      (!priceGuard || passes(candidate, priceGuard)),
   );
 }
 
@@ -104,8 +174,8 @@ export function brandsUsedBy(outfits: readonly Record<BrandCategory, string | nu
  * Top's, and takes the Top's Brand when there's no other. The Shoes never share a Brand with the
  * Top or Bottom.
  */
-export function pickBrands(brands: readonly QlooBrand[], line: Line, used: UsedBrands): BrandPicks | null {
-  const usable = byAffinity(usableBrands(brands, line));
+export function pickBrands(brands: readonly QlooBrand[], line: Line, budgetTier: BudgetTier, used: UsedBrands): BrandPicks | null {
+  const usable = byAffinity(usableBrands(brands, line, budgetTier));
   const shoes = usable.find((candidate) => makesFootwear(candidate) && !used.shoes.has(candidate.entityId));
   if (!shoes) return null;
   const clothes = usable.filter((candidate) => makesApparel(candidate) && candidate.entityId !== shoes.entityId);
@@ -142,14 +212,19 @@ export interface OutfitBrandPlan {
  * Outfits already built is skipped. One held back only by this plan's own picks is neither: those
  * picks are freed if their tailoring fails, so it waits for a later plan.
  */
-export function planOutfitBrands(styleIcons: readonly StyleIconBrands[], wanted: number, used: UsedBrands): OutfitBrandPlan {
+export function planOutfitBrands(
+  styleIcons: readonly StyleIconBrands[],
+  budgetTier: BudgetTier,
+  wanted: number,
+  used: UsedBrands,
+): OutfitBrandPlan {
   const plan: OutfitBrandPlan = { picked: [], skipped: [] };
   const usedSoFar = { top: new Set(used.top), bottom: new Set(used.bottom), shoes: new Set(used.shoes) };
   for (const { styleIconId, line, brands } of styleIcons) {
     if (plan.picked.length >= wanted) break;
-    const picks = pickBrands(brands, line, usedSoFar);
+    const picks = pickBrands(brands, line, budgetTier, usedSoFar);
     if (!picks) {
-      if (!pickBrands(brands, line, used)) plan.skipped.push(styleIconId);
+      if (!pickBrands(brands, line, budgetTier, used)) plan.skipped.push(styleIconId);
       continue;
     }
     plan.picked.push({ styleIconId, brands: picks });
@@ -213,6 +288,13 @@ function makesDenim(candidate: QlooBrand): boolean {
 
 function hasAnyTag({ tags }: QlooBrand, wanted: readonly string[]): boolean {
   return tags.some((tag) => wanted.includes(tag));
+}
+
+/** Whether the Brand's prices pass a Budget Tier's price guard. Without the price the guard reads, they can't. */
+function passes({ priceRangeUsdMin, priceRangeUsdMax }: QlooBrand, { end, bound, usd }: BrandPriceGuard): boolean {
+  const price = end === "min" ? priceRangeUsdMin : priceRangeUsdMax;
+  if (price === null) return false;
+  return bound === "at_most" ? price <= usd : price >= usd;
 }
 
 /**

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import sharp, { type Sharp } from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import type { PhotoType } from "@/config/consultations";
+import type { BudgetTier, PhotoType } from "@/config/consultations";
 import type { FakeAiScenario } from "@/server/ai/fake";
 import type { PhotoRejection } from "@/server/consultations/photo-check";
 import { consultation } from "@/server/db/schema";
@@ -73,6 +73,25 @@ describe("starting a Consultation", () => {
       { photoType: "body_only", budgetTier: "no_budget" },
       { photoType: "face", budgetTier: null },
     ]);
+  });
+
+  it.each(["low", "medium", "expensive", "no_budget"] as const)(
+    "keeps the %s Budget Tier chosen for a body photo as the Consultation's current one",
+    async (budgetTier) => {
+      const browser = await signedInUser();
+
+      await start(browser, "full_body", budgetTier);
+
+      expect((await consultationsOf(browser)).map((row) => row.budgetTier)).toEqual([budgetTier]);
+    },
+  );
+
+  it("gives a Face Photo no Budget Tier, even when one is sent", async () => {
+    const browser = await signedInUser();
+
+    await start(browser, "face", "expensive");
+
+    expect((await consultationsOf(browser)).map((row) => row.budgetTier)).toEqual([null]);
   });
 
   it("keeps the age group the user is in when the Consultation starts", async () => {
@@ -237,10 +256,10 @@ describe("the photo check", () => {
 });
 
 describe("opening a Consultation", () => {
-  it("shows its owner the header: the photo through a link valid for 1 hour, Photo Type, date and Photo Style", async () => {
+  it("shows its owner the header: the photo through a link valid for 1 hour, Photo Type, date, Budget Tier and Photo Style", async () => {
     const browser = await signedInUser();
     harness.clock.set("2026-10-16T09:15:00Z");
-    const consultationId = await start(browser, "body_only");
+    const consultationId = await start(browser, "body_only", "medium");
     const [stored] = await consultationsOf(browser);
     harness.clock.set("2026-10-17T08:00:00Z");
 
@@ -251,11 +270,19 @@ describe("opening a Consultation", () => {
       photoUrl: await harness.blob.signedUrl(stored!.photoPathname, new Date("2026-10-17T09:00:00Z")),
       photoType: "body_only",
       createdAt: new Date("2026-10-16T09:15:00Z"),
+      budgetTier: "medium",
       photoStyle: ["casual"],
       state: "styling",
       outfits: [],
       everyPreviewRefused: false,
     });
+  });
+
+  it("shows a Face Photo's header with no Budget Tier", async () => {
+    const browser = await signedInUser();
+    const consultationId = await start(browser, "face");
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ photoType: "face", budgetTier: null });
   });
 
   it("won't open another user's Consultation", async () => {
@@ -274,17 +301,18 @@ describe("opening a Consultation", () => {
 });
 
 /** Starts a Consultation with a plain JPEG, returning its id. */
-async function start(browser: TestBrowser, photoType: PhotoType): Promise<string> {
-  const result = await getMyOutfits(browser, photoType);
+async function start(browser: TestBrowser, photoType: PhotoType, budgetTier?: BudgetTier): Promise<string> {
+  const result = await getMyOutfits(browser, photoType, budgetTier);
   if (!result.ok) throw new Error(`Couldn't start a Consultation: ${result.refusal}`);
   return result.consultationId;
 }
 
 /** Presses "Get my Outfits" with a plain JPEG, returning what the operation returns. */
-async function getMyOutfits(browser: TestBrowser, photoType: PhotoType) {
+async function getMyOutfits(browser: TestBrowser, photoType: PhotoType, budgetTier?: BudgetTier) {
   return startConsultation(harness.context(browser), {
     photo: new Blob([await photoBytes("jpeg")], { type: "image/jpeg" }),
     photoType,
+    budgetTier,
   });
 }
 

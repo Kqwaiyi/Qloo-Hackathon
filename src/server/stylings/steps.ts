@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 
-import { byCategoryOrder, isBrandCategory } from "@/config/consultations";
+import { type BudgetTier, byCategoryOrder, isBrandCategory } from "@/config/consultations";
 import {
   BRAND_FETCHES_UP_FRONT,
   MAX_BRAND_FETCHES_PER_STYLING,
@@ -18,10 +18,19 @@ import type { BlobStore } from "@/server/blob/store";
 import type { Clock } from "@/server/clock";
 import type { Database, Transaction } from "@/server/db/database";
 import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
-import { brandPriceRange, brandQuery, brandsUsedBy, needsBrands, type PickedBrand, planOutfitBrands } from "@/server/outfit-assembly/brands";
+import {
+  brandPriceRange,
+  brandQueries,
+  brandsUsedBy,
+  fullestPool,
+  isThinPool,
+  needsBrands,
+  type PickedBrand,
+  planOutfitBrands,
+} from "@/server/outfit-assembly/brands";
 import { outfitCategories } from "@/server/outfit-assembly/categories";
 import { rankStyleIcons, styleIconLines, styleIconQuery } from "@/server/outfit-assembly/style-icons";
-import type { QlooClient } from "@/server/qloo/client";
+import type { QlooBrand, QlooClient } from "@/server/qloo/client";
 
 import type { BuildOutfitsSteps, StylingOutcome } from "./build-outfits";
 
@@ -88,6 +97,7 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
         const [planning] = await tx
           .select({
             kind: styling.kind,
+            budgetTier: styling.budgetTier,
             stage: styling.stage,
             tailoringFailures: styling.tailoringFailures,
             photoType: consultation.photoType,
@@ -115,11 +125,13 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
           return { fetchBrandsFor: [], tries: icons.slice(0, count).map((icon, index) => ({ position: open[index]!, styleIconId: icon.id, brands: null })) };
         }
 
+        const budgetTier = brandsBudgetTier(stylingId, planning!.budgetTier);
         // Style Icons are planned in order, so one whose Brands haven't come back holds up the rest.
         const firstUnfetched = icons.findIndex((icon) => !(icon.id in brandsByStyleIcon));
         const ready = firstUnfetched === -1 ? icons : icons.slice(0, firstUnfetched);
         const plan = planOutfitBrands(
           ready.map((icon) => ({ styleIconId: icon.id, line: icon.line, brands: brandsByStyleIcon[icon.id]! })),
+          budgetTier,
           count,
           brandsUsedBy(made),
         );
@@ -145,15 +157,27 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
       });
     },
 
-    // The search uses the profile stored on the Consultation, and the line of the Style Icon's Outfit.
+    // The search uses the profile stored on the Consultation, the Budget Tier the Styling builds
+    // for, and the line of the Style Icon's Outfit. A thin pool widens within this one fetch: each
+    // wider query is tried in turn until one gives enough usable Brands, or none is left.
     async fetchBrands(stylingId, styleIconId) {
-      const { consultationId, ageGroup, countryCode } = await readRunningStyling(ctx.db, stylingId);
+      const running = await readRunningStyling(ctx.db, stylingId);
+      const { consultationId, ageGroup, countryCode } = running;
+      const budgetTier = brandsBudgetTier(stylingId, running.budgetTier);
       const [icon] = await ctx.db
         .select({ entityId: styleIcon.qlooEntityId, line: styleIcon.line })
         .from(styleIcon)
         .where(and(eq(styleIcon.id, styleIconId), eq(styleIcon.consultationId, consultationId)));
       if (!icon) throw new Error(`Style Icon ${styleIconId} isn't one of the Styling's Consultation's.`);
-      return ctx.qloo.brands(brandQuery({ ageGroup, countryCode }, icon));
+      const tried: QlooBrand[][] = [];
+      for (const query of brandQueries({ ageGroup, countryCode, budgetTier }, icon)) {
+        // A Styling that stopped meanwhile spends no more of Qloo's calls.
+        if (tried.length > 0) await readRunningStyling(ctx.db, stylingId);
+        const brands = await ctx.qloo.brands(query);
+        tried.push(brands);
+        if (!isThinPool(brands, icon.line, budgetTier)) break;
+      }
+      return fullestPool(tried, icon.line, budgetTier);
     },
 
     async tailorOutfit(stylingId, { position, styleIconId, brands }, attempt) {
@@ -272,6 +296,12 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
   };
 }
 
+/** The Budget Tier a Styling's Brands are fetched and picked at. Only a Face Photo's Styling has none, and it has no Brands. */
+function brandsBudgetTier(stylingId: string, budgetTier: BudgetTier | null): BudgetTier {
+  if (!budgetTier) throw new Error(`Styling ${stylingId} has no Budget Tier for its Brands.`);
+  return budgetTier;
+}
+
 /** What tailoring is told about a picked Brand: never its entity ID or official site. */
 function tailoringBrand({ name, categoryTags, priceRangeUsdMin, priceRangeUsdMax }: PickedBrand): TailoringBrand {
   return { name, categoryTags, priceRangeUsd: brandPriceRange(priceRangeUsdMin, priceRangeUsdMax) };
@@ -347,6 +377,7 @@ async function readRunningStyling(db: Database, stylingId: string) {
     .select({
       consultationId: styling.consultationId,
       photoStyle: styling.photoStyle,
+      budgetTier: styling.budgetTier,
       stylePreference: consultation.stylePreference,
       countryCode: consultation.countryCode,
       ageGroup: consultation.ageGroup,

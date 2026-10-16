@@ -3,10 +3,13 @@ import { randomUUID } from "node:crypto";
 import * as z from "zod";
 
 import {
+  BUDGET_TIERS,
+  type BudgetTier,
   byCategoryOrder,
   type Category,
   type ConsultationState,
   DEFAULT_BUDGET_TIER,
+  hasBudgetTier,
   PHOTO_TYPES,
   type PhotoStyleWords,
   type PhotoType,
@@ -29,6 +32,8 @@ import { checkStylingStart, createStyling, launchStyling, type StylingStartRefus
 export const startConsultationInputSchema = z.object({
   photo: z.instanceof(Blob),
   photoType: z.enum(PHOTO_TYPES),
+  /** A body photo's chosen Budget Tier, No Budget when none is sent. A Face Photo has none. */
+  budgetTier: z.enum(BUDGET_TIERS).optional(),
 });
 export type StartConsultationInput = z.infer<typeof startConsultationInputSchema>;
 
@@ -75,7 +80,7 @@ export async function startConsultation(
   try {
     stylingId = await ctx.db.transaction(async (tx) => {
       const now = ctx.clock.now();
-      const budgetTier = input.photoType === "face" ? null : DEFAULT_BUDGET_TIER;
+      const budgetTier = hasBudgetTier(input.photoType) ? (input.budgetTier ?? DEFAULT_BUDGET_TIER) : null;
       await tx.insert(consultation).values({
         id,
         userId: user.id,
@@ -112,6 +117,8 @@ export interface ConsultationView {
   photoUrl: string;
   photoType: PhotoType;
   createdAt: Date;
+  /** The current Budget Tier, or null for a Face Photo, which has none. */
+  budgetTier: BudgetTier | null;
   photoStyle: PhotoStyleWords;
   state: ConsultationState;
   /** The current Outfits, in order. */
@@ -229,6 +236,7 @@ export async function readConsultation(
     photoUrl: await ctx.blob.signedUrl(row.photoPathname, linkValidUntil),
     photoType: row.photoType,
     createdAt: row.createdAt,
+    budgetTier: row.budgetTier,
     photoStyle: row.photoStyle,
     state: row.state,
     outfits,

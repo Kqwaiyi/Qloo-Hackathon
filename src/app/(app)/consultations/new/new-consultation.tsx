@@ -6,8 +6,13 @@ import { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState, useT
 import { PhotoTypeSilhouette } from "@/components/photo-type-silhouette";
 import { fieldError, primaryButton, secondaryButton } from "@/components/ui";
 import {
+  BUDGET_TIER_LABELS,
+  BUDGET_TIERS,
+  type BudgetTier,
   CATEGORY_LABELS,
+  DEFAULT_BUDGET_TIER,
   DEFAULT_PHOTO_TYPE,
+  hasBudgetTier,
   PHOTO_TYPE_CATEGORIES,
   PHOTO_TYPE_HINTS,
   PHOTO_TYPE_LABELS,
@@ -41,8 +46,9 @@ interface ChosenPhoto {
 export function NewConsultation() {
   const [step, setStep] = useState<"photo-type" | "photo">("photo-type");
   const [photoType, setPhotoType] = useState<PhotoType>(DEFAULT_PHOTO_TYPE);
-  // Kept here so going Back and on again keeps the photo.
+  // Kept here so going Back and on again keeps the photo and the Budget Tier.
   const [photo, setPhoto] = useState<ChosenPhoto | null>(null);
+  const [budgetTier, setBudgetTier] = useState<BudgetTier>(DEFAULT_BUDGET_TIER);
 
   useEffect(() => {
     if (!photo) return;
@@ -57,6 +63,8 @@ export function NewConsultation() {
       onPhotoTypeChange={setPhotoType}
       photo={photo}
       onPhotoChange={setPhoto}
+      budgetTier={budgetTier}
+      onBudgetTierChange={setBudgetTier}
       onBack={() => setStep("photo-type")}
     />
   );
@@ -155,12 +163,17 @@ function PhotoStep({
   onPhotoTypeChange,
   photo,
   onPhotoChange,
+  budgetTier,
+  onBudgetTierChange,
   onBack,
 }: {
   photoType: PhotoType;
   onPhotoTypeChange: (photoType: PhotoType) => void;
   photo: ChosenPhoto | null;
   onPhotoChange: (photo: ChosenPhoto | null) => void;
+  /** Sent only with a photo that has one: a Face Photo has none, since a Hairstyle has no price. */
+  budgetTier: BudgetTier;
+  onBudgetTierChange: (budgetTier: BudgetTier) => void;
   onBack: () => void;
 }) {
   const router = useRouter();
@@ -242,6 +255,7 @@ function PhotoStep({
     startSending(async () => {
       const form = new FormData();
       form.set("photoType", type);
+      if (hasBudgetTier(type)) form.set("budgetTier", budgetTier);
       form.set("photo", new File([shown.blob], "photo.jpg", { type: "image/jpeg" }));
       let result;
       try {
@@ -364,6 +378,8 @@ function PhotoStep({
           </div>
         )}
 
+        {hasBudgetTier(photoType) && <BudgetTierPicker value={budgetTier} onChange={onBudgetTierChange} />}
+
         <div className="mt-8 flex justify-between gap-3">
           <button
             type="button"
@@ -385,6 +401,36 @@ function PhotoStep({
         </div>
       </section>
     </>
+  );
+}
+
+/** The four Budget Tier buttons, No Budget first. */
+function BudgetTierPicker({ value, onChange }: { value: BudgetTier; onChange: (budgetTier: BudgetTier) => void }) {
+  return (
+    <fieldset className="mt-8" aria-describedby="budget-tier-note">
+      <legend className="font-semibold">Budget Tier</legend>
+      <p id="budget-tier-note" className="mb-3 text-sm text-stone-600">
+        You can change this later, on your Outfits.
+      </p>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {BUDGET_TIERS.map((tier) => (
+          <label
+            key={tier}
+            className="cursor-pointer rounded-lg border border-stone-200 bg-white px-3 py-2 text-center text-sm font-medium text-stone-700 hover:border-stone-300 has-[:checked]:border-stone-900 has-[:checked]:bg-stone-900 has-[:checked]:text-white has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-stone-900 has-[:focus-visible]:ring-offset-2"
+          >
+            <input
+              type="radio"
+              name="budgetTier"
+              value={tier}
+              checked={value === tier}
+              onChange={() => onChange(tier)}
+              className="sr-only"
+            />
+            {BUDGET_TIER_LABELS[tier]}
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 

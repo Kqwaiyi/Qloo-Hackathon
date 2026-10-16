@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { byCategoryOrder, type PhotoType } from "@/config/consultations";
+import { type BudgetTier, byCategoryOrder, type PhotoType } from "@/config/consultations";
 import { consultation, outfit, piece, qlooCache, styleIcon, styling, user } from "@/server/db/schema";
 import { readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
@@ -25,7 +25,7 @@ const SIX_WOMEN = [
 
 // Made-up Brands, shaped like Qloo's Brand entities, that every Style Icon's fans favour unless a
 // test says otherwise. The first Outfit is Stride, Bolt and Jeanery (denim, in the top 10, so the
-// Bottom), the second Sole, Dune and Bolt.
+// Bottom), the second Sole, Dune and Bolt. There are 10, so the pool isn't thin.
 const BRANDS = [
   qlooBrand("b-stride", "Stride", { categories: ["footwear"], affinity: 0.97, price: [60, 180], officialSite: "https://stride.example/" }),
   qlooBrand("b-bolt", "Bolt", { categories: ["apparel"], affinity: 0.95, price: [20, 120], officialSite: "https://bolt.example/" }),
@@ -34,6 +34,9 @@ const BRANDS = [
   qlooBrand("b-jeanery", "Jeanery", { categories: ["apparel", "denim"], affinity: 0.88, price: [50, 110] }),
   qlooBrand("b-ember", "Ember", { categories: ["apparel"], affinity: 0.85, price: [15, 60], officialSite: "https://ember.example/" }),
   qlooBrand("b-pace", "Pace", { categories: ["footwear"], affinity: 0.8, price: [30, 70], officialSite: "https://pace.example/" }),
+  qlooBrand("b-hem", "Hem", { categories: ["apparel"], affinity: 0.7, price: [25, 80] }),
+  qlooBrand("b-loom", "Loom", { categories: ["apparel"], affinity: 0.65, price: [30, 90] }),
+  qlooBrand("b-weft", "Weft", { categories: ["apparel"], affinity: 0.6, price: [20, 70] }),
 ];
 
 let harness: TestHarness;
@@ -558,6 +561,72 @@ describe("the Brand calls", () => {
     ]);
   });
 
+  it("ask at the Consultation's Budget Tier, and its Outfits are built only on Brands within the tier's price guard", async () => {
+    // Gild is tagged for the tier, but its prices aren't Low, and Dune has none. Tuck keeps the pool at 10.
+    const gild = qlooBrand("b-gild", "Gild", { categories: ["footwear"], affinity: 0.99, price: [250, 900] });
+    const tuck = qlooBrand("b-tuck", "Tuck", { categories: ["apparel"], affinity: 0.55, price: [20, 60] });
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] }, () => [gild, ...BRANDS, tuck]);
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only", "low");
+    await harness.stylings.runPending();
+
+    expect(brandCalls().map((params) => [params.get("filter.tags"), params.get("filter.exclude.tags")])).toEqual([
+      [
+        "urn:tag:genre:brand:fashion,urn:tag:key_market:qloo:united_states,urn:tag:target_age_group:qloo:adults,urn:tag:target_income_level:qloo:low_to_medium",
+        "urn:tag:target_income_level:qloo:high,urn:tag:target_income_level:qloo:medium_to_high",
+      ],
+    ]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.pieces.map((p) => p.brand?.name))).toEqual([
+      ["Bolt", "Jeanery", "Stride"],
+    ]);
+  });
+
+  it("widen a thin pool quietly within one fetch, one step at a time, until a query gives at least 10 usable Brands", async () => {
+    // Only Stride and Bolt carry the United Kingdom's key_market tag.
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] }, (_, query) =>
+      query.get("filter.tags")!.includes("key_market") ? BRANDS.filter((b) => ["Stride", "Bolt"].includes(b.name)) : BRANDS,
+    );
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "GB", birthDate: { day: "2", month: "2", year: "2004" } });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(brandCalls().map((params) => [params.get("filter.tags"), params.get("filter.popularity.min"), params.get("signal.location.query")])).toEqual([
+      ["urn:tag:genre:brand:fashion,urn:tag:key_market:qloo:united_kingdom,urn:tag:target_age_group:qloo:young_adults", "0.98", "United Kingdom"],
+      ["urn:tag:genre:brand:fashion,urn:tag:key_market:qloo:united_kingdom,urn:tag:target_age_group:qloo:adults", "0.98", "United Kingdom"],
+      ["urn:tag:genre:brand:fashion,urn:tag:target_age_group:qloo:adults", "0.98", "United Kingdom"],
+    ]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Ava Stone", ["Bolt", "Jeanery", "Stride"]],
+    ]);
+  });
+
+  it("build on the query's with the most usable Brands when every query leaves a thin pool", async () => {
+    // Each query finds a few Brands; the one without the market tag finds the most.
+    const found = (query: URLSearchParams) => {
+      const tags = query.get("filter.tags")!;
+      if (tags.includes("key_market")) return ["Stride", "Bolt"];
+      if (!tags.includes("target_age_group")) return ["Pace", "Ember"];
+      return query.get("filter.popularity.min") === "0.98" ? ["Stride", "Bolt", "Sole", "Dune", "Jeanery"] : ["Sole", "Dune"];
+    };
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] }, (_, query) => BRANDS.filter((b) => found(query).includes(b.name)));
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "GB", birthDate: { day: "2", month: "2", year: "1992" } });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(brandCalls().map((params) => [params.get("filter.tags"), params.get("filter.popularity.min")])).toEqual([
+      ["urn:tag:genre:brand:fashion,urn:tag:key_market:qloo:united_kingdom,urn:tag:target_age_group:qloo:adults", "0.98"],
+      ["urn:tag:genre:brand:fashion,urn:tag:target_age_group:qloo:adults", "0.98"],
+      ["urn:tag:genre:brand:fashion,urn:tag:target_age_group:qloo:adults", "0.95"],
+      ["urn:tag:genre:brand:fashion", "0.95"],
+    ]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Ava Stone", ["Bolt", "Jeanery", "Stride"]],
+    ]);
+  });
+
   it("are made for the first 3 Style Icons at once, and no more while 2 of them complete Outfits", async () => {
     harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
     let inFlight = 0;
@@ -597,7 +666,8 @@ describe("the Brand calls", () => {
     const consultationId = await start(browser, "body_only");
     await harness.stylings.runPending();
 
-    const fetched = brandCalls().map((params) => params.get("signal.interests.entities"));
+    // Each fetch with no Brands widens to its last query before the next fetch starts.
+    const fetched = [...new Set(brandCalls().map((params) => params.get("signal.interests.entities")))];
     expect(fetched.slice(0, 3).toSorted()).toEqual(["w-1", "w-2", "w-3"]);
     expect(fetched.slice(3)).toEqual(["w-4", "w-5", "w-6"]);
     expect(await styleIconStatuses(consultationId)).toEqual([
@@ -852,6 +922,23 @@ describe("a Styling that stops running while its steps are under way", () => {
     expect(await harness.db.select().from(styleIcon).where(eq(styleIcon.consultationId, consultationId))).toEqual([]);
     expect(harness.qloo.requests).toEqual([]);
   });
+
+  it("stops widening a thin pool, calling Qloo no more", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] }, () => []);
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "body_only");
+    const [stylingId] = harness.stylings.pending;
+    const ended = { status: "failed", failureReason: "something_broke", finishedAt: new Date("2026-10-16T12:05:00Z") } as const;
+    // Ends as the first Brand call is answered, as a cancelled Styling would.
+    harness.qloo.duringRequest = async (request) => {
+      if (request.url.searchParams.get("filter.type") === "urn:entity:brand") await harness.db.update(styling).set(ended).where(eq(styling.id, stylingId!));
+    };
+
+    await harness.stylings.runPending();
+
+    expect(brandCalls()).toHaveLength(1);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining(ended)]);
+  });
 });
 
 describe("the Styling status", () => {
@@ -988,15 +1075,15 @@ function qlooBrand(
 
 /**
  * Answers each person call with the people for its `filter.gender`, or no one, and each Brand call
- * with the Brands for its Style Icon: BRANDS unless `brands` says otherwise.
+ * with the Brands for its Style Icon and query: BRANDS unless `brands` says otherwise.
  */
 function qlooAnswering(
   people: { female?: readonly object[]; male?: readonly object[] },
-  brands: (styleIconEntityId: string) => readonly object[] = () => BRANDS,
+  brands: (styleIconEntityId: string, query: URLSearchParams) => readonly object[] = () => BRANDS,
 ) {
   return (request: RecordedQlooRequest) => {
     const params = request.url.searchParams;
-    if (params.get("filter.type") === "urn:entity:brand") return qlooResponse(brands(params.get("signal.interests.entities") ?? ""));
+    if (params.get("filter.type") === "urn:entity:brand") return qlooResponse(brands(params.get("signal.interests.entities") ?? "", params));
     const gender = params.get("filter.gender");
     return qlooResponse((gender === "female" || gender === "male" ? people[gender] : undefined) ?? []);
   };
@@ -1026,8 +1113,8 @@ function watchChecklist(browser: TestBrowser, consultationId: string) {
 }
 
 /** Presses "Get my Outfits" with a plain JPEG, returning the new Consultation's id. */
-async function start(browser: TestBrowser, photoType: PhotoType): Promise<string> {
-  const result = await startConsultation(harness.context(browser), { photo: await jpeg(), photoType });
+async function start(browser: TestBrowser, photoType: PhotoType, budgetTier?: BudgetTier): Promise<string> {
+  const result = await startConsultation(harness.context(browser), { photo: await jpeg(), photoType, budgetTier });
   if (!result.ok) throw new Error(`Couldn't start a Consultation: ${result.refusal}`);
   return result.consultationId;
 }
