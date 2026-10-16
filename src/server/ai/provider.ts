@@ -2,6 +2,7 @@ import * as z from "zod";
 
 import type { Line } from "@/config/accounts";
 import { type AgeGroup, CATEGORIES, type Category, type PhotoStyleWords, type PhotoType } from "@/config/consultations";
+import type { PreviewRefusalReason } from "@/config/stylings";
 
 // Our own AI provider interface (spec: "AI provider interface"). The domain depends only on this,
 // never on the AI SDK or Gemini. Nothing it returns guesses age, ethnicity, skin tone, body
@@ -88,6 +89,18 @@ export const tailoredPiecesSchema = z.object({
 });
 export type TailoredPieces = z.infer<typeof tailoredPiecesSchema>;
 
+/** What one Preview is drawn from. Never the Style Icon's name or image. */
+export interface PreviewInput {
+  photo: Photo;
+  /** A Face Photo's Preview changes only the hair; a Body-Only Preview never invents a face. */
+  photoType: PhotoType;
+  /** The Pieces the user is shown wearing, each by its `details`: only these change. */
+  pieces: readonly { category: Category; details: string }[];
+}
+
+/** The image the model drew, in whatever format it sent, or its refusal and why. */
+export type PreviewResult = { refused: false; image: Uint8Array } | { refused: true; reason: PreviewRefusalReason };
+
 export interface AiProvider {
   /** Checks a photo and reads its Photo Style. Throws if the check still errors after the AI SDK's own retries. */
   checkPhoto(input: PhotoCheckInput): Promise<PhotoCheckResult>;
@@ -97,4 +110,9 @@ export interface AiProvider {
    * throwing, since our code checks it and asks again. Throws only on errors worth retrying.
    */
   tailorPieces(input: TailoringInput): Promise<unknown>;
+  /**
+   * Renders one Preview: the photo with only the Pieces changed. A refusal comes back, and is final:
+   * nothing asks again. Throws only on errors worth retrying, and there's no quality check.
+   */
+  renderPreview(input: PreviewInput): Promise<PreviewResult>;
 }

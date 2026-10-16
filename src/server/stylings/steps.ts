@@ -1,7 +1,9 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, exists, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import sharp from "sharp";
 
-import { MAX_TAILORING_SUBSTITUTES, type StylingStage, TAILORING_ATTEMPTS } from "@/config/stylings";
+import { byCategoryOrder } from "@/config/consultations";
+import { MAX_TAILORING_SUBSTITUTES, type PreviewRefusalReason, type StylingStage, TAILORING_ATTEMPTS } from "@/config/stylings";
 import { type AiProvider, isPhotoMediaType, type Photo } from "@/server/ai/provider";
 import { checkTailoredPieces } from "@/server/ai/tailoring";
 import type { BlobStore } from "@/server/blob/store";
@@ -20,7 +22,7 @@ export interface StylingContext {
   clock: Clock;
   qloo: QlooClient;
   ai: AiProvider;
-  /** Where the Consultation's photo is kept. Steps pass its pathname, never its bytes. */
+  /** Where the Consultation's photo and Previews are kept. Steps pass their pathnames, never their bytes. */
   blob: BlobStore;
 }
 
@@ -124,7 +126,15 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
           return;
         }
         const outfitId = randomUUID();
-        await tx.insert(outfit).values({ id: outfitId, consultationId: running.consultationId, stylingId, position, styleIconId, current: false });
+        await tx.insert(outfit).values({
+          id: outfitId,
+          consultationId: running.consultationId,
+          stylingId,
+          position,
+          styleIconId,
+          current: false,
+          previewState: "pending",
+        });
         if (pieces.length > 0) {
           await tx.insert(piece).values(pieces.map((tailored) => ({ id: randomUUID(), outfitId, ...tailored })));
         }
@@ -137,14 +147,83 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
       return "saved";
     },
 
+    async planPreviews(stylingId) {
+      return whileRunning(ctx.db, stylingId, async (tx) => {
+        // An Outfit with no Pieces would have the image model change nothing, so it's left to fail.
+        const pending = await tx
+          .select({ id: outfit.id })
+          .from(outfit)
+          .where(
+            and(
+              eq(outfit.stylingId, stylingId),
+              eq(outfit.previewState, "pending"),
+              exists(tx.select({ id: piece.id }).from(piece).where(eq(piece.outfitId, outfit.id))),
+            ),
+          )
+          .orderBy(asc(outfit.position));
+        if (pending.length > 0) await moveStage(tx, ctx.clock, stylingId, "previews");
+        return pending.map(({ id }) => id);
+      });
+    },
+
+    async renderPreview(stylingId, outfitId) {
+      const toRender = await readOutfitToRender(ctx.db, stylingId, outfitId);
+      // A retry after the save went through has nothing left to do.
+      if (toRender.previewState !== "pending") return;
+      const pieces = await ctx.db.select({ category: piece.category, details: piece.details }).from(piece).where(eq(piece.outfitId, outfitId));
+      // Never the Style Icon: only what the user is shown wearing.
+      const preview = await ctx.ai.renderPreview({
+        photo: await readPhoto(ctx.blob, toRender.photoPathname),
+        photoType: toRender.photoType,
+        pieces: pieces.toSorted(byCategoryOrder),
+      });
+      if (preview.refused) {
+        await savePreview(ctx.db, stylingId, outfitId, { previewState: "refused", previewRefusalReason: preview.reason });
+        return;
+      }
+      const pathname = previewPathname(toRender.consultationId, outfitId);
+      // A try cut short between storing the Preview and saving it leaves it behind: store it afresh.
+      await ctx.blob.delete(pathname);
+      await ctx.blob.put(pathname, new Uint8Array(await sharp(preview.image).webp().toBuffer()), "image/webp");
+      try {
+        await savePreview(ctx.db, stylingId, outfitId, { previewState: "ready", previewPathname: pathname });
+      } catch (error) {
+        // Never saved, nothing would show or delete it. Any other failure may have saved it after
+        // all, so it stays for the retry to find.
+        if (error instanceof StylingNotRunningError) await ctx.blob.delete(pathname).catch(() => {});
+        throw error;
+      }
+    },
+
     finish: (stylingId, outcome) => finishStyling(ctx, stylingId, outcome),
   };
 }
 
+/** Where an Outfit's Preview is stored: beside its Consultation's photo. */
+function previewPathname(consultationId: string, outfitId: string): string {
+  return `consultations/${consultationId}/previews/${outfitId}.webp`;
+}
+
+/** Saves a pending Preview's outcome, only while its Styling runs. */
+async function savePreview(
+  db: Database,
+  stylingId: string,
+  outfitId: string,
+  outcome: { previewState: "ready"; previewPathname: string } | { previewState: "refused"; previewRefusalReason: PreviewRefusalReason },
+): Promise<void> {
+  await whileRunning(db, stylingId, async (tx) => {
+    await tx
+      .update(outfit)
+      .set(outcome)
+      .where(and(eq(outfit.id, outfitId), eq(outfit.previewState, "pending")));
+  });
+}
+
 /**
  * Finishes a running Styling. Whatever Outfits it made switch in at once and the Consultation is
- * ready. One that made none has failed: nothing switches, and the Consultation keeps whatever it
- * showed before, or shows No Outfits. A Styling that isn't running any more is left as it is.
+ * ready; a Preview not ready by then never will be, so it's marked failed. One that made none has
+ * failed: nothing switches, and the Consultation keeps whatever it showed before, or shows No
+ * Outfits. A Styling that isn't running any more is left as it is.
  */
 export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, stylingId: string, outcome: StylingOutcome): Promise<void> {
   const finishedAt = ctx.clock.now();
@@ -161,6 +240,10 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
       for (const [index, outfitMade] of made.entries()) {
         if (outfitMade.position !== index + 1) await tx.update(outfit).set({ position: index + 1 }).where(eq(outfit.id, outfitMade.id));
       }
+      await tx
+        .update(outfit)
+        .set({ previewState: "failed" })
+        .where(and(eq(outfit.stylingId, stylingId), eq(outfit.previewState, "pending")));
       await tx.update(outfit).set({ current: true }).where(eq(outfit.stylingId, stylingId));
       await tx.update(styling).set({ status: "succeeded", outfitsMade: made.length, finishedAt }).where(eq(styling.id, stylingId));
       await tx.update(consultation).set({ state: "ready" }).where(eq(consultation.id, running.consultationId));
@@ -219,6 +302,23 @@ async function readOutfitToTailor(db: Database, stylingId: string, styleIconId: 
   return row;
 }
 
+/** What one Outfit's Preview is rendered from, and whether it's still to render. Throws if the Styling isn't running. */
+async function readOutfitToRender(db: Database, stylingId: string, outfitId: string) {
+  const [row] = await db
+    .select({
+      consultationId: outfit.consultationId,
+      previewState: outfit.previewState,
+      photoPathname: consultation.photoPathname,
+      photoType: consultation.photoType,
+    })
+    .from(outfit)
+    .innerJoin(styling, eq(styling.id, outfit.stylingId))
+    .innerJoin(consultation, eq(consultation.id, outfit.consultationId))
+    .where(and(eq(outfit.id, outfitId), eq(outfit.stylingId, stylingId), eq(styling.status, "running")));
+  if (!row) throw new StylingNotRunningError(stylingId);
+  return row;
+}
+
 /** The Consultation's photo, exactly as it was stored. */
 async function readPhoto(blob: BlobStore, pathname: string): Promise<Photo> {
   const { bytes, contentType } = await blob.get(pathname);
@@ -227,15 +327,15 @@ async function readPhoto(blob: BlobStore, pathname: string): Promise<Photo> {
 }
 
 /** Saves in one transaction, holding the Styling so it can't finish meanwhile, and only while it runs. */
-async function whileRunning(
+async function whileRunning<T>(
   db: Database,
   stylingId: string,
-  save: (tx: Transaction, running: { consultationId: string; outfitsWanted: number }) => Promise<void>,
-): Promise<void> {
-  await db.transaction(async (tx) => {
+  save: (tx: Transaction, running: { consultationId: string; outfitsWanted: number }) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
     const running = await lockRunningStyling(tx, stylingId);
     if (!running) throw new StylingNotRunningError(stylingId);
-    await save(tx, running);
+    return save(tx, running);
   });
 }
 

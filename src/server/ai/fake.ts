@@ -1,14 +1,18 @@
 import { createHash } from "node:crypto";
+import sharp from "sharp";
 
 import type { Category, PhotoType } from "@/config/consultations";
 
 import type {
   AiProvider,
+  Photo,
   PhotoCheckInput,
   PhotoCheckReport,
   PhotoCheckResult,
   PhotoMediaType,
   PhotoVisibility,
+  PreviewInput,
+  PreviewResult,
   TailoredPieces,
   TailoringInput,
 } from "./provider";
@@ -35,6 +39,11 @@ import type {
  *   its `why` doesn't name the Style Icon.
  * - `tailoring-fails`: every reply breaks a rule, as a broken model's would: a price, an empty
  *   field, a missing Category, a Category twice, or not the schema at all, in turn.
+ *
+ * A Preview is the user's own photo with a "Fake Preview" banner across its foot. Its scenarios
+ * pass every photo and tailor as usual:
+ * - `preview-refused`: the image model refuses every Preview, for image safety.
+ * - `preview-fails`: every Preview throws, as a model that keeps erroring without refusing does.
  */
 export const FAKE_AI_SCENARIOS = [
   "pass",
@@ -49,15 +58,27 @@ export const FAKE_AI_SCENARIOS = [
   "check-errors",
   "unknown-cut",
   "tailoring-fails",
+  "preview-refused",
+  "preview-fails",
 ] as const;
 export type FakeAiScenario = (typeof FAKE_AI_SCENARIOS)[number];
 export type FakeTailoringScenario = Extract<FakeAiScenario, "pass" | "unknown-cut" | "tailoring-fails">;
+export type FakePreviewScenario = Extract<FakeAiScenario, "pass" | "preview-refused" | "preview-fails">;
 
 /** About as long as a real photo check, so local development feels like the real thing. */
 export const DEFAULT_FAKE_AI_DELAY_MS = 1000;
 
-/** A tailoring the fake was asked for, with the photo as its fingerprint: it never keeps a photo. */
-export type FakeTailoringRequest = Omit<TailoringInput, "photo"> & { photo: { mediaType: PhotoMediaType; sha256: string } };
+/** A photo's fingerprint: the fake never keeps a photo. */
+export interface PhotoFingerprint {
+  mediaType: PhotoMediaType;
+  sha256: string;
+}
+
+/** A tailoring the fake was asked for, with the photo as its fingerprint. */
+export type FakeTailoringRequest = Omit<TailoringInput, "photo"> & { photo: PhotoFingerprint };
+
+/** A Preview the fake was asked for, with the photo as its fingerprint. */
+export type FakePreviewRequest = Omit<PreviewInput, "photo"> & { photo: PhotoFingerprint };
 
 export interface FakeAiOptions {
   scenario?: FakeAiScenario;
@@ -78,6 +99,10 @@ export class FakeAiProvider implements AiProvider {
   styleIconScenarios: Partial<Record<string, FakeTailoringScenario>> = {};
   /** Every tailoring it has been asked for, oldest first. */
   readonly tailoringRequests: FakeTailoringRequest[] = [];
+  /** Scenarios for the next Previews, in the order they're asked for, in place of `scenario`. */
+  previewScenarios: FakePreviewScenario[] = [];
+  /** Every Preview it has been asked for, oldest first. */
+  readonly previewRequests: FakePreviewRequest[] = [];
 
   constructor({ scenario = "pass", delayMs = DEFAULT_FAKE_AI_DELAY_MS }: FakeAiOptions = {}) {
     this.scenario = scenario;
@@ -94,7 +119,7 @@ export class FakeAiProvider implements AiProvider {
 
   async tailorPieces(input: TailoringInput): Promise<unknown> {
     const { photo, ...rest } = input;
-    this.tailoringRequests.push({ ...rest, photo: { mediaType: photo.mediaType, sha256: createHash("sha256").update(photo.bytes).digest("hex") } });
+    this.tailoringRequests.push({ ...rest, photo: fingerprint(photo) });
     await this.wait();
     const scenario = this.styleIconScenarios[input.styleIconName] ?? this.scenario;
     const tailored = { pieces: input.pieces.map(({ category }) => fakePiece(category, input, scenario !== "unknown-cut")) };
@@ -103,9 +128,36 @@ export class FakeAiProvider implements AiProvider {
     return breakRule(tailored);
   }
 
+  async renderPreview(input: PreviewInput): Promise<PreviewResult> {
+    const { photo, ...rest } = input;
+    this.previewRequests.push({ ...rest, photo: fingerprint(photo) });
+    const scenario = this.previewScenarios.shift() ?? this.scenario;
+    await this.wait();
+    if (scenario === "preview-fails") throw new Error("The fake Preview failed, as its scenario asks.");
+    if (scenario === "preview-refused") return { refused: true, reason: "image_safety" };
+    return { refused: false, image: await withFakePreviewBanner(photo) };
+  }
+
   private async wait(): Promise<void> {
     if (this.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.delayMs));
   }
+}
+
+function fingerprint(photo: Photo): PhotoFingerprint {
+  return { mediaType: photo.mediaType, sha256: createHash("sha256").update(photo.bytes).digest("hex") };
+}
+
+/** The photo with a "Fake Preview" banner across its foot, as a PNG, as image models send. */
+async function withFakePreviewBanner(photo: Photo): Promise<Uint8Array> {
+  const image = sharp(photo.bytes);
+  const { width, height } = await image.metadata();
+  const bannerHeight = Math.max(Math.round(height * 0.1), 12);
+  const banner = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${bannerHeight}">
+    <rect width="100%" height="100%" fill="#1c1917" fill-opacity="0.75"/>
+    <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-family="sans-serif"
+      font-size="${Math.round(bannerHeight * 0.5)}" font-weight="600" fill="#ffffff">Fake Preview</text>
+  </svg>`;
+  return new Uint8Array(await image.composite([{ input: Buffer.from(banner), gravity: "south" }]).png().toBuffer());
 }
 
 /** A passing photo shows what its Photo Type asks for. */
@@ -146,6 +198,8 @@ function reportFor(scenario: Exclude<FakeAiScenario, "blocked" | "check-errors">
       return { ...passing, visible: { ...VISIBLE_BY_PHOTO_TYPE.full_body, hair: false }, hairCovered: true };
     case "unknown-cut":
     case "tailoring-fails":
+    case "preview-refused":
+    case "preview-fails":
       return passing;
   }
 }

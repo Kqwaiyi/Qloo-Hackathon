@@ -11,6 +11,8 @@ import {
   type PhotoStyleWords,
 } from "../../config/consultations";
 import {
+  PREVIEW_REFUSAL_REASONS,
+  PREVIEW_STATES,
   STYLE_ICON_STATUSES,
   STYLING_FAILURE_REASONS,
   STYLING_KINDS,
@@ -146,6 +148,8 @@ export const stylingFailureReasonEnum = pgEnum("styling_failure_reason", STYLING
 // Not "line": Postgres has a built-in type of that name, which would win.
 export const outfitLineEnum = pgEnum("outfit_line", LINES);
 export const styleIconStatusEnum = pgEnum("style_icon_status", STYLE_ICON_STATUSES);
+export const previewStateEnum = pgEnum("preview_state", PREVIEW_STATES);
+export const previewRefusalReasonEnum = pgEnum("preview_refusal_reason", PREVIEW_REFUSAL_REASONS);
 
 export const styling = pgTable(
   "styling",
@@ -226,10 +230,21 @@ export const outfit = pgTable(
       .references(() => styleIcon.id, { onDelete: "cascade" }),
     // Outfits switch in together when their Styling finishes, and only current ones are shown.
     current: boolean("current").notNull(),
+    // The Preview of the user wearing it: pending until rendered, then ready, refused or failed.
+    previewState: previewStateEnum("preview_state").notNull(),
+    // The WebP in the private Blob store, once it's ready.
+    previewPathname: text("preview_pathname"),
+    // Why the image model refused it, when it did.
+    previewRefusalReason: previewRefusalReasonEnum("preview_refusal_reason"),
   },
   (table) => [
     index("outfit_consultation_id_idx").on(table.consultationId),
     unique("outfit_styling_id_position_unique").on(table.stylingId, table.position),
+    check("outfit_preview_pathname_when_ready", sql`(${table.previewState} = 'ready') = (${table.previewPathname} is not null)`),
+    check(
+      "outfit_preview_refusal_reason_when_refused",
+      sql`(${table.previewState} = 'refused') = (${table.previewRefusalReason} is not null)`,
+    ),
   ],
 );
 

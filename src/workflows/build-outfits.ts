@@ -15,7 +15,16 @@ import {
 
 export async function buildOutfitsWorkflow(stylingId: string): Promise<void> {
   "use workflow";
-  await buildOutfits(stylingId, { styleIconLines, fetchStyleIcons, saveStyleIcons, planOutfits, tailorOutfit, finish });
+  await buildOutfits(stylingId, {
+    styleIconLines,
+    fetchStyleIcons,
+    saveStyleIcons,
+    planOutfits,
+    tailorOutfit,
+    planPreviews,
+    renderPreview,
+    finish,
+  });
 }
 
 async function styleIconLines(stylingId: string): Promise<Line[]> {
@@ -49,6 +58,19 @@ async function tailorOutfit(stylingId: string, outfitTry: OutfitTry, attempt: nu
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
   return runWorkflowStep((steps) => steps.tailorOutfit(stylingId, outfitTry, attempt));
+}
+
+async function planPreviews(stylingId: string): Promise<string[]> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.planPreviews(stylingId));
+}
+
+/** One AI call. A refusal is final; errors get the default retries, then the Preview is left to fail. */
+async function renderPreview(stylingId: string, outfitId: string): Promise<void> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.renderPreview(stylingId, outfitId));
 }
 
 async function finish(stylingId: string, outcome: StylingOutcome): Promise<void> {

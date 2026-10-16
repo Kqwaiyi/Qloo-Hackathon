@@ -3,8 +3,9 @@ import { notFound } from "next/navigation";
 
 import { LocalDate } from "@/components/local-date";
 import { CATEGORY_LABELS, PHOTO_TYPE_LABELS } from "@/config/consultations";
+import { COPY } from "@/config/copy";
 import { getConsultation } from "@/server/data/consultations";
-import type { OutfitView, PieceView } from "@/server/operations/consultations";
+import type { OutfitView, PieceView, PreviewView } from "@/server/operations/consultations";
 
 import { StylingProgress } from "./styling-progress";
 
@@ -42,13 +43,20 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       {consultation.state === "styling" ? (
         <StylingProgress consultationId={consultation.id} />
       ) : consultation.outfits.length > 0 ? (
-        <ol aria-label="Outfits" className="mt-8 space-y-5">
-          {consultation.outfits.map((outfit) => (
-            <li key={outfit.id}>
-              <OutfitCard outfit={outfit} />
-            </li>
-          ))}
-        </ol>
+        <>
+          {consultation.everyPreviewRefused && (
+            <p role="status" className="mt-8 rounded-lg bg-stone-100 px-4 py-3 text-sm text-stone-700">
+              {COPY.everyPreviewRefused}
+            </p>
+          )}
+          <ol aria-label="Outfits" className="mt-8 space-y-5">
+            {consultation.outfits.map((outfit) => (
+              <li key={outfit.id}>
+                <OutfitCard outfit={outfit} />
+              </li>
+            ))}
+          </ol>
+        </>
       ) : (
         <p className="mt-8 rounded-xl border-2 border-dashed border-stone-200 p-8 text-center text-stone-600">No Outfits</p>
       )}
@@ -56,23 +64,48 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   );
 }
 
-/** One Outfit. Its Style Icon is shown by name only, never with Qloo's image of them. */
+/** One Outfit, its Preview beside it. Its Style Icon is shown by name only, never with Qloo's image of them. */
 function OutfitCard({ outfit }: { outfit: OutfitView }) {
   return (
-    <article className="rounded-xl border border-stone-200 bg-white p-5">
-      <h2 className="text-lg font-semibold">
-        Outfit {outfit.position} · Inspired by {outfit.styleIconName}
-      </h2>
-      {outfit.pieces.length > 0 && (
-        <ul aria-label="Pieces" className="mt-3">
-          {outfit.pieces.map((piece) => (
-            <li key={piece.category}>
-              <PieceRow piece={piece} styleIconName={outfit.styleIconName} />
-            </li>
-          ))}
-        </ul>
-      )}
+    <article className="overflow-hidden rounded-xl border border-stone-200 bg-white md:flex">
+      <OutfitPreview preview={outfit.preview} styleIconName={outfit.styleIconName} />
+      <div className="flex-1 p-5">
+        <h2 className="text-lg font-semibold">
+          Outfit {outfit.position} · Inspired by {outfit.styleIconName}
+        </h2>
+        {outfit.pieces.length > 0 && (
+          <ul aria-label="Pieces" className="mt-3">
+            {outfit.pieces.map((piece) => (
+              <li key={piece.category}>
+                <PieceRow piece={piece} styleIconName={outfit.styleIconName} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </article>
+  );
+}
+
+/** The Preview, always badged as AI-generated, or a placeholder saying why there's none. */
+function OutfitPreview({ preview, styleIconName }: { preview: PreviewView; styleIconName: string }) {
+  if (preview.state !== "ready") {
+    return (
+      <p className="flex min-h-32 items-center justify-center bg-stone-100 p-6 text-center text-sm text-stone-600 md:aspect-[3/4] md:w-64 md:shrink-0 md:self-start">
+        {preview.state === "refused" ? COPY.previewRefused : COPY.previewFailed}
+      </p>
+    );
+  }
+  return (
+    <div className="relative aspect-[3/4] bg-stone-100 md:w-64 md:shrink-0 md:self-start">
+      {/* A signed link, valid for 1 hour from when this page rendered. */}
+      <img
+        src={preview.url}
+        alt={`Preview of you in the Outfit inspired by ${styleIconName}`}
+        className="absolute inset-0 h-full w-full object-cover"
+      />
+      <span className="absolute top-2 left-2 rounded bg-black/55 px-1.5 py-0.5 text-xs font-semibold text-white">{COPY.aiGenerated}</span>
+    </div>
   );
 }
 

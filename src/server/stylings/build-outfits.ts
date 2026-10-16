@@ -1,9 +1,10 @@
 import type { Line } from "@/config/accounts";
+import { PREVIEWS_AT_ONCE } from "@/config/stylings";
 import type { QlooPerson } from "@/server/qloo/client";
 
 // The "build Outfits" Styling, as the order of its steps. The Vercel Workflow runs each step as a
 // durable step with its own retries; tests run the same steps inline. This module only orders
-// them, so the Workflow's sandbox can load it: it imports nothing but types.
+// them, so the Workflow's sandbox can load it: it imports nothing but types and config.
 
 /** Each line's people, as its person call ranked them. */
 export type PeopleByLine = Partial<Record<Line, QlooPerson[]>>;
@@ -38,7 +39,17 @@ export interface BuildOutfitsSteps {
    * asked again once; when the last attempt is bad too, the Style Icon is skipped.
    */
   tailorOutfit(stylingId: string, outfitTry: OutfitTry, attempt: number): Promise<TailoringOutcome>;
-  /** Switches in the Outfits made all at once, or fails the Styling if it made none. */
+  /** The IDs of the Outfits the Styling made whose Previews are still to render, in order. */
+  planPreviews(stylingId: string): Promise<string[]>;
+  /**
+   * One AI call: renders the Outfit's Preview and saves it, or saves its refusal, which is final.
+   * Throws on errors worth retrying, leaving the Preview pending.
+   */
+  renderPreview(stylingId: string, outfitId: string): Promise<void>;
+  /**
+   * Switches in the Outfits made all at once, marking any Preview not ready failed, or fails the
+   * Styling if it made none.
+   */
   finish(stylingId: string, outcome: StylingOutcome): Promise<void>;
 }
 
@@ -61,6 +72,18 @@ export async function buildOutfits(stylingId: string, steps: BuildOutfitsSteps):
           let attempt = 1;
           while ((await steps.tailorOutfit(stylingId, outfitTry, attempt)) === "ask-again") attempt += 1;
         }),
+      );
+    }
+    // Previews, a few at a time. One still failing after its retries leaves its Outfit with a
+    // placeholder, not a broken Styling: finishing marks it failed.
+    const outfitIds = await steps.planPreviews(stylingId);
+    for (let next = 0; next < outfitIds.length; next += PREVIEWS_AT_ONCE) {
+      await Promise.all(
+        outfitIds.slice(next, next + PREVIEWS_AT_ONCE).map((outfitId) =>
+          steps.renderPreview(stylingId, outfitId).catch((error: unknown) => {
+            console.error("A Preview step failed:", error instanceof Error ? error.message : "unknown error");
+          }),
+        ),
       );
     }
   } catch (error) {

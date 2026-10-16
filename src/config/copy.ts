@@ -17,4 +17,8 @@ export const COPY = {
   contentRules: "Only use photos of yourself that you have the rights to, with no nudity or intimate images.",
   photoHairNotVisible: "We need to see your hair to suggest a Hairstyle.",
   faceGuide: "keep your face above this line",
+  aiGenerated: "AI-generated",
+  previewRefused: "No Preview for this Outfit: the image model declined to make one",
+  previewFailed: "No Preview for this Outfit: the image model couldn't make one",
+  everyPreviewRefused: "The image model declined this photo. A different photo may work better.",
 } as const;

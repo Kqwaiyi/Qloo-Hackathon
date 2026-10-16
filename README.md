@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Without `DATABASE_URL`, local development uses an on-disk PGlite database in `.data/pglite`, migrated on start-up. Without `BLOB_READ_WRITE_TOKEN`, photos are kept in `.data/blob`. The AI is a fake adapter that passes every photo after about a second, with `FAKE_AI_SCENARIO` and `FAKE_AI_DELAY_MS` to change what it does. Qloo is real, through the same 30-day cache in the database, so it needs `QLOO_API_URL` and `QLOO_API_KEY`. See [.env.example](.env.example) for the environment variables.
+Without `DATABASE_URL`, local development uses an on-disk PGlite database in `.data/pglite`, migrated on start-up. Without `BLOB_READ_WRITE_TOKEN`, photos and Previews are kept in `.data/blob`. The AI is a fake adapter that passes every photo after about a second and draws each Preview as your own photo with a "Fake Preview" banner, with `FAKE_AI_SCENARIO` and `FAKE_AI_DELAY_MS` to change what it does. Qloo is real, through the same 30-day cache in the database, so it needs `QLOO_API_URL` and `QLOO_API_KEY`. See [.env.example](.env.example) for the environment variables.
 
 Stylings run as a Vercel Workflow. In local development that is Workflow's Local World, which keeps its runs in `.workflow-data`; `npx workflow web` shows them. Delete `.data` and `.workflow-data` to start over.
 

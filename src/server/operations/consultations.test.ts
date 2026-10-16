@@ -254,6 +254,7 @@ describe("opening a Consultation", () => {
       photoStyle: ["casual"],
       state: "styling",
       outfits: [],
+      everyPreviewRefused: false,
     });
   });
 

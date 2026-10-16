@@ -3,16 +3,18 @@ import { randomUUID } from "node:crypto";
 import * as z from "zod";
 
 import {
-  CATEGORIES,
+  byCategoryOrder,
   type Category,
   type ConsultationState,
   DEFAULT_BUDGET_TIER,
-  PHOTO_LINK_LIFETIME_SECONDS,
   PHOTO_TYPES,
   type PhotoStyleWords,
   type PhotoType,
+  SIGNED_LINK_LIFETIME_SECONDS,
 } from "@/config/consultations";
+import type { PreviewState } from "@/config/stylings";
 import type { PhotoCheckResult } from "@/server/ai/provider";
+import type { BlobStore } from "@/server/blob/store";
 import { judgePhotoCheck, type PhotoRejection } from "@/server/consultations/photo-check";
 import { PHOTO_EXTENSIONS, readPhotoFile } from "@/server/consultations/photo-file";
 import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
@@ -112,6 +114,8 @@ export interface ConsultationView {
   state: ConsultationState;
   /** The current Outfits, in order. */
   outfits: OutfitView[];
+  /** The image model refused every current Outfit's Preview, so a different photo may work better. */
+  everyPreviewRefused: boolean;
 }
 
 export interface OutfitView {
@@ -120,9 +124,13 @@ export interface OutfitView {
   position: number;
   /** Shown by name, never with Qloo's image. */
   styleIconName: string;
-  /** One row per Piece, in Category order. */
+  preview: PreviewView;
+  /** One row per Piece, in Category order, whether or not there's a Preview. */
   pieces: PieceView[];
 }
+
+/** The Outfit's Preview: a signed link to it, valid for 1 hour from now, or why there's none. */
+export type PreviewView = { state: "ready"; url: string } | { state: "refused" | "failed" };
 
 /** A Piece's row. Its `details` are for the Preview, never shown. */
 export interface PieceView {
@@ -144,9 +152,15 @@ export async function readConsultation(
     .from(consultation)
     .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)));
   if (!row) return null;
-  const linkValidUntil = new Date(ctx.clock.now().getTime() + PHOTO_LINK_LIFETIME_SECONDS * 1000);
+  const linkValidUntil = new Date(ctx.clock.now().getTime() + SIGNED_LINK_LIFETIME_SECONDS * 1000);
   const outfitRows = await ctx.db
-    .select({ id: outfit.id, position: outfit.position, styleIconName: styleIcon.name })
+    .select({
+      id: outfit.id,
+      position: outfit.position,
+      styleIconName: styleIcon.name,
+      previewState: outfit.previewState,
+      previewPathname: outfit.previewPathname,
+    })
     .from(outfit)
     .innerJoin(styleIcon, eq(styleIcon.id, outfit.styleIconId))
     .where(and(eq(outfit.consultationId, row.id), eq(outfit.current, true)))
@@ -163,13 +177,18 @@ export async function readConsultation(
               outfitRows.map((outfitRow) => outfitRow.id),
             ),
           );
-  const outfits = outfitRows.map((outfitRow) => ({
-    ...outfitRow,
-    pieces: pieceRows
-      .filter((pieceRow) => pieceRow.outfitId === outfitRow.id)
-      .toSorted((a, b) => CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category))
-      .map(({ category, item, why }) => ({ category, item, why })),
-  }));
+  const outfits = await Promise.all(
+    outfitRows.map(async ({ id, position, styleIconName, previewState, previewPathname }) => ({
+      id,
+      position,
+      styleIconName,
+      preview: await previewView(ctx.blob, previewState, previewPathname, linkValidUntil),
+      pieces: pieceRows
+        .filter((pieceRow) => pieceRow.outfitId === id)
+        .toSorted(byCategoryOrder)
+        .map(({ category, item, why }) => ({ category, item, why })),
+    })),
+  );
   return {
     id: row.id,
     photoUrl: await ctx.blob.signedUrl(row.photoPathname, linkValidUntil),
@@ -178,5 +197,17 @@ export async function readConsultation(
     photoStyle: row.photoStyle,
     state: row.state,
     outfits,
+    everyPreviewRefused: outfits.length > 0 && outfits.every((outfitView) => outfitView.preview.state === "refused"),
   };
+}
+
+async function previewView(
+  blob: BlobStore,
+  state: PreviewState,
+  pathname: string | null,
+  validUntil: Date,
+): Promise<PreviewView> {
+  if (state === "ready" && pathname) return { state, url: await blob.signedUrl(pathname, validUntil) };
+  // Finishing a Styling marks every Preview not ready failed, so a current Outfit's is never pending.
+  return { state: state === "refused" ? "refused" : "failed" };
 }

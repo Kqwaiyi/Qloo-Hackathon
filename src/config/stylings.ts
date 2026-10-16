@@ -19,6 +19,23 @@ export type StylingFailureReason = (typeof STYLING_FAILURE_REASONS)[number];
 export const STYLE_ICON_STATUSES = ["unused", "used", "skipped"] as const;
 export type StyleIconStatus = (typeof STYLE_ICON_STATUSES)[number];
 
+/**
+ * Where an Outfit's Preview is: still to render, ready, refused by the image model, or failed. A
+ * Preview not ready when its Styling finishes is marked failed.
+ */
+export const PREVIEW_STATES = ["pending", "ready", "refused", "failed"] as const;
+export type PreviewState = (typeof PREVIEW_STATES)[number];
+
+/**
+ * Why the image model refused a Preview: it blocked the request, stopped for image safety, or
+ * answered in text with no image.
+ */
+export const PREVIEW_REFUSAL_REASONS = ["blocked", "image_safety", "no_image"] as const;
+export type PreviewRefusalReason = (typeof PREVIEW_REFUSAL_REASONS)[number];
+
+/** A Styling renders this many Previews at once, each its own step. */
+export const PREVIEWS_AT_ONCE = 2;
+
 /** A Styling makes up to this many Outfits, one per top unused Style Icon. */
 export const OUTFITS_PER_STYLING = 2;
 

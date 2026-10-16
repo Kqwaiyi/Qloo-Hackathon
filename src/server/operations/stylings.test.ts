@@ -34,6 +34,8 @@ beforeEach(async () => {
   harness.ai.scenario = "pass";
   harness.ai.styleIconScenarios = {};
   harness.ai.tailoringRequests.length = 0;
+  harness.ai.previewRequests.length = 0;
+  harness.ai.previewScenarios = [];
   harness.stylings.pending.length = 0;
   harness.qloo.requests.length = 0;
   harness.qloo.respond = peopleByGender({ female: WOMEN, male: MEN });
@@ -91,7 +93,7 @@ describe("a new Consultation's first Styling", () => {
     expect(await stylingsOf(consultationId)).toEqual([
       expect.objectContaining({
         status: "succeeded",
-        stage: "building_outfits",
+        stage: "previews",
         stageMovedAt: new Date("2026-10-16T12:30:20Z"),
         outfitsWanted: 2,
         outfitsMade: 2,
@@ -207,12 +209,14 @@ describe("each Outfit's Pieces", () => {
         id: expect.any(String),
         position: 1,
         styleIconName: "Ava Stone",
+        preview: { state: "ready", url: expect.any(String) },
         pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone") }],
       },
       {
         id: expect.any(String),
         position: 2,
         styleIconName: "Bea Marsh",
+        preview: { state: "ready", url: expect.any(String) },
         pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Bea Marsh") }],
       },
     ]);
@@ -335,6 +339,132 @@ describe("each Outfit's Pieces", () => {
     expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toEqual([
       expect.objectContaining({ styleIconName: "Dev Rowe", pieces: [expect.objectContaining({ category: "hairstyle" })] }),
     ]);
+  });
+});
+
+describe("each Outfit's Preview", () => {
+  it("is stored privately as WebP once the Styling finishes, and shown through a link valid for 1 hour", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+    harness.clock.set("2026-10-16T12:30:00Z");
+
+    await harness.stylings.runPending();
+
+    const { outfits, everyPreviewRefused } = (await readConsultation(harness.context(browser), consultationId))!;
+    const stored = await previewsOf(consultationId);
+    expect(stored).toEqual([
+      { previewState: "ready", previewPathname: expect.stringMatching(`^consultations/${consultationId}/`), previewRefusalReason: null },
+      { previewState: "ready", previewPathname: expect.stringMatching(`^consultations/${consultationId}/`), previewRefusalReason: null },
+    ]);
+    expect(outfits.map((o) => o.preview)).toEqual(
+      stored.map(({ previewPathname }) => ({
+        state: "ready",
+        url: `https://blob.test/${previewPathname}?validUntil=2026-10-16T13:30:00.000Z`,
+      })),
+    );
+    expect(everyPreviewRefused).toBe(false);
+    for (const { previewPathname } of stored) {
+      const preview = harness.blob.objects.get(previewPathname!)!;
+      expect(preview.contentType).toBe("image/webp");
+      // The fake draws the user's own photo with a banner, so it keeps the photo's size.
+      expect(await sharp(preview.bytes).metadata()).toMatchObject({ format: "webp", width: 30, height: 40 });
+    }
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", stage: "previews", outfitsMade: 2 })]);
+  });
+
+  it("is drawn from the photo, the Photo Type and each Piece's details, never the Style Icon", async () => {
+    harness.qloo.respond = peopleByGender({ female: [WOMEN[0]!] });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "full_body");
+    await harness.stylings.runPending();
+
+    const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+    const [hairstyle] = await piecesOf(consultationId);
+    expect(harness.ai.previewRequests).toEqual([
+      {
+        photo: { mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) },
+        photoType: "full_body",
+        pieces: [{ category: "hairstyle", details: hairstyle!.details }],
+      },
+    ]);
+    expect(JSON.stringify(harness.ai.previewRequests)).not.toContain("Ava Stone");
+  });
+
+  it("is a placeholder when the image model declines, which is final, with every Piece still shown", async () => {
+    harness.ai.scenario = "preview-refused";
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "ready",
+      everyPreviewRefused: true,
+      outfits: [
+        { styleIconName: "Ava Stone", preview: { state: "refused" }, pieces: [expect.objectContaining({ category: "hairstyle" })] },
+        { styleIconName: "Bea Marsh", preview: { state: "refused" }, pieces: [expect.objectContaining({ category: "hairstyle" })] },
+      ],
+    });
+    expect(await previewsOf(consultationId)).toEqual([
+      { previewState: "refused", previewPathname: null, previewRefusalReason: "image_safety" },
+      { previewState: "refused", previewPathname: null, previewRefusalReason: "image_safety" },
+    ]);
+    // Asked once each: a refusal is never asked again.
+    expect(harness.ai.previewRequests).toHaveLength(2);
+    const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+    expect([...harness.blob.objects.keys()]).toEqual([stored!.photoPathname]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2 })]);
+  });
+
+  it("is a placeholder when the image model fails without declining, marked failed as the Styling finishes", async () => {
+    harness.ai.scenario = "preview-fails";
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "ready",
+      everyPreviewRefused: false,
+      outfits: [
+        { styleIconName: "Ava Stone", preview: { state: "failed" }, pieces: [expect.objectContaining({ category: "hairstyle" })] },
+        { styleIconName: "Bea Marsh", preview: { state: "failed" }, pieces: [expect.objectContaining({ category: "hairstyle" })] },
+      ],
+    });
+    expect(await previewsOf(consultationId)).toEqual([
+      { previewState: "failed", previewPathname: null, previewRefusalReason: null },
+      { previewState: "failed", previewPathname: null, previewRefusalReason: null },
+    ]);
+    expect(await stylingsOf(consultationId)).toEqual([
+      expect.objectContaining({ status: "succeeded", outfitsMade: 2, failureReason: null }),
+    ]);
+  });
+
+  it("isn't asked for when the Outfit has no Pieces to put on, so it fails without an AI call", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    // Until the Brands stage (ticket 14), a Body-Only Photo's Outfits have no Pieces.
+    const consultationId = await start(browser, "body_only");
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.previewRequests).toEqual([]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.preview)).toEqual([
+      { state: "failed" },
+      { state: "failed" },
+    ]);
+  });
+
+  it("hints at a different photo only when every Preview was refused", async () => {
+    harness.ai.previewScenarios = ["preview-refused"];
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+
+    await harness.stylings.runPending();
+
+    const { outfits, everyPreviewRefused } = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(outfits.map((o) => o.preview.state).toSorted()).toEqual(["ready", "refused"]);
+    expect(everyPreviewRefused).toBe(false);
   });
 });
 
@@ -509,6 +639,19 @@ async function piecesOf(consultationId: string) {
     .select({ category: piece.category, item: piece.item, details: piece.details, why: piece.why, unknownCut: piece.unknownCut })
     .from(piece)
     .innerJoin(outfit, eq(outfit.id, piece.outfitId))
+    .where(eq(outfit.consultationId, consultationId))
+    .orderBy(asc(outfit.position));
+}
+
+/** What each of the Consultation's Outfits stored about its Preview, in Outfit order. */
+async function previewsOf(consultationId: string) {
+  return harness.db
+    .select({
+      previewState: outfit.previewState,
+      previewPathname: outfit.previewPathname,
+      previewRefusalReason: outfit.previewRefusalReason,
+    })
+    .from(outfit)
     .where(eq(outfit.consultationId, consultationId))
     .orderBy(asc(outfit.position));
 }

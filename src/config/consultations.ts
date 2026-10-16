@@ -22,6 +22,11 @@ export const PHOTO_TYPE_HINTS: Record<PhotoType, string> = {
 export const CATEGORIES = ["hairstyle", "top", "bottom", "shoes"] as const;
 export type Category = (typeof CATEGORIES)[number];
 
+/** Sorts Pieces into Category order: Hairstyle, Top, Bottom, Shoes. */
+export function byCategoryOrder(a: { category: Category }, b: { category: Category }): number {
+  return CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category);
+}
+
 export const CATEGORY_LABELS: Record<Category, string> = {
   hairstyle: "Hairstyle",
   top: "Top",
@@ -91,5 +96,5 @@ export const PHOTO_MAX_LONG_SIDE_PX = 1600;
 /** The server refuses bigger photos. Only requests that skipped the browser's redraw get near it. */
 export const SERVER_MAX_PHOTO_BYTES = 2 * 1024 * 1024;
 
-/** Pages show photos through signed links that last this long, created when the page renders. */
-export const PHOTO_LINK_LIFETIME_SECONDS = 60 * 60;
+/** Pages show photos and Previews through signed links that last this long, created when the page renders. */
+export const SIGNED_LINK_LIFETIME_SECONDS = 60 * 60;
