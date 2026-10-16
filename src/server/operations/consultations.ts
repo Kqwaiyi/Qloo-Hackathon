@@ -9,7 +9,9 @@ import {
   type PhotoStyleWords,
   type PhotoType,
 } from "@/config/consultations";
+import type { PhotoCheckResult } from "@/server/ai/provider";
 import { ageGroupAt } from "@/server/consultations/age-group";
+import { judgePhotoCheck, type PhotoRejection } from "@/server/consultations/photo-check";
 import { PHOTO_EXTENSIONS, readPhotoFile } from "@/server/consultations/photo-file";
 import { consultation } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
@@ -22,11 +24,14 @@ export const startConsultationInputSchema = z.object({
 });
 export type StartConsultationInput = z.infer<typeof startConsultationInputSchema>;
 
-export type StartConsultationRefusal = { refusal: "signed-out" | "unusable-file" };
+export type StartConsultationRefusal =
+  | { refusal: "signed-out" | "unusable-file" | "check-errored" }
+  | { refusal: "photo-rejected"; rejection: PhotoRejection };
 
 /**
- * "Get my Outfits": checks the request, has the AI check the photo, stores the photo privately and
- * creates the Consultation. Its checks run in the spec's order; the file is the last of them.
+ * "Get my Outfits": checks the request, has the AI check the photo against the Photo Type rules,
+ * then stores an accepted photo privately and creates the Consultation. A rejected photo, or a check
+ * that errors, stores nothing. Its checks run in the spec's order; the file is the last of them.
  */
 export async function startConsultation(
   ctx: OperationContext,
@@ -39,7 +44,17 @@ export async function startConsultation(
   const photo = await readPhotoFile(input.photo);
   if (!photo) return { ok: false, refusal: "unusable-file" };
 
-  const report = await ctx.ai.checkPhoto({ photo, photoType: input.photoType });
+  let photoCheck: PhotoCheckResult;
+  try {
+    photoCheck = await ctx.ai.checkPhoto({ photo, photoType: input.photoType });
+  } catch (error) {
+    // Only the message: a provider's error can carry the request, and with it the photo.
+    console.error("The photo check errored:", error instanceof Error ? error.message : "unknown error");
+    return { ok: false, refusal: "check-errored" };
+  }
+  const verdict = judgePhotoCheck(photoCheck, input.photoType);
+  if (!verdict.accepted) return { ok: false, refusal: "photo-rejected", rejection: verdict.rejection };
+  const { report } = verdict;
 
   const id = randomUUID();
   const photoPathname = `consultations/${id}/photo.${PHOTO_EXTENSIONS[photo.mediaType]}`;

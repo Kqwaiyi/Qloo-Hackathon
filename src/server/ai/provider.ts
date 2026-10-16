@@ -39,7 +39,10 @@ export interface PhotoCheckReport {
   photoStyle: PhotoStyleWords;
 }
 
+/** What the model reported, or that Google blocked the photo, so the model reported nothing. */
+export type PhotoCheckResult = { blocked: true } | { blocked: false; report: PhotoCheckReport };
+
 export interface AiProvider {
-  /** Checks a photo and reads its Photo Style. */
-  checkPhoto(input: PhotoCheckInput): Promise<PhotoCheckReport>;
+  /** Checks a photo and reads its Photo Style. Throws if the check still errors after the AI SDK's own retries. */
+  checkPhoto(input: PhotoCheckInput): Promise<PhotoCheckResult>;
 }

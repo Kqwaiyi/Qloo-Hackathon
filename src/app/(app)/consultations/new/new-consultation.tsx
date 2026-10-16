@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { type ChangeEvent, useEffect, useRef, useState, useTransition } from "react";
 
 import { PhotoTypeSilhouette } from "@/components/photo-type-silhouette";
-import { fieldError, primaryButton } from "@/components/ui";
+import { fieldError, primaryButton, secondaryButton } from "@/components/ui";
 import {
   CATEGORY_LABELS,
   DEFAULT_PHOTO_TYPE,
@@ -16,6 +16,7 @@ import {
 } from "@/config/consultations";
 import { COPY } from "@/config/copy";
 import { consultationRoute, ROUTES } from "@/config/routes";
+import type { PhotoRejection } from "@/server/consultations/photo-check";
 
 import { Stepper } from "../stepper";
 import { startConsultationAction } from "./actions";
@@ -44,7 +45,13 @@ export function NewConsultation() {
       {step === "photo-type" ? (
         <PhotoTypeStep photoType={photoType} onChange={setPhotoType} onContinue={() => setStep("photo")} />
       ) : (
-        <PhotoStep photoType={photoType} photo={photo} onPhotoChange={setPhoto} onBack={() => setStep("photo-type")} />
+        <PhotoStep
+          photoType={photoType}
+          onPhotoTypeChange={setPhotoType}
+          photo={photo}
+          onPhotoChange={setPhoto}
+          onBack={() => setStep("photo-type")}
+        />
       )}
     </>
   );
@@ -109,20 +116,48 @@ function PhotoTypeStep({
   );
 }
 
+/** What the photo step shows when something is wrong with the photo. */
+interface Problem {
+  message: string;
+  /** A second line, such as the content rules. */
+  detail?: string;
+  /** The Photo Type the photo looks like, offered as a one-tap switch. */
+  switchTo?: PhotoType;
+}
+
+function rejectionProblem(rejection: PhotoRejection): Problem {
+  switch (rejection.reason) {
+    case "wrong-photo-type":
+      return { message: COPY.photoLooksLike(PHOTO_TYPE_LABELS[rejection.looksLike]), switchTo: rejection.looksLike };
+    case "no-person":
+      return { message: COPY.photoNoPerson };
+    case "more-than-one-person":
+      return { message: COPY.photoMoreThanOnePerson };
+    case "too-unclear":
+      return { message: COPY.photoTooUnclear };
+    case "not-appropriate":
+      return { message: COPY.photoNotAppropriate, detail: COPY.contentRules };
+    case "hair-not-visible":
+      return { message: COPY.photoHairNotVisible };
+  }
+}
+
 function PhotoStep({
   photoType,
+  onPhotoTypeChange,
   photo,
   onPhotoChange,
   onBack,
 }: {
   photoType: PhotoType;
+  onPhotoTypeChange: (photoType: PhotoType) => void;
   photo: ChosenPhoto | null;
   onPhotoChange: (photo: ChosenPhoto | null) => void;
   onBack: () => void;
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
   const [opening, setOpening] = useState(false);
   const [sending, startSending] = useTransition();
 
@@ -139,32 +174,42 @@ function PhotoStep({
       onPhotoChange({ blob: result.photo, url: URL.createObjectURL(result.photo) });
     } else {
       onPhotoChange(null);
-      setProblem(result.problem === "too-large" ? COPY.photoTooLarge : COPY.photoUnreadable);
+      setProblem({ message: result.problem === "too-large" ? COPY.photoTooLarge : COPY.photoUnreadable });
     }
   }
 
-  function getOutfits() {
+  /** "Get my Outfits": sends the photo as `type`, which is the chosen Photo Type unless switching. */
+  function getOutfits(type: PhotoType) {
     if (!photo) return;
     setProblem(null);
     startSending(async () => {
       const form = new FormData();
-      form.set("photoType", photoType);
+      form.set("photoType", type);
       form.set("photo", new File([photo.blob], "photo.jpg", { type: "image/jpeg" }));
       let result;
       try {
         result = await startConsultationAction(form);
       } catch {
         // The request itself failed: the network, or our side.
-        setProblem(COPY.photoCheckFailed);
+        setProblem({ message: COPY.photoCheckFailed });
         return;
       }
       if (result.ok) startSending(() => router.push(consultationRoute(result.consultationId)));
       else if (result.refusal === "signed-out") startSending(() => router.push(ROUTES.signIn));
-      else setProblem(COPY.photoUnusable);
+      else if (result.refusal === "photo-rejected") setProblem(rejectionProblem(result.rejection));
+      else if (result.refusal === "check-errored") setProblem({ message: COPY.photoCheckFailed });
+      else setProblem({ message: COPY.photoUnusable });
     });
   }
 
+  /** "Use it as a <Photo Type>": switches the Photo Type and sends the same photo again, as a fresh check. */
+  function switchPhotoType(type: PhotoType) {
+    onPhotoTypeChange(type);
+    getOutfits(type);
+  }
+
   const label = PHOTO_TYPE_LABELS[photoType];
+  const switchTo = problem?.switchTo;
 
   return (
     <section aria-labelledby="photo-heading">
@@ -219,9 +264,22 @@ function PhotoStep({
         </div>
       </div>
       {problem && (
-        <p role="alert" className={fieldError}>
-          {problem}
-        </p>
+        <div className="mt-1">
+          <div role="alert">
+            <p className={fieldError}>{problem.message}</p>
+            {problem.detail && <p className="mt-1 text-sm text-stone-600">{problem.detail}</p>}
+          </div>
+          {switchTo && (
+            <button
+              type="button"
+              onClick={() => switchPhotoType(switchTo)}
+              disabled={opening || sending}
+              className={`mt-3 ${secondaryButton}`}
+            >
+              {COPY.useItAs(PHOTO_TYPE_LABELS[switchTo])}
+            </button>
+          )}
+        </div>
       )}
 
       <div className="mt-8 flex justify-between gap-3">
@@ -233,7 +291,12 @@ function PhotoStep({
         >
           Back
         </button>
-        <button type="button" onClick={getOutfits} disabled={!photo || opening || sending} className={primaryButton}>
+        <button
+          type="button"
+          onClick={() => getOutfits(photoType)}
+          disabled={!photo || opening || sending}
+          className={primaryButton}
+        >
           {sending ? "Checking your photo…" : "Get my Outfits"}
         </button>
       </div>

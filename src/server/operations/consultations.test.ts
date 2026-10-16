@@ -3,6 +3,8 @@ import sharp, { type Sharp } from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { PhotoType } from "@/config/consultations";
+import type { FakeAiScenario } from "@/server/ai/fake";
+import type { PhotoRejection } from "@/server/consultations/photo-check";
 import { consultation } from "@/server/db/schema";
 import { readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
@@ -18,6 +20,7 @@ beforeAll(async () => {
 beforeEach(() => {
   harness.clock.set("2026-10-16T12:00:00Z");
   harness.blob.objects.clear();
+  harness.ai.scenario = "pass";
   harness.ai.photoCheckCount = 0;
 });
 
@@ -123,6 +126,115 @@ describe("starting a Consultation", () => {
   });
 });
 
+describe("the photo check", () => {
+  const rejections: [string, FakeAiScenario, PhotoType, PhotoRejection][] = [
+    ["an explicit photo as not appropriate", "not-appropriate", "full_body", { reason: "not-appropriate" }],
+    ["a photo Google blocked as not appropriate", "blocked", "full_body", { reason: "not-appropriate" }],
+    ["a photo with nobody in it", "no-person", "full_body", { reason: "no-person" }],
+    ["a photo of two people", "more-than-one-person", "full_body", { reason: "more-than-one-person" }],
+    ["a photo that isn't clear enough", "too-unclear", "full_body", { reason: "too-unclear" }],
+    [
+      "a face-and-hair photo sent as a Full-Body Photo, naming the Face Photo it looks like",
+      "wrong-photo-type",
+      "full_body",
+      { reason: "wrong-photo-type", looksLike: "face" },
+    ],
+    [
+      "a face-and-hair photo sent as a Body-Only Photo, naming the Face Photo it looks like",
+      "wrong-photo-type",
+      "body_only",
+      { reason: "wrong-photo-type", looksLike: "face" },
+    ],
+    [
+      "a head-to-feet photo with covered hair sent as a Face Photo, naming Full-Body Photo before the hair",
+      "hair-covered",
+      "face",
+      { reason: "wrong-photo-type", looksLike: "full_body" },
+    ],
+    ["a Face Photo with the hair out of frame, since a Hairstyle needs the hair", "hair-not-visible", "face", { reason: "hair-not-visible" }],
+    [
+      "a body photo cropped to just a face, which fits no Photo Type, as too unclear",
+      "hair-not-visible",
+      "full_body",
+      { reason: "too-unclear" },
+    ],
+  ];
+
+  it.each(rejections)("refuses %s, storing nothing", async (_name, scenario, photoType, rejection) => {
+    const browser = await signedInUser();
+    harness.ai.scenario = scenario;
+
+    const result = await getMyOutfits(browser, photoType);
+
+    expect(result).toEqual({ ok: false, refusal: "photo-rejected", rejection });
+    expect(harness.blob.objects.size).toBe(0);
+    expect(await consultationsOf(browser)).toEqual([]);
+  });
+
+  it("reports a photo check that errors as its own outcome, storing nothing", async () => {
+    const browser = await signedInUser();
+    harness.ai.scenario = "check-errors";
+
+    const result = await getMyOutfits(browser, "full_body");
+
+    expect(result).toEqual({ ok: false, refusal: "check-errored" });
+    expect(harness.blob.objects.size).toBe(0);
+    expect(await consultationsOf(browser)).toEqual([]);
+  });
+
+  it("accepts a Full-Body Photo with covered hair, storing the hair as covered", async () => {
+    const browser = await signedInUser();
+    harness.ai.scenario = "hair-covered";
+
+    const result = await getMyOutfits(browser, "full_body");
+
+    expect(result).toEqual({ ok: true, consultationId: expect.any(String) });
+    const [stored] = await consultationsOf(browser);
+    expect(stored).toMatchObject({
+      photoType: "full_body",
+      faceVisible: true,
+      hairVisible: false,
+      upperBodyVisible: true,
+      legsVisible: true,
+      feetVisible: true,
+      hairCovered: true,
+    });
+  });
+
+  it("accepts a Body-Only Photo that shows a face, recording the face as visible", async () => {
+    const browser = await signedInUser();
+    harness.ai.scenario = "hair-covered";
+
+    const result = await getMyOutfits(browser, "body_only");
+
+    expect(result).toEqual({ ok: true, consultationId: expect.any(String) });
+    const [stored] = await consultationsOf(browser);
+    expect(stored).toMatchObject({ photoType: "body_only", faceVisible: true });
+  });
+
+  it("accepts the same photo sent again as the Photo Type it looked like, as a fresh check", async () => {
+    const browser = await signedInUser();
+    harness.ai.scenario = "wrong-photo-type";
+    const bytes = await photoBytes("jpeg");
+    const sendSamePhotoAs = (photoType: PhotoType) =>
+      startConsultation(harness.context(browser), { photo: new Blob([bytes], { type: "image/jpeg" }), photoType });
+
+    const rejected = await sendSamePhotoAs("full_body");
+    if (rejected.ok || rejected.refusal !== "photo-rejected" || rejected.rejection.reason !== "wrong-photo-type") {
+      throw new Error("Expected a wrong Photo Type");
+    }
+    const switched = await sendSamePhotoAs(rejected.rejection.looksLike);
+
+    expect(switched).toEqual({ ok: true, consultationId: expect.any(String) });
+    expect(harness.ai.photoCheckCount).toBe(2);
+    const stored = await consultationsOf(browser);
+    expect(stored.map(({ photoType, budgetTier }) => ({ photoType, budgetTier }))).toEqual([
+      { photoType: "face", budgetTier: null },
+    ]);
+    expect([...harness.blob.objects.values()]).toEqual([{ bytes, contentType: "image/jpeg" }]);
+  });
+});
+
 describe("opening a Consultation", () => {
   it("shows its owner the header: the photo through a link valid for 1 hour, Photo Type, date and Photo Style", async () => {
     const browser = await signedInUser();
@@ -159,12 +271,17 @@ describe("opening a Consultation", () => {
 
 /** Starts a Consultation with a plain JPEG, returning its id. */
 async function start(browser: TestBrowser, photoType: PhotoType): Promise<string> {
-  const result = await startConsultation(harness.context(browser), {
+  const result = await getMyOutfits(browser, photoType);
+  if (!result.ok) throw new Error(`Couldn't start a Consultation: ${result.refusal}`);
+  return result.consultationId;
+}
+
+/** Presses "Get my Outfits" with a plain JPEG, returning what the operation returns. */
+async function getMyOutfits(browser: TestBrowser, photoType: PhotoType) {
+  return startConsultation(harness.context(browser), {
     photo: new Blob([await photoBytes("jpeg")], { type: "image/jpeg" }),
     photoType,
   });
-  if (!result.ok) throw new Error(`Couldn't start a Consultation: ${result.refusal}`);
-  return result.consultationId;
 }
 
 let userCount = 0;

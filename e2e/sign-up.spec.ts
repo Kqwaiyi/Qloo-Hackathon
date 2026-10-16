@@ -1,23 +1,10 @@
 import { expect, test } from "@playwright/test";
 
+import { SMOKE_PASSWORD, signUpNewUser } from "./support";
+
 test("a visitor signs up through both steps, lands in the app, and can sign back in", async ({ page }) => {
-  const id = Date.now().toString(36);
+  const { username } = await signUpNewUser(page);
 
-  await page.goto("/sign-up");
-  await page.getByLabel("Day").fill("17");
-  await page.getByLabel("Month").selectOption("5");
-  await page.getByLabel("Year").fill("1990");
-  await page.getByRole("button", { name: "Continue" }).click();
-
-  await page.getByLabel("Username").fill(`Smoke.${id}`);
-  await page.getByLabel("Email").fill(`smoke.${id}@example.com`);
-  await page.getByLabel("Password", { exact: true }).fill("smoke-test-password");
-  await page.getByRole("radio", { name: "Womenswear" }).check();
-  await page.getByLabel("Country").selectOption("GB");
-  await page.getByRole("checkbox", { name: /I agree to the Terms/ }).check();
-  await page.getByRole("button", { name: "Create account" }).click();
-
-  await expect(page).toHaveURL(/\/consultations\/new$/);
   await expect(page.getByRole("heading", { name: "New Consultation" })).toBeVisible();
   await page.getByRole("link", { name: "My Consultations" }).click();
   await expect(page.getByRole("heading", { name: "My Consultations" })).toBeVisible();
@@ -26,8 +13,8 @@ test("a visitor signs up through both steps, lands in the app, and can sign back
   await expect(page).toHaveURL(/\/$/);
 
   await page.goto("/sign-in");
-  await page.getByLabel("Username or email").fill(`smoke.${id}`);
-  await page.getByLabel("Password", { exact: true }).fill("smoke-test-password");
+  await page.getByLabel("Username or email").fill(username.toLowerCase());
+  await page.getByLabel("Password", { exact: true }).fill(SMOKE_PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/consultations\/new$/);
 });
