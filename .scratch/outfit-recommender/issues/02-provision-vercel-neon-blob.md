@@ -8,9 +8,17 @@
 
 **Spec:** [spec.md](../spec.md) sections "Setup and operations" (Vercel, Neon, Blob), "Stack and platform" and "Further Notes" (Deadline).
 
-- [ ] Create the Vercel project and turn Fluid compute on.
+- [x] Create the Vercel project and turn Fluid compute on.
 - [ ] Opt out of Vercel AI training (Team Settings → Data Preferences) before any photo is stored.
 - [ ] Create Neon through the Vercel Marketplace. Preview branches start from an empty or seed branch, never from production. Keep the default 6-hour restore window.
-- [ ] Create the one private Vercel Blob store.
+- [x] Create the one private Vercel Blob store.
 - [ ] Put the database and Blob credentials, `QLOO_API_KEY` and `QLOO_API_URL` in the project's environment variables. Secrets never go in tracked files.
 - [ ] Once ticket 01 lands, confirm it deploys and runs on the production URL.
+
+## Progress (2026-10-16)
+
+- Vercel project `outfit-recommender` (`prj_KhDS4AZkQkNiuImw3zZnVOrk3diK`) on team `kqw`, linked to `Kqwaiyi/Qloo-Hackathon` (`main` deploys to production). It was created with Fluid compute and a 300 s default function timeout. Vercel's API doesn't echo that setting back, so check Settings → Functions.
+- Deployment protection is Standard (`all_except_custom_domains`): preview deployments need a Vercel login and the production domain is public.
+- Private Blob store `outfit-recommender-blob` (`store_lHnFeE6utRPUCkZi`, iad1) is connected to the project, which set `BLOB_READ_WRITE_TOKEN` for every environment.
+- Plan: the team is on Pro, so co-authored commits from the private repo deploy as long as the commit author is a team member. Today the only member is Kqwaiyi. Teammates who push their own commits need seats.
+- Still for a human: the AI-training opt-out, Neon through the Marketplace (sets `DATABASE_URL` and `DATABASE_URL_UNPOOLED`), and the secret env vars `BETTER_AUTH_SECRET`, `QLOO_API_KEY`, `QLOO_API_URL` and `GEMINI_API_KEY`. Then push or redeploy and check the production URL.
