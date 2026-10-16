@@ -1232,14 +1232,15 @@ function sha256(bytes: Uint8Array): string {
 
 let userCount = 0;
 
-/** Signs up a new adult user and returns their signed-in browser. */
+/** A new user, signed in, who has verified their email by its link. */
 async function signedInUser(overrides: Partial<SignUpInput> = {}): Promise<TestBrowser> {
   userCount += 1;
   const browser = new TestBrowser();
+  const email = `styling.user${userCount}@example.com`;
   const result = await signUp(harness.context(browser), {
     birthDate: { day: "2", month: "2", year: "1992" },
     username: `styling_user_${userCount}`,
-    email: `styling.user${userCount}@example.com`,
+    email,
     password: "a long enough password",
     stylePreference: "menswear",
     countryCode: "US",
@@ -1247,6 +1248,7 @@ async function signedInUser(overrides: Partial<SignUpInput> = {}): Promise<TestB
     ...overrides,
   });
   expect(result).toEqual({ ok: true });
+  await harness.openEmailedLink(overrides.email ?? email, browser);
   return browser;
 }
 

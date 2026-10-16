@@ -41,7 +41,7 @@ export const startConsultationInputSchema = z.object({
 export type StartConsultationInput = z.infer<typeof startConsultationInputSchema>;
 
 export type StartConsultationRefusal =
-  | { refusal: "signed-out" | "unusable-file" | "check-errored" }
+  | { refusal: "signed-out" | "unverified" | "unusable-file" | "check-errored" }
   | { refusal: "photo-rejected"; rejection: PhotoRejection }
   | StylingStartRefusal;
 
@@ -57,6 +57,8 @@ export async function startConsultation(
 ): Promise<Result<{ consultationId: string }, StartConsultationRefusal>> {
   const user = await readSignedInUser(ctx);
   if (!user) return { ok: false, refusal: "signed-out" };
+  // Verification is a soft gate: an unverified user can look around, but can't start a Consultation.
+  if (!user.emailVerified) return { ok: false, refusal: "unverified" };
   const stylingRefusal = await checkStylingStart(ctx, user);
   if (stylingRefusal) return { ok: false, ...stylingRefusal };
 

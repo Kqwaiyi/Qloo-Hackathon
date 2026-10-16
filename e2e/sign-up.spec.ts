@@ -1,11 +1,22 @@
 import { expect, test } from "@playwright/test";
 
-import { SMOKE_PASSWORD, signUpNewUser } from "./support";
+import { openEmailedLink, SMOKE_PASSWORD, signUpNewUser } from "./support";
 
-test("a visitor signs up through both steps, lands in the app, and can sign back in", async ({ page }) => {
-  const { username } = await signUpNewUser(page);
+test("a visitor signs up through both steps, verifies by the emailed link, and can sign back in", async ({ page }) => {
+  const { username, email } = await signUpNewUser(page);
 
   await expect(page.getByRole("heading", { name: "New Consultation" })).toBeVisible();
+  const banner = page.getByRole("region", { name: "Verify your email", exact: true });
+  await expect(banner).toContainText(`We sent a link to ${email}. Verify it to start your first Consultation.`);
+  await expect(page.getByRole("heading", { name: "Verify your email first" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: /Full-Body Photo/ })).toHaveCount(0);
+
+  await openEmailedLink(page, email);
+
+  await expect(page).toHaveURL(/\/consultations\/new\?email-verified=1$/);
+  await expect(page.getByText("Email verified")).toBeVisible();
+  await expect(banner).toHaveCount(0);
+  await expect(page.getByRole("radio", { name: /Full-Body Photo/ })).toBeChecked();
   await page.getByRole("link", { name: "My Consultations" }).click();
   await expect(page.getByRole("heading", { name: "My Consultations" })).toBeVisible();
 

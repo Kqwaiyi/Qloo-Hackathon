@@ -2,13 +2,16 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { APP_HOME, ROUTES } from "@/config/routes";
-import { requireSignedInUser } from "@/server/data/session";
+import { deletionDateText } from "@/server/accounts/verification";
+import { getEmailVerification, requireSignedInUser } from "@/server/data/session";
 
 import { signOutAction } from "./actions";
 import { NavLink } from "./nav-link";
+import { VerifyEmailBanner } from "./verify-email-banner";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   await requireSignedInUser();
+  const verification = await getEmailVerification();
   return (
     <div className="min-h-screen">
       <header className="border-b border-stone-200 bg-white">
@@ -28,6 +31,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           </nav>
         </div>
       </header>
+      {verification && !verification.verified && (
+        <VerifyEmailBanner email={verification.email} deletionDate={deletionDateText(verification.deletionDate)} />
+      )}
       <main className="mx-auto max-w-3xl px-4 py-8">{children}</main>
     </div>
   );

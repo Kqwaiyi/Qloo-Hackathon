@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { user } from "@/server/db/schema";
 import { readSignedInUser } from "@/server/operations/session";
@@ -268,6 +268,38 @@ describe("Better Auth's sign-up endpoint, called directly", () => {
 
     expect(response.status).toBe(400);
     expect(await harness.db.select().from(user).where(eq(user.email, "direct@example.com"))).toEqual([]);
+  });
+});
+
+describe("the sign-up rate limit", () => {
+  let limited: TestHarness;
+
+  beforeAll(async () => {
+    limited = await createTestHarness({ rateLimit: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Better Auth times its rate limits with the real clock, so this test moves Date itself.
+  it("lets an IP address make 3 sign-ups an hour, ours or direct, and refuses more until the hour is up", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const ip = "203.0.113.7";
+    expect(await signUp(limited.context(new TestBrowser({ ip })), signUpInput())).toEqual({ ok: true });
+    expect(await signUp(limited.context(new TestBrowser({ ip })), signUpInput())).toEqual({ ok: true });
+    expect((await limited.postToAuth("/sign-up/email", signUpBody(), new TestBrowser({ ip }))).status).toBe(200);
+
+    const ours = await signUp(limited.context(new TestBrowser({ ip })), signUpInput({ email: "fourth@example.com" }));
+    const direct = await limited.postToAuth("/sign-up/email", signUpBody({ email: "fifth@example.com" }), new TestBrowser({ ip }));
+
+    expect(ours).toEqual({ ok: false, refusal: "too-many-sign-ups" });
+    expect(direct.status).toBe(429);
+    expect(await limited.db.select().from(user).where(eq(user.email, "fourth@example.com"))).toEqual([]);
+    expect(await limited.db.select().from(user).where(eq(user.email, "fifth@example.com"))).toEqual([]);
+    expect(await signUp(limited.context(new TestBrowser({ ip: "198.51.100.4" })), signUpInput())).toEqual({ ok: true });
+    vi.setSystemTime(Date.now() + 60 * 60 * 1000);
+    expect(await signUp(limited.context(new TestBrowser({ ip })), signUpInput())).toEqual({ ok: true });
   });
 });
 

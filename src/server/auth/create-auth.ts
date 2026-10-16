@@ -1,6 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { username } from "better-auth/plugins";
 import * as z from "zod";
 
@@ -9,18 +9,26 @@ import {
   PASSWORD_MIN_LENGTH,
   SESSION_EXPIRES_IN_SECONDS,
   SESSION_UPDATE_AGE_SECONDS,
+  SIGN_UP_RATE_LIMIT,
   STYLE_PREFERENCES,
   USERNAME_MAX_LENGTH,
   USERNAME_MIN_LENGTH,
+  VERIFICATION_LINK_LIFETIME_SECONDS,
 } from "@/config/accounts";
 import { COPY } from "@/config/copy";
 import { findCountry } from "@/config/countries";
+import { AUTH_API_PATH, AUTH_ENDPOINTS } from "@/config/routes";
 import { AGE_GATE_COOKIE, isBlockedByAgeGate } from "@/server/accounts/age-gate";
 import { judgeAge, parseIsoBirthDate } from "@/server/accounts/birth-date";
 import type { Clock } from "@/server/clock";
 import type { Database } from "@/server/db/database";
 import * as schema from "@/server/db/schema";
+import type { EmailSender } from "@/server/email/send-email";
 import { serializeCookie } from "@/server/http/cookies";
+
+import { AUTH_ERROR_CODES, emailRefusalError, trackApiEndpoints, verificationEmailSender } from "./emails";
+
+type HookContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
 
 export interface AuthOptions {
   db: Database;
@@ -29,12 +37,49 @@ export interface AuthOptions {
   /** Other origins the app is served from, such as a preview deployment's own URL. */
   trustedOrigins?: string[];
   secret: string;
+  /** The send-email function, which every email Better Auth sends goes through. */
+  emailSender: EmailSender;
+  /** Whether Better Auth's rate limits apply. Unset, they do in production only, as Better Auth's default. */
+  rateLimit?: boolean;
 }
 
-export function createAuth({ db, clock, baseURL, trustedOrigins, secret }: AuthOptions) {
-  return betterAuth({
+export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSender, rateLimit }: AuthOptions) {
+  /**
+   * Rechecks 18+ on every email sign-up, ours or a direct call, before anything is read or written,
+   * then the app-wide sign-up email cap.
+   */
+  async function beforeSignUp(ctx: HookContext): Promise<void> {
+    // A browser already blocked is refused without restarting its 30 days.
+    if (ctx.headers && isBlockedByAgeGate(ctx.headers)) throw under18();
+    const birthDate = parseIsoBirthDate(ctx.body?.birthDate);
+    if (!birthDate) throw birthDateRequired();
+    const verdict = judgeAge(birthDate, clock.now());
+    if (verdict === "turns-18-today") throw under18();
+    if (verdict === "under-18") {
+      throw under18({ "set-cookie": serializeCookie({ ...AGE_GATE_COOKIE, secure: baseURL.startsWith("https://") }) });
+    }
+    // Near Gmail's daily limit, new sign-ups stop, keeping the rest for existing users.
+    if (await emailSender.refusalFor("verification", null)) throw emailRefusalError("sign-ups-paused");
+  }
+
+  /** Only an unverified user's email change, and only while its cap allows. */
+  async function beforeChangeEmail(ctx: HookContext): Promise<void> {
+    const session = await getSessionFromCtx(ctx);
+    if (!session) return;
+    // A verified user's change needs the old address's approval first, which the verified email
+    // change (ticket 21) adds. Without it, Better Auth would let one through on the new address's link.
+    if (session.user.emailVerified) {
+      throw new APIError("FORBIDDEN", { code: AUTH_ERROR_CODES.emailChangeNeedsApproval, message: "A verified email can't be changed yet." });
+    }
+    // Checked before the change: Better Auth changes the address first, then sends, ignoring a refusal.
+    const refusal = await emailSender.refusalFor("email-change", session.user.id);
+    if (refusal) throw emailRefusalError(refusal);
+  }
+
+  const auth = betterAuth({
     appName: "Outfit Recommender",
     baseURL,
+    basePath: AUTH_API_PATH,
     trustedOrigins,
     secret,
     database: drizzleAdapter(db, { provider: "pg", schema }),
@@ -45,11 +90,31 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret }: AuthO
       minPasswordLength: PASSWORD_MIN_LENGTH,
       maxPasswordLength: PASSWORD_MAX_LENGTH,
     },
+    // A soft gate: a new user is signed in at once, and only New Consultation waits for the link.
+    emailVerification: {
+      sendOnSignUp: true,
+      expiresIn: VERIFICATION_LINK_LIFETIME_SECONDS,
+      autoSignInAfterVerification: true,
+      sendVerificationEmail: verificationEmailSender(emailSender, baseURL),
+    },
     session: {
       expiresIn: SESSION_EXPIRES_IN_SECONDS,
       updateAge: SESSION_UPDATE_AGE_SECONDS,
     },
+    // Kept in the database, so every server instance counts together. It applies to requests that
+    // reach Better Auth's HTTP endpoints, which is why our forms post to them.
+    rateLimit: {
+      enabled: rateLimit,
+      storage: "database",
+      customRules: { [AUTH_ENDPOINTS.signUp]: { ...SIGN_UP_RATE_LIMIT } },
+    },
+    advanced: {
+      // The client's IP address, as Vercel sets it.
+      ipAddress: { ipAddressHeaders: ["x-forwarded-for"] },
+    },
     user: {
+      // An unverified user's change happens at once, and a new link goes to the new address.
+      changeEmail: { enabled: true, updateEmailWithoutVerification: true },
       additionalFields: {
         stylePreference: {
           type: [...STYLE_PREFERENCES],
@@ -66,34 +131,28 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret }: AuthO
       },
     },
     hooks: {
-      // Rechecks 18+ on every email sign-up, ours or a direct call, before anything is read or written.
       before: createAuthMiddleware(async (ctx) => {
-        if (ctx.path !== "/sign-up/email") return;
-        // A browser already blocked is refused without restarting its 30 days.
-        if (ctx.headers && isBlockedByAgeGate(ctx.headers)) throw under18();
-        const birthDate = parseIsoBirthDate(ctx.body?.birthDate);
-        if (!birthDate) throw birthDateRequired();
-        const verdict = judgeAge(birthDate, clock.now());
-        if (verdict === "turns-18-today") throw under18();
-        if (verdict === "under-18") {
-          throw under18({ "set-cookie": serializeCookie({ ...AGE_GATE_COOKIE, secure: baseURL.startsWith("https://") }) });
-        }
+        if (ctx.path === AUTH_ENDPOINTS.signUp) await beforeSignUp(ctx);
+        if (ctx.path === AUTH_ENDPOINTS.changeEmail) await beforeChangeEmail(ctx);
       }),
     },
     databaseHooks: {
       user: {
         create: {
-          // Keeps the birth year and month from the date of birth sent with the sign-up, and drops the day.
+          // Keeps the birth year and month from the date of birth sent with the sign-up, and drops the
+          // day. The sign-up time is our clock's, which the unverified-account deletion date counts from.
           before: async (_newUser, ctx) => {
             const birthDate = parseIsoBirthDate(ctx?.body?.birthDate);
             if (!birthDate) throw birthDateRequired();
-            return { data: { birthYear: birthDate.year, birthMonth: birthDate.month } };
+            return { data: { birthYear: birthDate.year, birthMonth: birthDate.month, createdAt: clock.now() } };
           },
         },
       },
     },
     plugins: [username({ minUsernameLength: USERNAME_MIN_LENGTH, maxUsernameLength: USERNAME_MAX_LENGTH })],
   });
+  trackApiEndpoints(auth.api);
+  return auth;
 }
 
 export type Auth = ReturnType<typeof createAuth>;

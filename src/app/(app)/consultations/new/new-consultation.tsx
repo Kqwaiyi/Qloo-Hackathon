@@ -270,6 +270,8 @@ function PhotoStep({
         setStepStartedAt(Date.now());
         startSending(() => router.push(consultationRoute(result.consultationId)));
       } else if (result.refusal === "signed-out") startSending(() => router.push(ROUTES.signIn));
+      // The page shows the "verify your email first" panel instead.
+      else if (result.refusal === "unverified") router.refresh();
       else if (result.refusal === "photo-rejected") setProblem(rejectionProblem(result.rejection));
       else if (result.refusal === "check-errored") setProblem({ message: COPY.photoCheckFailed });
       else setProblem({ message: COPY.photoUnusable });

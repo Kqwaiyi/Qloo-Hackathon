@@ -1,0 +1,38 @@
+// Email rules. Every email goes through one send function (src/server/email/send-email.ts), which
+// enforces every cap below so that Gmail never blocks the team account (it allows about 500 a day).
+
+/** Who every email comes from. */
+export const EMAIL_FROM_NAME = "Outfit Recommender";
+
+/**
+ * Each kind of email the app sends, as the email log records it. "verification" is the link sent
+ * at sign-up; a link asked for again is a "verification-resend".
+ */
+export const EMAIL_KINDS = [
+  "verification",
+  "verification-resend",
+  "email-change",
+  "password-reset",
+  "password-changed",
+  "inactivity-warning",
+] as const;
+export type EmailKind = (typeof EMAIL_KINDS)[number];
+
+/** The caps count the emails sent in the last this many hours. */
+export const EMAIL_CAP_WINDOW_HOURS = 24;
+
+/** No email of any kind goes out once this many went out in the window. */
+export const ALL_EMAILS_CAP = 450;
+
+/** New sign-ups, and their verification emails, stop once this many emails went out in the window. */
+export const SIGN_UP_EMAILS_CAP = 300;
+
+/** At most this many inactivity warnings go out in the window. */
+export const INACTIVITY_WARNINGS_CAP = 50;
+
+/** Per account, at most this many of each kind go out in the window. */
+export const PER_ACCOUNT_EMAIL_CAPS: Partial<Record<EmailKind, number>> = {
+  "verification-resend": 5,
+  "password-reset": 3,
+  "email-change": 3,
+};

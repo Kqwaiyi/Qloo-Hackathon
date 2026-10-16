@@ -353,6 +353,16 @@ function AccountStep({
         <p className={fieldError}>Agree to the Terms and Privacy Policy to create an account.</p>
       )}
       {invalidField === "birthDate" && <p className={fieldError}>{FIELD_MESSAGES.birthDate}</p>}
+      {problem?.refusal === "sign-ups-paused" && (
+        <p role="alert" className={fieldError}>
+          {COPY.signUpsPaused}
+        </p>
+      )}
+      {problem?.refusal === "too-many-sign-ups" && (
+        <p role="alert" className={fieldError}>
+          Too many accounts were made from your network recently. Please try again later.
+        </p>
+      )}
 
       <div className="flex gap-3 pt-1">
         <button type="button" onClick={onBack} className={secondaryButton}>

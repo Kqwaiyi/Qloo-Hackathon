@@ -1,5 +1,18 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, doublePrecision, index, integer, jsonb, pgEnum, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  boolean,
+  check,
+  doublePrecision,
+  index,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+} from "drizzle-orm/pg-core";
 
 import { LINES, STYLE_PREFERENCES } from "../../config/accounts";
 import {
@@ -10,6 +23,7 @@ import {
   PIECE_CATEGORIES,
   type PhotoStyleWords,
 } from "../../config/consultations";
+import type { EmailKind } from "../../config/email";
 import {
   PREVIEW_REFUSAL_REASONS,
   PREVIEW_STATES,
@@ -20,7 +34,7 @@ import {
   STYLING_STATUSES,
 } from "../../config/stylings";
 
-// Better Auth's own tables (user, session, account, verification), plus the Outfit Recommender
+// Better Auth's own tables (user, session, account, verification, rate limit), plus the Outfit Recommender
 // fields on the user. Better Auth looks these up by the export names below.
 
 export const stylePreferenceEnum = pgEnum("style_preference", STYLE_PREFERENCES);
@@ -93,6 +107,33 @@ export const verification = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("verification_identifier_idx").on(table.identifier)],
+);
+
+/** Better Auth's rate-limit counters, kept in the database so every server instance shares them. */
+export const rateLimit = pgTable("rate_limit", {
+  id: text("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  count: integer("count").notNull(),
+  // Milliseconds since the epoch, as Better Auth keeps it.
+  lastRequest: bigint("last_request", { mode: "number" }).notNull(),
+});
+
+// The email log: one row per email sent, which the email caps count. It never holds the address.
+
+export const emailLog = pgTable(
+  "email_log",
+  {
+    id: text("id").primaryKey(),
+    // Not an enum, so a new kind of email needs no migration.
+    kind: text("kind").notNull().$type<EmailKind>(),
+    // The account it was for, if any. Deleting the account strips it from the log.
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index("email_log_sent_at_idx").on(table.sentAt),
+    index("email_log_user_id_kind_sent_at_idx").on(table.userId, table.kind, table.sentAt),
+  ],
 );
 
 // Consultations.

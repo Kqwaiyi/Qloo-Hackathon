@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
 
 import { FAKE_AI_SCENARIO_COOKIE } from "../src/server/ai/fake";
-import { plainPhoto, signUpNewUser } from "./support";
+import { plainPhoto, signUpVerifiedUser } from "./support";
 
 test("a photo that looks like another Photo Type is sent again as that type with one tap", async ({ page, context, baseURL }) => {
-  await signUpNewUser(page);
+  await signUpVerifiedUser(page);
   // The fake adapter sees just a face and hair, whatever Photo Type was chosen.
   await context.addCookies([{ name: FAKE_AI_SCENARIO_COOKIE, value: "wrong-photo-type", url: baseURL! }]);
 

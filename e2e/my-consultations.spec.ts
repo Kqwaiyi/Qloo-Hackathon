@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-import { plainPhoto, signUpNewUser } from "./support";
+import { plainPhoto, signUpVerifiedUser } from "./support";
 
 test("a Consultation opens from My Consultations, and is deleted for good after a confirmation", async ({ page }) => {
   // Its Styling calls live Qloo, and in development each page compiles on its first visit.
   test.setTimeout(120_000);
-  await signUpNewUser(page);
+  await signUpVerifiedUser(page);
 
   // A Face Photo's Styling makes the fewest Qloo calls. Its radio is hidden inside its card.
   await page.getByText("Face Photo", { exact: true }).click();

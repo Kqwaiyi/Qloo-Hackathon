@@ -1,15 +1,18 @@
 import { expect, type Page } from "@playwright/test";
 import sharp from "sharp";
 
+import { LOCAL_INBOX_FOLDER, readInbox } from "../src/server/email/inbox";
+
 export const SMOKE_PASSWORD = "smoke-test-password";
 
 let signUps = 0;
 
-/** Signs up a new adult user through both steps, landing on New Consultation. Returns their username. */
-export async function signUpNewUser(page: Page): Promise<{ username: string }> {
+/** Signs up a new adult user through both steps, landing on New Consultation unverified. */
+export async function signUpNewUser(page: Page): Promise<{ username: string; email: string }> {
   signUps += 1;
   const id = `${Date.now().toString(36)}${signUps}`;
   const username = `Smoke.${id}`;
+  const email = `smoke.${id}@example.com`;
 
   await page.goto("/sign-up");
   await page.getByLabel("Day").fill("17");
@@ -18,7 +21,7 @@ export async function signUpNewUser(page: Page): Promise<{ username: string }> {
   await page.getByRole("button", { name: "Continue" }).click();
 
   await page.getByLabel("Username").fill(username);
-  await page.getByLabel("Email").fill(`smoke.${id}@example.com`);
+  await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password", { exact: true }).fill(SMOKE_PASSWORD);
   await page.getByRole("radio", { name: "Womenswear" }).check();
   await page.getByLabel("Country").selectOption("GB");
@@ -26,7 +29,28 @@ export async function signUpNewUser(page: Page): Promise<{ username: string }> {
   await page.getByRole("button", { name: "Create account" }).click();
 
   await expect(page).toHaveURL(/\/consultations\/new$/);
-  return { username };
+  return { username, email };
+}
+
+/** Opens the newest link emailed to this address, from local development's capturing inbox. */
+export async function openEmailedLink(page: Page, email: string): Promise<void> {
+  let link: string | undefined;
+  await expect
+    .poll(async () => {
+      const newest = (await readInbox(LOCAL_INBOX_FOLDER, email)).at(-1);
+      link = newest && /https?:\/\/\S+/.exec(newest.text)?.[0];
+      return link;
+    })
+    .toBeDefined();
+  await page.goto(link!);
+}
+
+/** Signs up a new adult user and verifies their email by its link, landing on New Consultation. */
+export async function signUpVerifiedUser(page: Page): Promise<{ username: string; email: string }> {
+  const user = await signUpNewUser(page);
+  await openEmailedLink(page, user.email);
+  await expect(page.getByText("Email verified")).toBeVisible();
+  return user;
 }
 
 /** A plain JPEG the browser can open. */

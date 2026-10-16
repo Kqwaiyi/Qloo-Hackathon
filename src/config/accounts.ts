@@ -23,6 +23,15 @@ export const MINIMUM_AGE = 18;
 export const AGE_GATE_COOKIE_NAME = "age_gate";
 export const AGE_GATE_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
+/** Better Auth's rate limit on sign-ups, per IP address. */
+export const SIGN_UP_RATE_LIMIT = { window: 60 * 60, max: 3 } as const;
+
+/** A verification link works for this long. */
+export const VERIFICATION_LINK_LIFETIME_SECONDS = 24 * 60 * 60;
+
+/** An account still unverified this many days after sign-up is deleted. */
+export const UNVERIFIED_ACCOUNT_LIFETIME_DAYS = 7;
+
 /** Sessions last 30 days and roll forward, refreshed at most once a day. */
 export const SESSION_EXPIRES_IN_SECONDS = 30 * 24 * 60 * 60;
 export const SESSION_UPDATE_AGE_SECONDS = 24 * 60 * 60;

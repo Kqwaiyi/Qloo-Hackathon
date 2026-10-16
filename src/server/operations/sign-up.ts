@@ -1,4 +1,3 @@
-import { isAPIError } from "better-auth/api";
 import * as z from "zod";
 
 import {
@@ -17,8 +16,9 @@ import {
   judgeAge,
   parseBirthDateFields,
 } from "@/server/accounts/birth-date";
-import { authErrorCode } from "@/server/auth/errors";
-import { forwardSetCookies } from "@/server/http/cookies";
+import { AUTH_ENDPOINTS } from "@/config/routes";
+import { AUTH_ERROR_CODES } from "@/server/auth/emails";
+import { postToAuthEndpoint } from "@/server/auth/endpoint";
 import type { OperationContext, Result } from "@/server/operations/context";
 
 export type DateOfBirthRefusal = { refusal: "invalid-date" | "under-18" };
@@ -52,14 +52,15 @@ export type SignUpInput = z.infer<typeof signUpInputSchema>;
 export type SignUpField = "birthDate" | "username" | "email" | "password" | "stylePreference" | "countryCode";
 
 export type SignUpRefusal =
-  | { refusal: "under-18" | "terms-not-accepted" | "username-taken" | "email-taken" }
+  | { refusal: "under-18" | "terms-not-accepted" | "username-taken" | "email-taken" | "sign-ups-paused" | "too-many-sign-ups" }
   | { refusal: "invalid"; field: SignUpField };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+$/;
 
 /**
- * Sign-up step 2: creates the account through Better Auth and signs the user in. Better Auth's
- * sign-up hook rechecks the date of birth, so this refuses an under-18 date too.
+ * Sign-up step 2: creates the account through Better Auth's sign-up endpoint, as any client would,
+ * so its per-IP rate limit applies, and signs the user in. Better Auth then emails the verification
+ * link. Its sign-up hook rechecks the date of birth, so this refuses an under-18 date too.
  */
 export async function signUp(ctx: OperationContext, input: SignUpInput): Promise<Result<object, SignUpRefusal>> {
   if (!input.acceptedTerms) return { ok: false, refusal: "terms-not-accepted" };
@@ -85,34 +86,31 @@ export async function signUp(ctx: OperationContext, input: SignUpInput): Promise
     // Not a user field: the sign-up hooks check it and keep only its year and month.
     birthDate: formatBirthDate(birthDate),
   };
-  try {
-    const { headers } = await ctx.auth.api.signUpEmail({ body, headers: ctx.requestHeaders, returnHeaders: true });
-    forwardSetCookies(headers, ctx.responseCookies);
-    return { ok: true };
-  } catch (error) {
-    if (!isAPIError(error)) throw error;
-    forwardSetCookies(new Headers(error.headers), ctx.responseCookies);
-    switch (authErrorCode(error)) {
-      case "UNDER_18":
-        return { ok: false, refusal: "under-18" };
-      case "USERNAME_IS_ALREADY_TAKEN":
-        return { ok: false, refusal: "username-taken" };
-      case "USER_ALREADY_EXISTS":
-      case "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL":
-        return { ok: false, refusal: "email-taken" };
-      case "USERNAME_TOO_SHORT":
-      case "USERNAME_TOO_LONG":
-      case "INVALID_USERNAME":
-        return invalid("username");
-      case "INVALID_EMAIL":
-        return invalid("email");
-      case "PASSWORD_TOO_SHORT":
-      case "PASSWORD_TOO_LONG":
-        return invalid("password");
-      default:
-        throw error;
-    }
+  const answer = await postToAuthEndpoint(ctx, AUTH_ENDPOINTS.signUp, body);
+  if (answer.ok) return { ok: true };
+  switch (answer.code) {
+    case "UNDER_18":
+      return { ok: false, refusal: "under-18" };
+    case AUTH_ERROR_CODES.signUpsPaused:
+      return { ok: false, refusal: "sign-ups-paused" };
+    case "USERNAME_IS_ALREADY_TAKEN":
+      return { ok: false, refusal: "username-taken" };
+    case "USER_ALREADY_EXISTS":
+    case "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL":
+      return { ok: false, refusal: "email-taken" };
+    case "USERNAME_TOO_SHORT":
+    case "USERNAME_TOO_LONG":
+    case "INVALID_USERNAME":
+      return invalid("username");
+    case "INVALID_EMAIL":
+      return invalid("email");
+    case "PASSWORD_TOO_SHORT":
+    case "PASSWORD_TOO_LONG":
+      return invalid("password");
   }
+  // Better Auth's per-IP rate limit, which answers without a code.
+  if (answer.status === 429) return { ok: false, refusal: "too-many-sign-ups" };
+  throw new Error(`Better Auth refused the sign-up (${answer.status} ${answer.code ?? "no code"}).`);
 }
 
 function invalid(field: SignUpField): { ok: false; refusal: "invalid"; field: SignUpField } {

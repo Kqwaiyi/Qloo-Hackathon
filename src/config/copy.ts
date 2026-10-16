@@ -3,6 +3,7 @@
 export const COPY = {
   under18: "You need to be 18 or older to use Outfit Recommender.",
   usernameTaken: "That username is taken",
+  signUpsPaused: "We can't take new sign-ups right now. Please try again tomorrow.",
   signInMismatch: "That username or email and password don't match.",
   photoTooLarge: "This file is over 20 MB.",
   photoUnreadable: "We couldn't open this file. Try a JPEG, PNG or WebP photo.",
@@ -22,4 +23,14 @@ export const COPY = {
   previewRefused: "No Preview for this Outfit: the image model declined to make one",
   previewFailed: "No Preview for this Outfit: the image model couldn't make one",
   everyPreviewRefused: "The image model declined this photo. A different photo may work better.",
+  verifyBanner: (email: string, deletionDate: string) =>
+    `We sent a link to ${email}. Verify it to start your first Consultation. Unverified accounts are deleted on ${deletionDate}.`,
+  resendLink: "Resend link",
+  changeEmail: "Change email",
+  emailVerified: "Email verified",
+  badVerificationLink: "This link has expired or isn't valid",
+  sendNewLink: "Send a new link",
+  signInForNewLink: "Sign in to get a new one",
+  emailChangeSent: "If that address isn't already in use, we've sent a link to it.",
+  didNotSignUp: (date: string) => `Didn't sign up? Ignore this email. The account is removed on ${date}.`,
 } as const;

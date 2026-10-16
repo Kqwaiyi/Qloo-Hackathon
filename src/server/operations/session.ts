@@ -1,6 +1,6 @@
 import type { StylePreference } from "@/config/accounts";
 import { forwardSetCookies } from "@/server/http/cookies";
-import type { OperationContext } from "@/server/operations/context";
+import type { AuthRequestContext, OperationContext } from "@/server/operations/context";
 
 export interface SignedInUser {
   id: string;
@@ -12,6 +12,8 @@ export interface SignedInUser {
   countryCode: string;
   birthYear: number;
   birthMonth: number;
+  /** When they signed up. */
+  createdAt: Date;
 }
 
 /** The user signed in on this request, or null. */
@@ -28,6 +30,7 @@ export async function readSignedInUser(ctx: Pick<OperationContext, "auth" | "req
     countryCode: user.countryCode,
     birthYear: user.birthYear!,
     birthMonth: user.birthMonth!,
+    createdAt: new Date(user.createdAt),
   };
 }
 
@@ -35,7 +38,7 @@ export async function readSignedInUser(ctx: Pick<OperationContext, "auth" | "req
  * Rolls the session forward once it is a day old, and sends its cookie again so the browser keeps
  * it 30 more days. Runs on every page request that carries a session cookie.
  */
-export async function refreshSession(ctx: Pick<OperationContext, "auth" | "requestHeaders" | "responseCookies">): Promise<void> {
+export async function refreshSession(ctx: AuthRequestContext): Promise<void> {
   const { headers } = await ctx.auth.api.getSession({ headers: ctx.requestHeaders, returnHeaders: true });
   forwardSetCookies(headers, ctx.responseCookies);
 }

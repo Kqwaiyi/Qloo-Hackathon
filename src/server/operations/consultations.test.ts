@@ -143,6 +143,20 @@ describe("starting a Consultation", () => {
     expect(harness.blob.objects.size).toBe(0);
   });
 
+  it("refuses a user who hasn't verified their email before checking anything else, storing nothing", async () => {
+    const browser = await signedInUser({}, { verified: false });
+
+    const result = await startConsultation(harness.context(browser), {
+      photo: new Blob(["not even a photo"], { type: "image/jpeg" }),
+      photoType: "full_body",
+    });
+
+    expect(result).toEqual({ ok: false, refusal: "unverified" });
+    expect(harness.ai.photoCheckCount).toBe(0);
+    expect(harness.blob.objects.size).toBe(0);
+    expect(await consultationsOf(browser)).toEqual([]);
+  });
+
   it.each([
     ["a photo over 2 MB", async () => new Blob([await noisyPngOver2Mb()], { type: "image/png" })],
     ["a file that isn't an image", async () => new Blob(["just some text"], { type: "image/jpeg" })],
@@ -532,14 +546,15 @@ async function getMyOutfits(browser: TestBrowser, photoType: PhotoType, budgetTi
 
 let userCount = 0;
 
-/** Signs up a new adult user and returns their signed-in browser. */
-async function signedInUser(overrides: Partial<SignUpInput> = {}): Promise<TestBrowser> {
+/** A new user, signed in, who has verified their email by its link unless told otherwise. */
+async function signedInUser(overrides: Partial<SignUpInput> = {}, { verified = true } = {}): Promise<TestBrowser> {
   userCount += 1;
   const browser = new TestBrowser();
+  const email = `user${userCount}@example.com`;
   const result = await signUp(harness.context(browser), {
     birthDate: { day: "2", month: "2", year: "1992" },
     username: `user_${userCount}`,
-    email: `user${userCount}@example.com`,
+    email,
     password: "a long enough password",
     stylePreference: "menswear",
     countryCode: "US",
@@ -547,6 +562,7 @@ async function signedInUser(overrides: Partial<SignUpInput> = {}): Promise<TestB
     ...overrides,
   });
   expect(result).toEqual({ ok: true });
+  if (verified) await harness.openEmailedLink(overrides.email ?? email, browser);
   return browser;
 }
 

@@ -24,5 +24,8 @@ export interface OperationContext {
   responseCookies: ResponseCookies;
 }
 
+/** What an operation calling Better Auth for the browser's request needs: its headers in, its cookies out. */
+export type AuthRequestContext = Pick<OperationContext, "auth" | "requestHeaders" | "responseCookies">;
+
 export type Refusal<R> = { ok: false } & R;
 export type Result<T, R> = ({ ok: true } & T) | Refusal<R>;

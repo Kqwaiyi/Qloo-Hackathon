@@ -11,6 +11,9 @@ import { VercelBlobStore } from "@/server/blob/vercel";
 import { type Clock, systemClock } from "@/server/clock";
 import { connectDatabase } from "@/server/db/connect";
 import type { Database } from "@/server/db/database";
+import { gmailTransportFromEnvironment } from "@/server/email/gmail";
+import { InboxTransport, LOCAL_INBOX_FOLDER } from "@/server/email/inbox";
+import { createEmailSender, type EmailSender, type EmailTransport } from "@/server/email/send-email";
 import { type QlooClient, qlooClientFromEnvironment } from "@/server/qloo/client";
 import type { StylingRunner } from "@/server/stylings/runner";
 import { workflowStylingRunner } from "@/server/stylings/workflow-runner";
@@ -24,6 +27,8 @@ export interface Services {
   /** Real Qloo everywhere, local development included, through the cache. */
   qloo: QlooClient;
   stylings: StylingRunner;
+  /** The send-email function every email goes through. */
+  emailSender: EmailSender;
 }
 
 // One set per server process. Kept on globalThis so Next.js's module reloading in development
@@ -41,11 +46,21 @@ export function getServices(): Promise<Services> {
 async function createServices(): Promise<Services> {
   const db = await connectDatabase();
   const clock = systemClock;
-  const auth = createAuth({ db, clock, ...authUrls(), secret: authSecret() });
+  const emailSender = createEmailSender({ db, clock, transport: emailTransport() });
+  const auth = createAuth({ db, clock, ...authUrls(), secret: authSecret(), emailSender });
   // The fake adapter until the Gemini adapter (ticket 34) can be switched on.
   const ai = fakeAiFromEnvironment();
   const qloo = qlooClientFromEnvironment({ db, clock });
-  return { db, auth, clock, ai, blob: blobStore(), qloo, stylings: workflowStylingRunner };
+  return { db, auth, clock, ai, blob: blobStore(), qloo, stylings: workflowStylingRunner, emailSender };
+}
+
+/**
+ * The team Gmail account on Vercel. Local development never sends real email, even with the
+ * account's variables in .env.local: each message lands in .data/inbox instead.
+ */
+function emailTransport(): EmailTransport {
+  if (process.env.VERCEL) return gmailTransportFromEnvironment();
+  return new InboxTransport(LOCAL_INBOX_FOLDER);
 }
 
 /** The private Vercel Blob store when its token is set (always, on Vercel); otherwise a local folder. */
