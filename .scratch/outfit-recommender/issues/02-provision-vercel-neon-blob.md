@@ -17,8 +17,10 @@
 
 ## Progress (2026-10-16)
 
-- Vercel project `outfit-recommender` (`prj_KhDS4AZkQkNiuImw3zZnVOrk3diK`) on team `kqw`, linked to `Kqwaiyi/Qloo-Hackathon` (`main` deploys to production). It was created with Fluid compute and a 300 s default function timeout. Vercel's API doesn't echo that setting back, so check Settings → Functions.
+- Vercel project `qloo-hackathon` (`prj_FskER8UxvzXfZuanEYaA3oVJlInM`) on team `kqw`, linked to `Kqwaiyi/Qloo-Hackathon`. `main` deploys to production at `qloo-hackathon-kohl.vercel.app`. Fluid compute and a 300 s default function timeout are set through the API. Vercel doesn't echo that setting back, so it shows only under Settings → Functions.
+- A duplicate project, `outfit-recommender` (`prj_KhDS4AZkQkNiuImw3zZnVOrk3diK`), was created by mistake and is linked to the same repo. Delete it in the dashboard (Settings → General → Delete Project). Until then every push deploys twice.
 - Deployment protection is Standard (`all_except_custom_domains`): preview deployments need a Vercel login and the production domain is public.
-- Private Blob store `outfit-recommender-blob` (`store_lHnFeE6utRPUCkZi`, iad1) is connected to the project, which set `BLOB_READ_WRITE_TOKEN` for every environment.
+- Private Blob store `outfit-recommender-blob` (`store_lHnFeE6utRPUCkZi`, iad1). Connect it to `qloo-hackathon` with "Add a read-write token env var" ticked, so `BLOB_READ_WRITE_TOKEN` exists.
+- `QLOO_API_KEY`, `QLOO_API_URL` and `GEMINI_API_KEY` are set as Sensitive on Production, Preview and Development.
 - Plan: the team is on Pro, so co-authored commits from the private repo deploy as long as the commit author is a team member. Today the only member is Kqwaiyi. Teammates who push their own commits need seats.
-- Still for a human: the AI-training opt-out, Neon through the Marketplace (sets `DATABASE_URL` and `DATABASE_URL_UNPOOLED`), and the secret env vars `BETTER_AUTH_SECRET`, `QLOO_API_KEY`, `QLOO_API_URL` and `GEMINI_API_KEY`. Then push or redeploy and check the production URL.
+- Still for a human: delete `outfit-recommender`, connect Blob to `qloo-hackathon`, the AI-training opt-out, Neon through the Marketplace (sets `DATABASE_URL` and `DATABASE_URL_UNPOOLED`), and `BETTER_AUTH_SECRET`. Then redeploy and check the production URL.
