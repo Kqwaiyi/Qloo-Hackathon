@@ -7,6 +7,9 @@ export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
   fullyParallel: false,
+  // One dev server compiles each page on its first visit: spec files run side by side make those
+  // compiles race and time out.
+  workers: 1,
   forbidOnly: Boolean(process.env.CI),
   reporter: "list",
   use: {

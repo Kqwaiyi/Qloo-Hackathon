@@ -42,6 +42,9 @@ export const OUTFITS_PER_STYLING = 2;
 /** How often a page waiting on a Styling asks for its status. */
 export const STYLING_STATUS_POLL_INTERVAL_MS = 1000;
 
+/** A step of the Styling checklist that has run longer than this says it's taking longer than usual. */
+export const SLOW_STEP_MS = 60_000;
+
 /** The AI gets this many tries at an Outfit's Pieces: bad output is retried once, then tailoring has failed. */
 export const TAILORING_ATTEMPTS = 2;
 

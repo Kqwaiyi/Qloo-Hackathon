@@ -103,6 +103,8 @@ export class FakeAiProvider implements AiProvider {
   previewScenarios: FakePreviewScenario[] = [];
   /** Every Preview it has been asked for, oldest first. */
   readonly previewRequests: FakePreviewRequest[] = [];
+  /** Runs during every call, as if the model were still working, so a test can look at a Styling part-way. */
+  duringCall?: (call: keyof AiProvider) => Promise<void>;
 
   constructor({ scenario = "pass", delayMs = DEFAULT_FAKE_AI_DELAY_MS }: FakeAiOptions = {}) {
     this.scenario = scenario;
@@ -111,7 +113,7 @@ export class FakeAiProvider implements AiProvider {
 
   async checkPhoto(input: PhotoCheckInput): Promise<PhotoCheckResult> {
     this.photoCheckCount += 1;
-    await this.wait();
+    await this.wait("checkPhoto");
     if (this.scenario === "check-errors") throw new Error("The fake photo check errored, as its scenario asks.");
     if (this.scenario === "blocked") return { blocked: true };
     return { blocked: false, report: reportFor(this.scenario, input.photoType) };
@@ -120,7 +122,7 @@ export class FakeAiProvider implements AiProvider {
   async tailorPieces(input: TailoringInput): Promise<unknown> {
     const { photo, ...rest } = input;
     this.tailoringRequests.push({ ...rest, photo: fingerprint(photo) });
-    await this.wait();
+    await this.wait("tailorPieces");
     const scenario = this.styleIconScenarios[input.styleIconName] ?? this.scenario;
     const tailored = { pieces: input.pieces.map(({ category }) => fakePiece(category, input, scenario !== "unknown-cut")) };
     if (scenario !== "tailoring-fails") return tailored;
@@ -132,13 +134,14 @@ export class FakeAiProvider implements AiProvider {
     const { photo, ...rest } = input;
     this.previewRequests.push({ ...rest, photo: fingerprint(photo) });
     const scenario = this.previewScenarios.shift() ?? this.scenario;
-    await this.wait();
+    await this.wait("renderPreview");
     if (scenario === "preview-fails") throw new Error("The fake Preview failed, as its scenario asks.");
     if (scenario === "preview-refused") return { refused: true, reason: "image_safety" };
     return { refused: false, image: await withFakePreviewBanner(photo) };
   }
 
-  private async wait(): Promise<void> {
+  private async wait(call: keyof AiProvider): Promise<void> {
+    await this.duringCall?.(call);
     if (this.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.delayMs));
   }
 }

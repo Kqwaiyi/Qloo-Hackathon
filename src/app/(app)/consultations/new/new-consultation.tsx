@@ -16,9 +16,11 @@ import {
 } from "@/config/consultations";
 import { COPY } from "@/config/copy";
 import { consultationRoute, ROUTES } from "@/config/routes";
+import { SLOW_STEP_MS } from "@/config/stylings";
 import type { PhotoRejection } from "@/server/consultations/photo-check";
 
 import { Stepper } from "../stepper";
+import { StylingStep } from "../styling-step";
 import { startConsultationAction } from "./actions";
 import { CameraView, useCamera } from "./camera";
 import { shrinkPhoto } from "./shrink-photo";
@@ -47,21 +49,16 @@ export function NewConsultation() {
     return () => URL.revokeObjectURL(photo.url);
   }, [photo]);
 
-  return (
-    <>
-      <Stepper current={step === "photo-type" ? 1 : 2} />
-      {step === "photo-type" ? (
-        <PhotoTypeStep photoType={photoType} onChange={setPhotoType} onContinue={() => setStep("photo")} />
-      ) : (
-        <PhotoStep
-          photoType={photoType}
-          onPhotoTypeChange={setPhotoType}
-          photo={photo}
-          onPhotoChange={setPhoto}
-          onBack={() => setStep("photo-type")}
-        />
-      )}
-    </>
+  return step === "photo-type" ? (
+    <PhotoTypeStep photoType={photoType} onChange={setPhotoType} onContinue={() => setStep("photo")} />
+  ) : (
+    <PhotoStep
+      photoType={photoType}
+      onPhotoTypeChange={setPhotoType}
+      photo={photo}
+      onPhotoChange={setPhoto}
+      onBack={() => setStep("photo-type")}
+    />
   );
 }
 
@@ -75,52 +72,55 @@ function PhotoTypeStep({
   onContinue: () => void;
 }) {
   return (
-    <section aria-labelledby="photo-type-heading">
-      <h2 id="photo-type-heading" className="text-xl font-semibold tracking-tight">
-        What will your photo show?
-      </h2>
-      <p className="mt-1 text-stone-600">This decides which parts of an Outfit we can recommend.</p>
-      <fieldset className="mt-6 space-y-3">
-        <legend className="sr-only">Photo Type</legend>
-        {PHOTO_TYPES.map((type) => (
-          <label
-            key={type}
-            className="flex cursor-pointer items-center gap-4 rounded-xl border-2 border-stone-200 bg-white p-4 hover:border-stone-300 has-[:checked]:border-stone-900 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-stone-900 has-[:focus-visible]:ring-offset-2"
-          >
-            <input
-              type="radio"
-              name="photoType"
-              value={type}
-              checked={photoType === type}
-              onChange={() => onChange(type)}
-              className="peer sr-only"
-            />
-            <PhotoTypeSilhouette photoType={type} className="h-20 w-16 shrink-0 rounded-lg bg-stone-100 text-stone-400" />
-            <span className="flex-1">
-              <span className="block font-semibold">{PHOTO_TYPE_LABELS[type]}</span>
-              <span className="block text-sm text-stone-600">{PHOTO_TYPE_HINTS[type]}</span>
-              <span className="mt-2 flex flex-wrap gap-1">
-                <span className="sr-only">Unlocks:</span>
-                {PHOTO_TYPE_CATEGORIES[type].map((category) => (
-                  <span key={category} className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">
-                    {CATEGORY_LABELS[category]}
-                  </span>
-                ))}
+    <>
+      <Stepper current={1} />
+      <section aria-labelledby="photo-type-heading">
+        <h2 id="photo-type-heading" className="text-xl font-semibold tracking-tight">
+          What will your photo show?
+        </h2>
+        <p className="mt-1 text-stone-600">This decides which parts of an Outfit we can recommend.</p>
+        <fieldset className="mt-6 space-y-3">
+          <legend className="sr-only">Photo Type</legend>
+          {PHOTO_TYPES.map((type) => (
+            <label
+              key={type}
+              className="flex cursor-pointer items-center gap-4 rounded-xl border-2 border-stone-200 bg-white p-4 hover:border-stone-300 has-[:checked]:border-stone-900 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-stone-900 has-[:focus-visible]:ring-offset-2"
+            >
+              <input
+                type="radio"
+                name="photoType"
+                value={type}
+                checked={photoType === type}
+                onChange={() => onChange(type)}
+                className="peer sr-only"
+              />
+              <PhotoTypeSilhouette photoType={type} className="h-20 w-16 shrink-0 rounded-lg bg-stone-100 text-stone-400" />
+              <span className="flex-1">
+                <span className="block font-semibold">{PHOTO_TYPE_LABELS[type]}</span>
+                <span className="block text-sm text-stone-600">{PHOTO_TYPE_HINTS[type]}</span>
+                <span className="mt-2 flex flex-wrap gap-1">
+                  <span className="sr-only">Unlocks:</span>
+                  {PHOTO_TYPE_CATEGORIES[type].map((category) => (
+                    <span key={category} className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">
+                      {CATEGORY_LABELS[category]}
+                    </span>
+                  ))}
+                </span>
               </span>
-            </span>
-            <span
-              aria-hidden="true"
-              className="h-5 w-5 shrink-0 rounded-full border-2 border-stone-300 peer-checked:border-[6px] peer-checked:border-stone-900"
-            />
-          </label>
-        ))}
-      </fieldset>
-      <div className="mt-8 flex justify-end">
-        <button type="button" onClick={onContinue} className={primaryButton}>
-          Continue
-        </button>
-      </div>
-    </section>
+              <span
+                aria-hidden="true"
+                className="h-5 w-5 shrink-0 rounded-full border-2 border-stone-300 peer-checked:border-[6px] peer-checked:border-stone-900"
+              />
+            </label>
+          ))}
+        </fieldset>
+        <div className="mt-8 flex justify-end">
+          <button type="button" onClick={onContinue} className={primaryButton}>
+            Continue
+          </button>
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -173,6 +173,18 @@ function PhotoStep({
   const [opening, setOpening] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [sending, startSending] = useTransition();
+  // While sending, the Styling step: the photo check, then the Styling under way once the photo passes.
+  const [accepted, setAccepted] = useState(false);
+  const [stepStartedAt, setStepStartedAt] = useState<number | null>(null);
+  const slow = useTakingLonger(sending ? stepStartedAt : null);
+  const getOutfitsButton = useRef<HTMLButtonElement>(null);
+  const wasSending = useRef(false);
+
+  // Back from the Styling step with the photo refused: focus is where the user left it.
+  useEffect(() => {
+    if (wasSending.current && !sending) getOutfitsButton.current?.focus();
+    wasSending.current = sending;
+  }, [sending]);
 
   function chooseSource(next: PhotoSource) {
     if (next === source) return;
@@ -225,6 +237,8 @@ function PhotoStep({
   function getOutfits(type: PhotoType) {
     if (!shown) return;
     setProblem(null);
+    setAccepted(false);
+    setStepStartedAt(Date.now());
     startSending(async () => {
       const form = new FormData();
       form.set("photoType", type);
@@ -237,8 +251,11 @@ function PhotoStep({
         setProblem({ message: COPY.photoCheckFailed });
         return;
       }
-      if (result.ok) startSending(() => router.push(consultationRoute(result.consultationId)));
-      else if (result.refusal === "signed-out") startSending(() => router.push(ROUTES.signIn));
+      if (result.ok) {
+        setAccepted(true);
+        setStepStartedAt(Date.now());
+        startSending(() => router.push(consultationRoute(result.consultationId)));
+      } else if (result.refusal === "signed-out") startSending(() => router.push(ROUTES.signIn));
       else if (result.refusal === "photo-rejected") setProblem(rejectionProblem(result.rejection));
       else if (result.refusal === "check-errored") setProblem({ message: COPY.photoCheckFailed });
       else setProblem({ message: COPY.photoUnusable });
@@ -255,106 +272,131 @@ function PhotoStep({
   const switchTo = problem?.switchTo;
   const busy = opening || capturing || sending;
 
-  return (
-    <section aria-labelledby="photo-heading">
-      <h2 id="photo-heading" className="text-xl font-semibold tracking-tight">
-        {source === "camera" ? "Take" : "Upload"} your {label}
-      </h2>
-      <p className="mt-1 text-stone-600">
-        {PHOTO_TYPE_HINTS[photoType]} Just you in the photo.
-        {source === "camera" && " Line yourself up with the outline."}
-      </p>
+  // A rejected photo comes back to this step, still chosen.
+  if (sending && shown) {
+    return <StylingStep photoUrl={shown.url} photoType={photoType} stage={accepted ? "style_icons" : "photo_check"} slow={slow} />;
+  }
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-stone-200 bg-white">
-        <PhotoSourceTabs value={source} onChange={chooseSource} disabled={busy} />
-        <div role="tabpanel" id="photo-panel" aria-labelledby={`${source}-tab`}>
-          <div className="mx-auto aspect-[4/5] w-full max-w-[45vh]">
-            {shown ? (
-              <img src={shown.url} alt={`Your ${label}`} className="h-full w-full bg-stone-100 object-contain" />
-            ) : source === "camera" ? (
-              <CameraView camera={camera} photoType={photoType} onUpload={uploadInstead} />
-            ) : (
-              <button
-                type="button"
-                onClick={() => fileInput.current?.click()}
-                disabled={opening}
-                className="flex h-full w-full flex-col items-center justify-center gap-3 bg-stone-50 px-6 text-center text-stone-600 hover:bg-stone-100"
-              >
-                <PhotoTypeSilhouette photoType={photoType} className="h-24 w-20 rounded-lg text-stone-300" />
-                <span className="font-medium text-stone-900">{opening ? "Opening your photo…" : "Choose a photo"}</span>
-                <span className="text-xs">A JPEG, PNG or WebP photo, or any photo your browser can open</span>
-              </button>
-            )}
-          </div>
-          {source === "camera" ? (
-            <div className="flex justify-end border-t border-stone-200 p-3">
-              {/* One button for both, and aria-disabled rather than disabled, so focus stays on it
-                  while the camera starts, the photo is taken and the user retakes. */}
-              <button
-                type="button"
-                onClick={shown ? retake : takePhoto}
-                disabled={Boolean(shown) && sending}
-                aria-disabled={!shown && !canTakePhoto}
-                className={`rounded-lg px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 ${
-                  shown
-                    ? "border border-stone-300 bg-white hover:bg-stone-100"
-                    : "bg-stone-900 text-white hover:bg-stone-700"
-                }`}
-              >
-                {shown ? "Retake" : capturing ? "Taking your photo…" : "Take photo"}
-              </button>
-            </div>
-          ) : (
-            shown && (
-              <div className="flex justify-end border-t border-stone-200 p-3">
+  return (
+    <>
+      <Stepper current={2} />
+      <section aria-labelledby="photo-heading">
+        <h2 id="photo-heading" className="text-xl font-semibold tracking-tight">
+          {source === "camera" ? "Take" : "Upload"} your {label}
+        </h2>
+        <p className="mt-1 text-stone-600">
+          {PHOTO_TYPE_HINTS[photoType]} Just you in the photo.
+          {source === "camera" && " Line yourself up with the outline."}
+        </p>
+
+        <div className="mt-6 overflow-hidden rounded-xl border border-stone-200 bg-white">
+          <PhotoSourceTabs value={source} onChange={chooseSource} disabled={busy} />
+          <div role="tabpanel" id="photo-panel" aria-labelledby={`${source}-tab`}>
+            <div className="mx-auto aspect-[4/5] w-full max-w-[45vh]">
+              {shown ? (
+                <img src={shown.url} alt={`Your ${label}`} className="h-full w-full bg-stone-100 object-contain" />
+              ) : source === "camera" ? (
+                <CameraView camera={camera} photoType={photoType} onUpload={uploadInstead} />
+              ) : (
                 <button
                   type="button"
                   onClick={() => fileInput.current?.click()}
-                  disabled={opening || sending}
-                  className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-100 disabled:opacity-40"
+                  disabled={opening}
+                  className="flex h-full w-full flex-col items-center justify-center gap-3 bg-stone-50 px-6 text-center text-stone-600 hover:bg-stone-100"
                 >
-                  {opening ? "Opening your photo…" : "Choose another"}
+                  <PhotoTypeSilhouette photoType={photoType} className="h-24 w-20 rounded-lg text-stone-300" />
+                  <span className="font-medium text-stone-900">{opening ? "Opening your photo…" : "Choose a photo"}</span>
+                  <span className="text-xs">A JPEG, PNG or WebP photo, or any photo your browser can open</span>
+                </button>
+              )}
+            </div>
+            {source === "camera" ? (
+              <div className="flex justify-end border-t border-stone-200 p-3">
+                {/* One button for both, and aria-disabled rather than disabled, so focus stays on it
+                    while the camera starts, the photo is taken and the user retakes. */}
+                <button
+                  type="button"
+                  onClick={shown ? retake : takePhoto}
+                  disabled={Boolean(shown) && sending}
+                  aria-disabled={!shown && !canTakePhoto}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 ${
+                    shown
+                      ? "border border-stone-300 bg-white hover:bg-stone-100"
+                      : "bg-stone-900 text-white hover:bg-stone-700"
+                  }`}
+                >
+                  {shown ? "Retake" : capturing ? "Taking your photo…" : "Take photo"}
                 </button>
               </div>
-            )
-          )}
-        </div>
-        <input ref={fileInput} type="file" accept="image/*" onChange={pick} className="hidden" />
-      </div>
-      {problem && (
-        <div className="mt-1">
-          <div role="alert">
-            <p className={fieldError}>{problem.message}</p>
-            {problem.detail && <p className="mt-1 text-sm text-stone-600">{problem.detail}</p>}
+            ) : (
+              shown && (
+                <div className="flex justify-end border-t border-stone-200 p-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInput.current?.click()}
+                    disabled={opening || sending}
+                    className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-100 disabled:opacity-40"
+                  >
+                    {opening ? "Opening your photo…" : "Choose another"}
+                  </button>
+                </div>
+              )
+            )}
           </div>
-          {switchTo && (
-            <button
-              type="button"
-              onClick={() => switchPhotoType(switchTo)}
-              disabled={busy}
-              className={`mt-3 ${secondaryButton}`}
-            >
-              {COPY.useItAs(PHOTO_TYPE_LABELS[switchTo])}
-            </button>
-          )}
+          <input ref={fileInput} type="file" accept="image/*" onChange={pick} className="hidden" />
         </div>
-      )}
+        {problem && (
+          <div className="mt-1">
+            <div role="alert">
+              <p className={fieldError}>{problem.message}</p>
+              {problem.detail && <p className="mt-1 text-sm text-stone-600">{problem.detail}</p>}
+            </div>
+            {switchTo && (
+              <button
+                type="button"
+                onClick={() => switchPhotoType(switchTo)}
+                disabled={busy}
+                className={`mt-3 ${secondaryButton}`}
+              >
+                {COPY.useItAs(PHOTO_TYPE_LABELS[switchTo])}
+              </button>
+            )}
+          </div>
+        )}
 
-      <div className="mt-8 flex justify-between gap-3">
-        <button
-          type="button"
-          onClick={onBack}
-          disabled={sending}
-          className="rounded-lg px-4 py-2.5 font-medium text-stone-600 hover:bg-stone-100"
-        >
-          Back
-        </button>
-        <button type="button" onClick={() => getOutfits(photoType)} disabled={!shown || busy} className={primaryButton}>
-          {sending ? "Checking your photo…" : "Get my Outfits"}
-        </button>
-      </div>
-    </section>
+        <div className="mt-8 flex justify-between gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            disabled={sending}
+            className="rounded-lg px-4 py-2.5 font-medium text-stone-600 hover:bg-stone-100"
+          >
+            Back
+          </button>
+          <button
+            ref={getOutfitsButton}
+            type="button"
+            onClick={() => getOutfits(photoType)}
+            disabled={!shown || busy}
+            className={primaryButton}
+          >
+            Get my Outfits
+          </button>
+        </div>
+      </section>
+    </>
   );
+}
+
+/** True once the step that started at `startedAt` has run longer than SLOW_STEP_MS. Null while no step runs. */
+function useTakingLonger(startedAt: number | null): boolean {
+  const [slowStepStartedAt, setSlowStepStartedAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (startedAt === null) return;
+    const timer = setTimeout(() => setSlowStepStartedAt(startedAt), startedAt + SLOW_STEP_MS - Date.now());
+    return () => clearTimeout(timer);
+  }, [startedAt]);
+  return startedAt !== null && slowStepStartedAt === startedAt;
 }
 
 /** The Camera and Upload tabs, with arrow keys moving between them. */

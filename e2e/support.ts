@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import sharp from "sharp";
 
 export const SMOKE_PASSWORD = "smoke-test-password";
 
@@ -26,4 +27,9 @@ export async function signUpNewUser(page: Page): Promise<{ username: string }> {
 
   await expect(page).toHaveURL(/\/consultations\/new$/);
   return { username };
+}
+
+/** A plain JPEG the browser can open. */
+export async function plainPhoto(): Promise<Buffer> {
+  return sharp({ create: { width: 300, height: 400, channels: 3, background: "#8a7f72" } }).jpeg().toBuffer();
 }

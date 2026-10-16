@@ -4,20 +4,39 @@ import { notFound } from "next/navigation";
 import { LocalDate } from "@/components/local-date";
 import { CATEGORY_LABELS, PHOTO_TYPE_LABELS } from "@/config/consultations";
 import { COPY } from "@/config/copy";
-import { getConsultation } from "@/server/data/consultations";
+import { getConsultation, getStylingStatus } from "@/server/data/consultations";
 import type { OutfitView, PieceView, PreviewView } from "@/server/operations/consultations";
 
+import { Stepper } from "../stepper";
 import { StylingProgress } from "./styling-progress";
 
 export const metadata: Metadata = { title: "Your Outfits" };
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const consultation = await getConsultation(id);
-  if (!consultation) notFound();
+  // The status first: a Styling that finishes between the two reads shows its Outfits.
+  const status = await getStylingStatus(id);
+  const consultation = status && (await getConsultation(id));
+  if (!status || !consultation) notFound();
+
+  // Opened mid-Styling, from here or on coming back, it's the Styling step again.
+  if (status.progress) {
+    return (
+      <>
+        <h1 className="mb-6 text-2xl font-semibold tracking-tight">Your Outfits</h1>
+        <StylingProgress
+          consultationId={consultation.id}
+          photoUrl={consultation.photoUrl}
+          photoType={consultation.photoType}
+          initial={status.progress}
+        />
+      </>
+    );
+  }
 
   return (
     <>
+      <Stepper current={4} />
       <header className="flex flex-wrap items-center gap-4">
         {/* A signed link, valid for 1 hour from when this page rendered. */}
         <img
@@ -40,9 +59,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           </p>
         </div>
       </header>
-      {consultation.state === "styling" ? (
-        <StylingProgress consultationId={consultation.id} />
-      ) : consultation.outfits.length > 0 ? (
+      {consultation.outfits.length > 0 ? (
         <>
           {consultation.everyPreviewRefused && (
             <p role="status" className="mt-8 rounded-lg bg-stone-100 px-4 py-3 text-sm text-stone-700">

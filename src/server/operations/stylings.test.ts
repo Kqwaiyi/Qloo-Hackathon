@@ -1,13 +1,14 @@
 import { asc, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import sharp from "sharp";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PhotoType } from "@/config/consultations";
 import { consultation, outfit, piece, qlooCache, styleIcon, styling, user } from "@/server/db/schema";
 import { readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
-import { readStylingStatus } from "@/server/operations/stylings";
+import { readStylingStatus, type StylingProgressView } from "@/server/operations/stylings";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
 import { createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
@@ -36,6 +37,7 @@ beforeEach(async () => {
   harness.ai.tailoringRequests.length = 0;
   harness.ai.previewRequests.length = 0;
   harness.ai.previewScenarios = [];
+  harness.ai.duringCall = undefined;
   harness.stylings.pending.length = 0;
   harness.qloo.requests.length = 0;
   harness.qloo.respond = peopleByGender({ female: WOMEN, male: MEN });
@@ -50,7 +52,10 @@ describe("a new Consultation's first Styling", () => {
     const consultationId = await start(browser, "full_body");
 
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "styling", outfits: [] });
-    expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({ state: "styling", stage: "style_icons" });
+    expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({
+      state: "styling",
+      progress: { stage: "style_icons", previews: { done: 0, of: 2 }, slow: false },
+    });
     expect(await stylingsOf(consultationId)).toEqual([
       {
         id: harness.stylings.pending[0],
@@ -89,7 +94,7 @@ describe("a new Consultation's first Styling", () => {
         { id: expect.any(String), position: 2, styleIconName: "Bea Marsh" },
       ],
     });
-    expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({ state: "ready", stage: null });
+    expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({ state: "ready", progress: null });
     expect(await stylingsOf(consultationId)).toEqual([
       expect.objectContaining({
         status: "succeeded",
@@ -529,7 +534,7 @@ describe("a first Styling that can't build anything", () => {
       }),
     ]);
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "no_outfits", outfits: [] });
-    expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({ state: "no_outfits", stage: null });
+    expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({ state: "no_outfits", progress: null });
   });
 
   it("fails as something broke when Qloo keeps failing, keeping nothing", async () => {
@@ -584,6 +589,80 @@ describe("the Styling status", () => {
     expect(await readStylingStatus(harness.context(await signedInUser()), consultationId)).toBeNull();
     expect(await readStylingStatus(harness.context(new TestBrowser()), consultationId)).toBeNull();
   });
+
+  it("follows the stage the Styling has reached, counting each Preview once it's made or declined", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+    const checklist = watchChecklist(browser, consultationId);
+    harness.ai.previewScenarios = ["preview-refused"];
+    let previews = 0;
+    harness.ai.duringCall = async (call) => {
+      // The second Preview is still being made once the first is declined.
+      if (call === "renderPreview" && ++previews === 2) {
+        await vi.waitFor(async () => expect((await checklist.look())?.previews.done).toBe(1));
+      }
+      await checklist.look();
+    };
+
+    await harness.stylings.runPending();
+
+    expect(checklist.seen).toEqual([
+      { stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
+      { stage: "previews", previews: { done: 0, of: 2 }, slow: false },
+      { stage: "previews", previews: { done: 1, of: 2 }, slow: false },
+    ]);
+  });
+
+  it("counts Previews of the Outfits the Styling made, once it made fewer than it meant to", async () => {
+    harness.qloo.respond = peopleByGender({ male: [MEN[0]!] });
+    const browser = await signedInUser({ stylePreference: "menswear" });
+    const consultationId = await start(browser, "face");
+    const checklist = watchChecklist(browser, consultationId);
+    harness.ai.duringCall = async () => {
+      await checklist.look();
+    };
+
+    await harness.stylings.runPending();
+
+    expect(checklist.seen).toEqual([
+      { stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
+      { stage: "previews", previews: { done: 0, of: 1 }, slow: false },
+    ]);
+  });
+
+  it("says a stage is taking longer than usual once it has run for over 60 s", async () => {
+    const browser = await signedInUser();
+    harness.clock.set("2026-10-16T12:30:00Z");
+    const consultationId = await start(browser, "face");
+    const slow = async () => (await readStylingStatus(harness.context(browser), consultationId))?.progress?.slow;
+
+    harness.clock.set("2026-10-16T12:31:00Z");
+    expect(await slow()).toBe(false);
+    harness.clock.set("2026-10-16T12:31:01Z");
+    expect(await slow()).toBe(true);
+  });
+
+  it("times each stage from when the Styling reached it", async () => {
+    const browser = await signedInUser();
+    harness.clock.set("2026-10-16T12:30:00Z");
+    const consultationId = await start(browser, "face");
+    const slow = async () => (await readStylingStatus(harness.context(browser), consultationId))?.progress?.slow;
+    // Finding Style Icons takes 2 minutes.
+    harness.clock.set("2026-10-16T12:32:00Z");
+    const seen: (boolean | undefined)[] = [];
+    let looked = false;
+    harness.ai.duringCall = async (call) => {
+      if (call !== "tailorPieces" || looked) return;
+      looked = true;
+      seen.push(await slow());
+      harness.clock.set("2026-10-16T12:33:01Z");
+      seen.push(await slow());
+    };
+
+    await harness.stylings.runPending();
+
+    expect(seen).toEqual([false, true]);
+  });
 });
 
 it("starts no Styling for a rejected photo", async () => {
@@ -609,6 +688,19 @@ function peopleByGender(people: { female?: readonly object[]; male?: readonly ob
   return (request: RecordedQlooRequest) => {
     const gender = request.url.searchParams.get("filter.gender");
     return qlooResponse((gender === "female" || gender === "male" ? people[gender] : undefined) ?? []);
+  };
+}
+
+/** What a page polling the Styling status would show: `seen` holds each change, in order, as `look()` finds it. */
+function watchChecklist(browser: TestBrowser, consultationId: string) {
+  const seen: (StylingProgressView | null)[] = [];
+  return {
+    seen,
+    async look(): Promise<StylingProgressView | null> {
+      const progress = (await readStylingStatus(harness.context(browser), consultationId))?.progress ?? null;
+      if (!isDeepStrictEqual(seen.at(-1), progress)) seen.push(progress);
+      return progress;
+    },
   };
 }
 
