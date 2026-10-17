@@ -16,7 +16,7 @@ import {
   type PriceRangeUsd,
   SIGNED_LINK_LIFETIME_SECONDS,
 } from "@/config/consultations";
-import type { PreviewState } from "@/config/stylings";
+import type { PreviewState, StylingFailureReason } from "@/config/stylings";
 import { needsPhotoConsent, photoConsentStands, recordPhotoConsent } from "@/server/accounts/photo-consent";
 import type { PhotoCheckResult } from "@/server/ai/provider";
 import type { BlobStore } from "@/server/blob/store";
@@ -25,7 +25,8 @@ import { photoPathnameFor } from "@/server/consultations/blob-pathnames";
 import { deleteConsultationOf } from "@/server/consultations/deletion";
 import { judgePhotoCheck, type PhotoRejection } from "@/server/consultations/photo-check";
 import { readPhotoFile } from "@/server/consultations/photo-file";
-import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
+import type { Database } from "@/server/db/database";
+import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
@@ -180,7 +181,18 @@ export interface ConsultationView {
    * inspired an Outfit or been passed over. "That's every Outfit we can build for this photo."
    */
   everyOutfitBuilt: boolean;
+  /**
+   * What the Consultation's latest Styling, a re-styling that built nothing, tried to build for, or
+   * null. The Consultation kept what it had, so its Outfits, if any, are still from before it.
+   */
+  failedRestyling: FailedRestyling | null;
 }
+
+/**
+ * A re-styling that made no Outfit: "We couldn't build Outfits … for this photo.", or, when it
+ * broke, "Something went wrong while styling."
+ */
+export type FailedRestyling = { kind: "photo_style_change"; photoStyle: PhotoStyleWords; reason: StylingFailureReason };
 
 export interface OutfitView {
   id: string;
@@ -300,7 +312,21 @@ export async function readConsultation(
     outfits,
     everyPreviewRefused: outfits.length > 0 && outfits.every((outfitView) => outfitView.preview.state === "refused"),
     everyOutfitBuilt: !(await hasCurrentStyleIconLeft(ctx.db, row.id)),
+    failedRestyling: await readFailedRestyling(ctx.db, row.id),
   };
+}
+
+/** The Consultation's latest Styling, if it was a re-styling that failed: what it tried to build for. */
+async function readFailedRestyling(db: Database, consultationId: string): Promise<FailedRestyling | null> {
+  const [latest] = await db
+    .select({ kind: styling.kind, photoStyle: styling.photoStyle, failureReason: styling.failureReason })
+    .from(styling)
+    .where(eq(styling.consultationId, consultationId))
+    .orderBy(desc(styling.startedAt))
+    .limit(1);
+  // Only a failed Styling has a failure reason.
+  if (latest?.kind !== "photo_style_change" || !latest.failureReason) return null;
+  return { kind: latest.kind, photoStyle: latest.photoStyle, reason: latest.failureReason };
 }
 
 /** One row of My Consultations. */

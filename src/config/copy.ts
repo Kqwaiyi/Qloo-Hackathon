@@ -1,5 +1,12 @@
 // User-facing copy that the spec fixes word for word ("User-facing copy" in the spec).
 
+const STYLING_BROKE = "Something went wrong while styling.";
+
+/** What else to try for more Outfits. A Face Photo has no Budget Tier to suggest. */
+function tryAnother(suggestBudgetTier: boolean): string {
+  return `Try another ${suggestBudgetTier ? "Budget Tier or Photo Style" : "Photo Style"}`;
+}
+
 export const COPY = {
   under18: "You need to be 18 or older to use Outfit Recommender.",
   usernameTaken: "That username is taken",
@@ -43,9 +50,18 @@ export const COPY = {
   previewRefused: "No Preview for this Outfit: the image model declined to make one",
   previewFailed: "No Preview for this Outfit: the image model couldn't make one",
   everyPreviewRefused: "The image model declined this photo. A different photo may work better.",
-  /** In place of "Show 2 more Outfits" once its Style Icons run out, or it failed. A Face Photo has no Budget Tier to suggest. */
-  everyOutfitBuilt: (suggestBudgetTier: boolean) =>
-    `That's every Outfit we can build for this photo. Try another ${suggestBudgetTier ? "Budget Tier or Photo Style" : "Photo Style"} for more.`,
+  /** In place of "Show 2 more Outfits" once its Style Icons run out, or it failed. */
+  everyOutfitBuilt: (suggestBudgetTier: boolean) => `That's every Outfit we can build for this photo. ${tryAnother(suggestBudgetTier)} for more.`,
+  /**
+   * A Photo Style change that built nothing: the Photo Style version of the failed re-styling line,
+   * given the Photo Style of the Outfits still shown, or null on a Consultation with No Outfits,
+   * which had none to keep.
+   */
+  photoStyleChangeBuiltNothing: (tried: string, previous: string | null, suggestBudgetTier: boolean) =>
+    `We couldn't build ${tried} Outfits for this photo. ${previous ? `Your ${previous} Outfits are still here` : tryAnother(suggestBudgetTier)}.`,
+  /** A Photo Style change that broke, likewise. */
+  photoStyleChangeBroke: (previous: string | null) =>
+    previous ? `${STYLING_BROKE} Your ${previous} Outfits are still here.` : STYLING_BROKE,
   verifyBanner: (email: string, deletionDate: string) =>
     `We sent a link to ${email}. Verify it to start your first Consultation. Unverified accounts are deleted on ${deletionDate}.`,
   resendLink: "Resend link",

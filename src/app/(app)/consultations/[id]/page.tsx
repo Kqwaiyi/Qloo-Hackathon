@@ -3,16 +3,24 @@ import { notFound, redirect } from "next/navigation";
 
 import { LocalDate } from "@/components/local-date";
 import { textLink } from "@/components/ui";
-import { BUDGET_TIER_LABELS, CATEGORY_LABELS, hasBudgetTier, PHOTO_TYPE_LABELS, type PriceRangeUsd } from "@/config/consultations";
+import {
+  BUDGET_TIER_LABELS,
+  CATEGORY_LABELS,
+  hasBudgetTier,
+  PHOTO_TYPE_LABELS,
+  photoStyleText,
+  type PriceRangeUsd,
+} from "@/config/consultations";
 import { COPY } from "@/config/copy";
 import { ROUTES } from "@/config/routes";
 import { addsToCurrentOutfits } from "@/config/stylings";
 import { getConsultation, getStylingStatus } from "@/server/data/consultations";
 import { getUsageSummary } from "@/server/data/usage";
-import type { OutfitView, PieceView, PreviewView } from "@/server/operations/consultations";
+import type { ConsultationView, FailedRestyling, OutfitView, PieceView, PreviewView } from "@/server/operations/consultations";
 
 import { Stepper } from "../stepper";
 import { MoreOutfits } from "./more-outfits";
+import { PhotoStyleEditor } from "./photo-style-editor";
 import { StylingProgress } from "./styling-progress";
 
 export const metadata: Metadata = { title: "Your Outfits" };
@@ -46,29 +54,34 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   return (
     <>
       <Stepper current={4} />
-      <header className="flex flex-wrap items-center gap-4">
+      {/* Top-aligned, so the photo stays put as the Photo Style editor opens. */}
+      <header className="flex flex-wrap items-start gap-4">
         {/* A signed link, valid for 1 hour from when this page rendered. */}
         <img
           src={consultation.photoUrl}
           alt={`Your ${PHOTO_TYPE_LABELS[consultation.photoType]}`}
           className="h-28 w-21 rounded-lg bg-stone-100 object-cover"
         />
-        <div>
+        <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-semibold tracking-tight">Your Outfits</h1>
           <p className="text-sm text-stone-600">
             {PHOTO_TYPE_LABELS[consultation.photoType]} · <LocalDate date={consultation.createdAt} />
             {consultation.budgetTier && <> · Budget Tier: {BUDGET_TIER_LABELS[consultation.budgetTier]}</>}
           </p>
-          <p className="mt-2 flex flex-wrap items-center gap-1 text-sm">
-            <span className="text-stone-600">Photo Style</span>
-            {consultation.photoStyle.map((word) => (
-              <span key={word} className="rounded-full bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700">
-                {word}
-              </span>
-            ))}
-          </p>
+          <PhotoStyleEditor
+            consultationId={consultation.id}
+            photoStyle={consultation.photoStyle}
+            stylingRunning={progress !== null}
+            stylingStart={usage.stylingStart}
+            outfitsLeft={usage.outfitsLeft}
+          />
         </div>
       </header>
+      {consultation.failedRestyling && (
+        <p role="status" className="mt-6 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {failedRestylingLine(consultation.failedRestyling, consultation)}
+        </p>
+      )}
       {consultation.outfits.length > 0 ? (
         <>
           {consultation.everyPreviewRefused && (
@@ -97,6 +110,14 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       )}
     </>
   );
+}
+
+/** What a failed re-styling says, and that the Outfits from before it are still here, if there are any. */
+function failedRestylingLine(failedRestyling: FailedRestyling, { photoStyle, outfits, photoType }: ConsultationView): string {
+  const previous = outfits.length > 0 ? photoStyleText(photoStyle) : null;
+  return failedRestyling.reason === "something_broke"
+    ? COPY.photoStyleChangeBroke(previous)
+    : COPY.photoStyleChangeBuiltNothing(photoStyleText(failedRestyling.photoStyle), previous, hasBudgetTier(photoType));
 }
 
 /** One Outfit, its Preview beside it. Its Style Icon is shown by name only, never with Qloo's image of them. */

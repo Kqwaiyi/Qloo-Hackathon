@@ -90,8 +90,9 @@ export interface NewStyling {
   /** How many Outfits it makes, at most: what `checkStylingStart` allowed. */
   outfitsWanted: number;
   /**
-   * Where it starts: a first Styling ranks its Consultation's Style Icons, and "Show 2 more Outfits"
-   * carries on down them from Brands, or from Building Outfits for a Face Photo.
+   * Where it starts: a first Styling and a Photo Style change rank Style Icons of their own, and
+   * "Show 2 more Outfits" carries on down the current ones from Brands, or from Building Outfits
+   * for a Face Photo.
    */
   stage: StylingStage;
 }

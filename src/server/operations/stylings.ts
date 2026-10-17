@@ -1,22 +1,32 @@
 import { and, eq, ne, sql } from "drizzle-orm";
+import * as z from "zod";
 
-import type { ConsultationState } from "@/config/consultations";
+import { type ConsultationState, isSamePhotoStyle, PHOTO_STYLES, type PhotoStyleWords } from "@/config/consultations";
 import { SLOW_STEP_MS, type StylingKind, type StylingStage } from "@/config/stylings";
+import type { Transaction } from "@/server/db/database";
 import { consultation, outfit, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
+import type { PhotoCategoryFacts } from "@/server/outfit-assembly/categories";
 import { hasCurrentStyleIconLeft } from "@/server/stylings/current-outfits";
-import { checkStylingStart, createStyling, launchStyling, type StylingStartRefusal } from "@/server/stylings/start";
+import { checkStylingStart, createStyling, launchStyling, type NewStyling, type StylingStartRefusal } from "@/server/stylings/start";
 import { outfitsStage } from "@/server/stylings/steps";
 
-/** Why "Show 2 more Outfits" didn't start. A Consultation that isn't the user's is not found, just like one that doesn't exist. */
-export type ShowMoreOutfitsRefusal =
+/**
+ * Why a Styling on a Consultation didn't start, whatever its kind. A Consultation that isn't the
+ * user's is not found, just like one that doesn't exist.
+ */
+export type ConsultationStylingRefusal =
   | { refusal: "signed-out" | "not-found" }
   /** A Styling is already running on the Consultation. */
   | { refusal: "already-styling" }
-  /** Every one of the Consultation's current Style Icons has inspired an Outfit or been passed over. */
-  | { refusal: "every-outfit-built" }
   | StylingStartRefusal;
+
+/** Why "Show 2 more Outfits" didn't start. */
+export type ShowMoreOutfitsRefusal =
+  | ConsultationStylingRefusal
+  /** Every one of the Consultation's current Style Icons has inspired an Outfit or been passed over. */
+  | { refusal: "every-outfit-built" };
 
 /**
  * "Show 2 more Outfits": through the shared start check, starts a Styling that builds as many more
@@ -24,12 +34,62 @@ export type ShowMoreOutfitsRefusal =
  * its current Outfits, which stay meanwhile, all at once when it finishes.
  */
 export async function showMoreOutfits(ctx: OperationContext, consultationId: string): Promise<Result<object, ShowMoreOutfitsRefusal>> {
+  return startStylingOn(ctx, consultationId, async (tx, current) => {
+    if (!(await hasCurrentStyleIconLeft(tx, consultationId))) return { ok: false, refusal: "every-outfit-built" };
+    return { ok: true, kind: "more", budgetTier: current.budgetTier, photoStyle: current.photoStyle, stage: outfitsStage(current) };
+  });
+}
+
+/** What "Change the Photo Style" sends: 1 or 2 different words from the list, strongest first. */
+export const photoStyleWordsSchema = z
+  .union([z.tuple([z.enum(PHOTO_STYLES)]), z.tuple([z.enum(PHOTO_STYLES), z.enum(PHOTO_STYLES)])])
+  .refine((words) => new Set(words).size === words.length, "The words must be different.");
+
+/** Why a Photo Style change didn't start. */
+export type ChangePhotoStyleRefusal =
+  | ConsultationStylingRefusal
+  /** It's the Consultation's Photo Style already, in whatever order: there's nothing to change. */
+  | { refusal: "same-photo-style" };
+
+/**
+ * Changes the Photo Style: through the shared start check, starts a Styling that asks Qloo for new
+ * Style Icons in tune with `photoStyle` and builds as many Outfits from them as that check allows.
+ * If it builds any, they replace the current Outfits, with its Style Icons and the Photo Style, all
+ * at once when it finishes. If it builds none, the Consultation keeps what it had.
+ */
+export async function changePhotoStyle(
+  ctx: OperationContext,
+  consultationId: string,
+  photoStyle: PhotoStyleWords,
+): Promise<Result<object, ChangePhotoStyleRefusal>> {
+  return startStylingOn(ctx, consultationId, async (_tx, current) => {
+    if (isSamePhotoStyle(current.photoStyle, photoStyle)) return { ok: false, refusal: "same-photo-style" };
+    return { ok: true, kind: "photo_style_change", budgetTier: current.budgetTier, photoStyle, stage: "style_icons" };
+  });
+}
+
+/** What a Styling on a Consultation builds, as the operation starting it decides. */
+type StylingPlan = Pick<NewStyling, "kind" | "budgetTier" | "photoStyle" | "stage">;
+
+/** What an operation starting a Styling decides from: the Consultation as it stands. */
+type CurrentConsultation = PhotoCategoryFacts & Pick<NewStyling, "budgetTier" | "photoStyle">;
+
+/**
+ * Starts a Styling on one of the signed-in user's own Consultations, after the shared start check,
+ * once no Styling runs on it. `plan` says what it builds, or why it can't start, holding the
+ * Consultation's row to the end of the transaction, so of two presses at once the second finds it
+ * Styling.
+ */
+async function startStylingOn<R extends { refusal: string }>(
+  ctx: OperationContext,
+  consultationId: string,
+  plan: (tx: Transaction, current: CurrentConsultation) => Promise<Result<StylingPlan, R>>,
+): Promise<Result<object, ConsultationStylingRefusal | R>> {
   const user = await readSignedInUser(ctx);
   if (!user) return { ok: false, refusal: "signed-out" };
   const stylingStart = await checkStylingStart(ctx, user);
   if (!stylingStart.ok) return stylingStart;
-  const started = await ctx.db.transaction(async (tx): Promise<Result<{ stylingId: string }, ShowMoreOutfitsRefusal>> => {
-    // Held to the end of the transaction, so of two presses at once, the second finds it Styling.
+  const started = await ctx.db.transaction(async (tx): Promise<Result<{ stylingId: string }, ConsultationStylingRefusal | R>> => {
     const [row] = await tx
       .select({
         state: consultation.state,
@@ -43,15 +103,14 @@ export async function showMoreOutfits(ctx: OperationContext, consultationId: str
       .for("update");
     if (!row) return { ok: false, refusal: "not-found" };
     if (row.state === "styling") return { ok: false, refusal: "already-styling" };
-    if (!(await hasCurrentStyleIconLeft(tx, consultationId))) return { ok: false, refusal: "every-outfit-built" };
+    const planned = await plan(tx, row);
+    if (!planned.ok) return planned;
+    const { ok: _, ...stylingPlan } = planned;
     const stylingId = await createStyling(tx, ctx.clock.now(), {
+      ...stylingPlan,
       consultationId,
       userId: user.id,
-      kind: "more",
-      budgetTier: row.budgetTier,
-      photoStyle: row.photoStyle,
       outfitsWanted: stylingStart.outfitsWanted,
-      stage: outfitsStage(row),
     });
     return { ok: true, stylingId };
   });

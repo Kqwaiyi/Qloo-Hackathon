@@ -88,6 +88,16 @@ export type PhotoStyle = (typeof PHOTO_STYLES)[number];
 /** A Photo Style: one or two words from the list, strongest first. */
 export type PhotoStyleWords = readonly [PhotoStyle] | readonly [PhotoStyle, PhotoStyle];
 
+/** A Photo Style in a sentence, such as "edgy and chic". */
+export function photoStyleText(words: readonly PhotoStyle[]): string {
+  return words.join(" and ");
+}
+
+/** Whether two Photo Styles have the same words, in whatever order: Qloo hears them as the same. */
+export function isSamePhotoStyle(a: readonly PhotoStyle[], b: readonly PhotoStyle[]): boolean {
+  return a.length === b.length && a.every((word) => b.includes(word));
+}
+
 export const BUDGET_TIERS = ["no_budget", "low", "medium", "expensive"] as const;
 export type BudgetTier = (typeof BUDGET_TIERS)[number];
 

@@ -369,11 +369,22 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
         .update(outfit)
         .set({ previewState: "failed" })
         .where(and(eq(outfit.stylingId, stylingId), eq(outfit.previewState, "pending")));
+      // Any other replaces the current Outfits, and with them their Style Icons.
+      if (!addsToCurrentOutfits(running.kind)) {
+        await tx
+          .update(outfit)
+          .set({ current: false })
+          .where(and(eq(outfit.consultationId, running.consultationId), eq(outfit.current, true)));
+      }
       await tx.update(outfit).set({ current: true }).where(eq(outfit.stylingId, stylingId));
       // Each counts against the Outfit Allowance from now, Preview or not, even if later replaced or deleted.
       await recordUsage(tx, { kind: "outfit", userId: running.userId, at: finishedAt }, made.length);
       await tx.update(styling).set({ status: "succeeded", outfitsMade: made.length, finishedAt }).where(eq(styling.id, stylingId));
-      await tx.update(consultation).set({ state: "ready" }).where(eq(consultation.id, running.consultationId));
+      // What it built for becomes the Consultation's, together with its Outfits.
+      await tx
+        .update(consultation)
+        .set({ state: "ready", photoStyle: running.photoStyle, budgetTier: running.budgetTier })
+        .where(eq(consultation.id, running.consultationId));
       return;
     }
     const failureReason = outcome === "broke" ? "something_broke" : "nothing_built";
@@ -479,7 +490,14 @@ async function whileRunning<T>(
 
 async function lockRunningStyling(tx: Transaction, stylingId: string) {
   const [row] = await tx
-    .select({ consultationId: styling.consultationId, userId: styling.userId, kind: styling.kind, outfitsWanted: styling.outfitsWanted })
+    .select({
+      consultationId: styling.consultationId,
+      userId: styling.userId,
+      kind: styling.kind,
+      budgetTier: styling.budgetTier,
+      photoStyle: styling.photoStyle,
+      outfitsWanted: styling.outfitsWanted,
+    })
     .from(styling)
     .where(and(eq(styling.id, stylingId), eq(styling.status, "running")))
     .for("update");
