@@ -88,6 +88,7 @@ describe("updating the profile", () => {
     const browser = await signedInUser({ email: "gus@example.com", stylePreference: "menswear", countryCode: "US" });
     await harness.openEmailedLink("gus@example.com", browser);
     const before = await startWithPlainPhoto(browser);
+    await harness.stylings.runPending();
 
     await updateProfile(harness.context(browser), { username: "Gus.Wu", stylePreference: "no_preference", countryCode: "JP" });
     const after = await startWithPlainPhoto(browser);

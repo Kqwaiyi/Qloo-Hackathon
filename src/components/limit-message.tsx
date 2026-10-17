@@ -23,6 +23,9 @@ export function LimitMessage({ refusal }: { refusal: LimitRefusal }): string {
   switch (refusal.refusal) {
     case "unsupported-region":
       return COPY.unsupportedRegion;
+    // The spec doesn't fix this one's wording.
+    case "already-styling":
+      return "You already have a Styling running. You can start another once it finishes.";
     case "allowance-used":
       return COPY.allowanceUsedUp(OUTFIT_ALLOWANCE, local.time(refusal.moreFrom));
     case "photo-check-limit":

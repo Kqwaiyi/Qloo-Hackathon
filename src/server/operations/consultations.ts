@@ -33,7 +33,8 @@ import { brandPriceRange, outfitPriceRange, visitUrl } from "@/server/outfit-ass
 import { isFromSupportedRegion } from "@/server/region-gate";
 import { hasCurrentStyleIconLeft } from "@/server/stylings/current-outfits";
 import { type LatestFailedStyling, readLatestFailedStyling } from "@/server/stylings/failed";
-import { checkStylingStart, createStyling, launchStyling, type StylingStartRefusal } from "@/server/stylings/start";
+import { AlreadyStylingError, checkStylingStart, createStyling, launchStyling, type StylingStartRefusal } from "@/server/stylings/start";
+import { finishStuckStylings } from "@/server/stylings/stop";
 import { readUsageLeft, recordUsage } from "@/server/usage/records";
 
 /** The consent sheet's two boxes, as the user left them when they pressed Continue. */
@@ -151,6 +152,8 @@ export async function startConsultation(
     });
   } catch (error) {
     await ctx.blob.delete(photoPathname).catch(() => {});
+    // Another "Get my Outfits", or another Styling, started while the photo was checked.
+    if (error instanceof AlreadyStylingError) return { ok: false, refusal: "already-styling" };
     throw error;
   }
   if (!stylingId) {
@@ -354,10 +357,12 @@ export interface ConsultationSummary {
 
 /** My Consultations: the signed-in user's own Consultations, newest first. None for a signed-out visitor. */
 export async function listConsultations(
-  ctx: Pick<OperationContext, "auth" | "db" | "blob" | "clock" | "requestHeaders">,
+  ctx: Pick<OperationContext, "auth" | "db" | "blob" | "clock" | "stylings" | "requestHeaders">,
 ): Promise<ConsultationSummary[]> {
   const user = await readSignedInUser(ctx);
   if (!user) return [];
+  // Any stuck Styling finishes, so its row shows how it ended rather than "Styling…".
+  await finishStuckStylings(ctx, { userId: user.id });
   const rows = await ctx.db
     .select({
       id: consultation.id,

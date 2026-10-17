@@ -68,6 +68,7 @@ describe("photo consent on \"Get my Outfits\"", () => {
     expect(needsPhotoConsent((await readSignedInUser(harness.context(browser)))!)).toBe(true);
 
     await getMyOutfits(browser, BOTH_CONSENT_BOXES_TICKED);
+    await harness.stylings.runPending();
 
     expect(needsPhotoConsent((await readSignedInUser(harness.context(browser)))!)).toBe(false);
     expect(await getMyOutfits(browser)).toEqual({ ok: true, consultationId: expect.any(String) });
@@ -137,6 +138,7 @@ describe("withdrawing photo consent", () => {
   it("deletes every Consultation for good, with its photo and Previews, and keeps the account", async () => {
     const browser = await signedInUser({ username: "Wren.Hale", password: "a long enough password" });
     const first = await start(browser);
+    await harness.stylings.runPending();
     const second = await start(browser);
     await harness.stylings.runPending();
     expect(harness.blob.objects.size).toBe(6);

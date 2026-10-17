@@ -6,8 +6,9 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type BudgetTier, byCategoryOrder, type PhotoType } from "@/config/consultations";
 import type { StylingKind } from "@/config/stylings";
+import type { AiProvider } from "@/server/ai/provider";
 import { consultation, outfit, piece, qlooCache, styleIcon, styling, usageRecord, user } from "@/server/db/schema";
-import { readConsultation, startConsultation } from "@/server/operations/consultations";
+import { listConsultations, readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
 import {
   changeBudgetTier,
@@ -16,6 +17,7 @@ import {
   readStylingStatus,
   showMoreOutfits,
   type StylingProgressView,
+  type StylingStatusView,
   tryAgain,
 } from "@/server/operations/stylings";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
@@ -68,6 +70,8 @@ beforeEach(async () => {
   harness.ai.previewScenarios = [];
   harness.ai.duringCall = undefined;
   harness.stylings.pending.length = 0;
+  harness.stylings.cancelled.length = 0;
+  harness.stylings.cancelFails = false;
   harness.qloo.requests.length = 0;
   harness.qloo.respond = qlooAnswering({ female: WOMEN, male: MEN });
   harness.qloo.duringRequest = undefined;
@@ -1163,20 +1167,22 @@ describe('"Show 2 more Outfits"', () => {
 
   it("shows in the Styling status as adding to the Outfits, from Building Outfits: at Brands for a body photo, straight to tailoring for a Face Photo", async () => {
     harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
-    const browser = await signedInUser({ stylePreference: "womenswear" });
-    const bodyOnly = await start(browser, "body_only");
-    const face = await start(browser, "face");
+    // Two users, since each runs one Styling at a time.
+    const bodyOnlyUser = await signedInUser({ stylePreference: "womenswear" });
+    const faceUser = await signedInUser({ stylePreference: "womenswear" });
+    const bodyOnly = await start(bodyOnlyUser, "body_only");
+    const face = await start(faceUser, "face");
     await harness.stylings.runPending();
     harness.clock.set("2026-10-16T12:10:00Z");
 
-    await showMoreOutfits(harness.context(browser), bodyOnly);
-    await showMoreOutfits(harness.context(browser), face);
+    await showMoreOutfits(harness.context(bodyOnlyUser), bodyOnly);
+    await showMoreOutfits(harness.context(faceUser), face);
 
-    expect(await readStylingStatus(harness.context(browser), bodyOnly)).toEqual({
+    expect(await readStylingStatus(harness.context(bodyOnlyUser), bodyOnly)).toEqual({
       state: "styling",
       progress: { kind: "more", stage: "brands", previews: { done: 0, of: 2 }, slow: false },
     });
-    expect(await readStylingStatus(harness.context(browser), face)).toEqual({
+    expect(await readStylingStatus(harness.context(faceUser), face)).toEqual({
       state: "styling",
       progress: { kind: "more", stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
     });
@@ -2122,6 +2128,213 @@ describe("Try again", () => {
   });
 });
 
+describe("the Styling locks", () => {
+  it("start no second Styling for a user while one runs on any of their Consultations, until it finishes", async () => {
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const styled = await start(browser, "face");
+    await harness.stylings.runPending();
+    await start(browser, "face");
+    const photoChecks = harness.ai.photoCheckCount;
+    const stored = [...harness.blob.objects.keys()];
+
+    // "Get my Outfits" refuses before it checks the photo, storing nothing.
+    expect(await getMyOutfits(browser)).toEqual({ ok: false, refusal: "already-styling" });
+    expect(harness.ai.photoCheckCount).toBe(photoChecks);
+    expect([...harness.blob.objects.keys()]).toEqual(stored);
+    // So does every Styling on another Consultation, through the shared start check, and the usage
+    // summary that disables their buttons says the same.
+    expect(await showMoreOutfits(harness.context(browser), styled)).toEqual({ ok: false, refusal: "already-styling" });
+    expect(await changePhotoStyle(harness.context(browser), styled, ["edgy"])).toEqual({ ok: false, refusal: "already-styling" });
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: false, refusal: "already-styling" } });
+    expect(harness.stylings.pending).toHaveLength(1);
+
+    await harness.stylings.runPending();
+
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true } });
+    expect(await showMoreOutfits(harness.context(browser), styled)).toEqual({ ok: true });
+  });
+
+  it('refuse as the fourth check of "Get my Outfits", after the region gate and before the limits', async () => {
+    const browser = await signedInUser();
+    await start(browser, "face");
+    const userId = (await readSignedInUser(harness.context(browser)))!.id;
+    await recordUsage(harness.db, { kind: "outfit", userId, at: harness.clock.now() }, 10);
+
+    expect(await getMyOutfits(browser)).toEqual({ ok: false, refusal: "already-styling" });
+    browser.ipCountry = "RU";
+    expect(await getMyOutfits(browser)).toEqual({ ok: false, refusal: "unsupported-region" });
+  });
+
+  it('hold in the database, so of two "Get my Outfits" pressed at once only one starts, and the other stores nothing', async () => {
+    const browser = await signedInUser();
+    // The second is pressed while the first's photo is checked: both are past the lock check.
+    let pressed = false;
+    let second: Awaited<ReturnType<typeof getMyOutfits>> | undefined;
+    harness.ai.duringCall = async (call) => {
+      if (call !== "checkPhoto" || pressed) return;
+      pressed = true;
+      second = await getMyOutfits(browser);
+    };
+
+    const first = await getMyOutfits(browser);
+
+    expect(first).toEqual({ ok: false, refusal: "already-styling" });
+    expect(second).toEqual({ ok: true, consultationId: expect.any(String) });
+    expect((await listConsultations(harness.context(browser))).map(({ id }) => id)).toEqual([second?.ok && second.consultationId]);
+    expect(harness.blob.objects.size).toBe(1);
+    expect(harness.stylings.pending).toHaveLength(1);
+  });
+
+  it("let only one of two Stylings started at once on different Consultations start", async () => {
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const one = await start(browser, "face");
+    await harness.stylings.runPending();
+    const other = await start(browser, "face");
+    await harness.stylings.runPending();
+
+    const results = await Promise.all([
+      showMoreOutfits(harness.context(browser), one),
+      changePhotoStyle(harness.context(browser), other, ["edgy"]),
+    ]);
+
+    expect(results).toContainEqual({ ok: true });
+    expect(results).toContainEqual({ ok: false, refusal: "already-styling" });
+    expect(harness.stylings.pending).toHaveLength(1);
+  });
+
+  it("leave other users free to start a Styling", async () => {
+    await start(await signedInUser(), "face");
+
+    expect(await getMyOutfits(await signedInUser())).toEqual({ ok: true, consultationId: expect.any(String) });
+  });
+});
+
+describe("a stuck Styling", () => {
+  it("is finished by the Styling status poll once its stage hasn't moved for 10 minutes, as broken if it made nothing, for Try again", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    harness.clock.set("2026-10-16T12:30:00Z");
+    const consultationId = await start(browser, "face");
+    const [running] = await stylingsOf(consultationId);
+
+    harness.clock.set("2026-10-16T12:39:59Z");
+    expect(await readStylingStatus(harness.context(browser), consultationId)).toMatchObject({
+      state: "styling",
+      progress: { stage: "style_icons" },
+    });
+    harness.clock.set("2026-10-16T12:40:00Z");
+    expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({ state: "no_outfits", progress: null });
+
+    expect(await stylingsOf(consultationId)).toEqual([
+      expect.objectContaining({ status: "failed", failureReason: "something_broke", finishedAt: new Date("2026-10-16T12:40:00Z") }),
+    ]);
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      failedStyling: { kind: "first", reason: "something_broke" },
+    });
+    // Its Workflow run is cancelled, so it builds nothing, and both locks are released.
+    expect(harness.stylings.cancelled).toEqual([running!.workflowRunId]);
+    await harness.stylings.runPending();
+    expect(harness.qloo.requests).toEqual([]);
+    expect(await tryAgain(harness.context(browser), consultationId)).toEqual({ ok: true });
+  });
+
+  it("keeps what it made, as any Styling does: its Outfits switch in, Previews not ready fail, and they count against the Outfit Allowance", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    harness.clock.set("2026-10-16T12:30:00Z");
+    const consultationId = await start(browser, "face");
+    // The Previews hang for 10 minutes while the page polls.
+    let polled: StylingStatusView | null = null;
+    whileEveryAiCall("renderPreview", async () => {
+      harness.clock.set("2026-10-16T12:40:00Z");
+      polled = await readStylingStatus(harness.context(browser), consultationId);
+    });
+
+    await harness.stylings.runPending();
+
+    expect(polled).toEqual({ state: "ready", progress: null });
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "ready",
+      failedStyling: null,
+      outfits: [
+        { styleIconName: "Ava Stone", preview: { state: "failed" } },
+        { styleIconName: "Bea Marsh", preview: { state: "failed" } },
+      ],
+    });
+    expect(await stylingsOf(consultationId)).toEqual([
+      expect.objectContaining({ status: "succeeded", outfitsMade: 2, finishedAt: new Date("2026-10-16T12:40:00Z") }),
+    ]);
+    expect(await usageRecordsOf(browser)).toEqual({ outfit: 2, photo_check: 1 });
+    // The Previews that came back late were never stored: only the photo is.
+    expect(harness.blob.objects.size).toBe(1);
+  });
+
+  it("counts from when its stage last moved, not from when it started", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    harness.clock.set("2026-10-16T12:30:00Z");
+    const consultationId = await start(browser, "face");
+    // Finding Style Icons takes 8 minutes, then tailoring hangs.
+    harness.clock.set("2026-10-16T12:38:00Z");
+    const seen: (string | undefined)[] = [];
+    whileEveryAiCall("tailorPieces", async () => {
+      harness.clock.set("2026-10-16T12:47:59Z");
+      seen.push((await readStylingStatus(harness.context(browser), consultationId))?.state);
+      harness.clock.set("2026-10-16T12:48:00Z");
+      seen.push((await readStylingStatus(harness.context(browser), consultationId))?.state);
+    });
+
+    await harness.stylings.runPending();
+
+    expect(seen).toEqual(["styling", "no_outfits"]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "failed", outfitsMade: 0 })]);
+  });
+
+  it("is finished by My Consultations", async () => {
+    const browser = await signedInUser();
+    harness.clock.set("2026-10-16T12:30:00Z");
+    const consultationId = await start(browser, "face");
+    harness.clock.set("2026-10-16T12:40:00Z");
+
+    expect(await listConsultations(harness.context(browser))).toEqual([
+      expect.objectContaining({ id: consultationId, state: "no_outfits" }),
+    ]);
+  });
+
+  it('is finished by "Get my Outfits", every other start and the usage summary that enables them, which then go ahead', async () => {
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const styled = await start(browser, "face");
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:30:00Z");
+    const stuck = await start(browser, "face");
+
+    harness.clock.set("2026-10-16T12:40:00Z");
+    const next = await start(browser, "face");
+    expect(await stylingsOf(stuck)).toEqual([expect.objectContaining({ status: "failed", failureReason: "something_broke" })]);
+    // Each new one gets stuck too.
+    harness.clock.set("2026-10-16T12:50:00Z");
+    expect(await showMoreOutfits(harness.context(browser), styled)).toEqual({ ok: true });
+    expect(await stylingsOf(next)).toEqual([expect.objectContaining({ status: "failed", failureReason: "something_broke" })]);
+    harness.clock.set("2026-10-16T13:00:00Z");
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true, outfitsWanted: 2 } });
+    expect(await stylingsOfKind(styled, "more")).toEqual([expect.objectContaining({ status: "failed", failureReason: "something_broke" })]);
+  });
+
+  it("is finished even when its Workflow run can't be cancelled, which then saves nothing", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    harness.clock.set("2026-10-16T12:30:00Z");
+    const consultationId = await start(browser, "face");
+    harness.stylings.cancelFails = true;
+    harness.clock.set("2026-10-16T12:40:00Z");
+
+    expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({ state: "no_outfits", progress: null });
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "no_outfits", outfits: [] });
+    expect(await styleIconStatuses(consultationId)).toEqual([]);
+  });
+});
+
 it("starts no Styling for a rejected photo", async () => {
   const browser = await signedInUser();
   harness.ai.scenario = "no-person";
@@ -2226,6 +2439,22 @@ function watchChecklist(browser: TestBrowser, consultationId: string) {
       return progress;
     },
   };
+}
+
+/**
+ * Holds every AI call of `call`'s kind until `meanwhile` has run, once, as if the model hung while
+ * it ran.
+ */
+function whileEveryAiCall(call: keyof AiProvider, meanwhile: () => Promise<void>): void {
+  let running: Promise<void> | undefined;
+  harness.ai.duringCall = async (made) => {
+    if (made === call) await (running ??= meanwhile());
+  };
+}
+
+/** Presses "Get my Outfits" with a plain JPEG Face Photo, agreeing on the consent sheet, returning what the operation returns. */
+async function getMyOutfits(browser: TestBrowser) {
+  return startConsultation(harness.context(browser), { photo: await jpeg(), photoType: "face", consent: BOTH_CONSENT_BOXES_TICKED });
 }
 
 /** Presses "Get my Outfits" with a plain JPEG, agreeing on the consent sheet, returning the new Consultation's id. */

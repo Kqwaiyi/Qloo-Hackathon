@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import type { BudgetTier, PhotoStyleWords } from "@/config/consultations";
@@ -14,11 +14,17 @@ import { isFromSupportedRegion } from "@/server/region-gate";
 import { readAppWideOutfitsLeft, readUsageLeft } from "@/server/usage/records";
 
 import { finishStyling } from "./steps";
+import { finishStuckStylings } from "./stop";
 
-/** Why a Styling can't start, one refusal per rule. The Styling locks (ticket 30) add theirs here. */
+/** Why a Styling can't start, one refusal per rule. */
 export type StylingStartRefusal =
   /** The request comes from a country Gemini doesn't serve, by its IP address. */
   | { refusal: "unsupported-region" }
+  /**
+   * A Styling of the user's is running, on this Consultation or another: one runs at a time, so the
+   * Outfit Allowance counts right. It lifts once that one finishes, or after STUCK_STYLING_MS stuck.
+   */
+  | { refusal: "already-styling" }
   /** The user has made every Outfit their Outfit Allowance allows in the rolling window, until `moreFrom`. */
   | { refusal: "allowance-used"; moreFrom: Date }
   /** Every user together has made as many Outfits in the rolling window as the app-wide 24-hour cap allows. */
@@ -38,16 +44,26 @@ export type StylingStart = Result<{ outfitsWanted: number }, StylingStartRefusal
  *
  * The region gate comes first, since every Styling calls Gemini, and it holds wherever the request
  * comes from rather than until a time. Start a Consultation also runs it itself, just before this,
- * since photo consent comes between the region gate and the limits. When several limits are in force, the refusal is the one
+ * since photo consent comes between the region gate and the rest. Next is the user's Styling lock,
+ * once the stuck check has finished any Styling of theirs that's stuck; `createStyling` holds it in
+ * the database too. The limits come last. When several limits are in force, the refusal is the one
  * that lifts last, so a user is never told to come back while another still holds. The 24-hour
  * cap's wording gives no time, but it lifts as the Outfit Allowance does, once the Outfit holding it
  * has counted for 24 hours. On a tie, the app-wide limits come first: they're not the user's doing.
  */
 export async function checkStylingStart(
-  ctx: Pick<OperationContext, "db" | "clock" | "requestHeaders">,
+  ctx: Pick<OperationContext, "db" | "clock" | "stylings" | "requestHeaders">,
   user: SignedInUser,
 ): Promise<StylingStart> {
   if (!isFromSupportedRegion(ctx.requestHeaders)) return { ok: false, refusal: "unsupported-region" };
+  // A stuck Styling holds no lock, and what it made counts before the limits are read.
+  await finishStuckStylings(ctx, { userId: user.id });
+  const [running] = await ctx.db
+    .select({ id: styling.id })
+    .from(styling)
+    .where(and(eq(styling.userId, user.id), eq(styling.status, "running")))
+    .limit(1);
+  if (running) return { ok: false, refusal: "already-styling" };
   const now = ctx.clock.now();
   const [outfits, appWide, qloo] = await Promise.all([
     readUsageLeft(ctx.db, { kind: "outfit", userId: user.id, at: now }),
@@ -106,20 +122,39 @@ export interface NewStyling {
 }
 
 /**
+ * A Styling that started since the shared start check holds one of the Styling locks: the
+ * Consultation's, or the user's. Thrown out of the caller's transaction, which rolls back.
+ */
+export class AlreadyStylingError extends Error {
+  constructor() {
+    super("A Styling is already running.");
+    this.name = "AlreadyStylingError";
+  }
+}
+
+/**
  * Creates a running Styling in the caller's transaction, with any Style Icon list it copies, and
  * shows its Consultation as Styling. Once the transaction commits, `launchStyling` sets it going.
+ * Throws `AlreadyStylingError` if one is already running on the Consultation, or for the user.
  */
 export async function createStyling(tx: Transaction, now: Date, { copiesStyleIconList, ...newStyling }: NewStyling): Promise<string> {
   const id = randomUUID();
-  await tx.insert(styling).values({
-    id,
-    ...newStyling,
-    status: "running",
-    stageMovedAt: now,
-    outfitsMade: 0,
-    tailoringFailures: 0,
-    startedAt: now,
-  });
+  const [created] = await tx
+    .insert(styling)
+    .values({
+      id,
+      ...newStyling,
+      status: "running",
+      stageMovedAt: now,
+      outfitsMade: 0,
+      tailoringFailures: 0,
+      startedAt: now,
+    })
+    // The database holds the locks, so of two requests at once that both passed the shared start
+    // check, the second waits for the first to commit, then creates nothing.
+    .onConflictDoNothing()
+    .returning({ id: styling.id });
+  if (!created) throw new AlreadyStylingError();
   if (copiesStyleIconList) await copyStyleIconList(tx, { ...copiesStyleIconList, to: id });
   await tx.update(consultation).set({ state: "styling" }).where(eq(consultation.id, newStyling.consultationId));
   return id;

@@ -236,6 +236,7 @@ describe("the photo-check limit", () => {
     const browser = await signedInUser();
     harness.clock.set("2026-10-16T09:00:00Z");
     expect(await getMyOutfits(browser)).toMatchObject({ ok: true });
+    await harness.stylings.runPending();
     harness.clock.set("2026-10-16T10:00:00Z");
     await rejectPhotos(browser, 19);
     harness.clock.set("2026-10-16T11:00:00Z");
@@ -274,6 +275,7 @@ describe("the photo-check limit", () => {
     expect(unusable).toEqual({ ok: false, refusal: "unusable-file" });
 
     expect(await getMyOutfits(browser)).toMatchObject({ ok: true });
+    await harness.stylings.runPending();
     expect(await getMyOutfits(browser)).toMatchObject({ ok: false, refusal: "photo-check-limit" });
   });
 

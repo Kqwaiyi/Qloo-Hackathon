@@ -92,6 +92,13 @@
       "when": 1792219025974,
       "tag": "0012_photo_consent",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792264113796,
+      "tag": "0013_styling_locks",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 import { EMAIL_CHANGE_STEPS, LINES, STYLE_PREFERENCES } from "../../config/accounts";
@@ -275,6 +276,10 @@ export const styling = pgTable(
   },
   (table) => [
     index("styling_consultation_id_idx").on(table.consultationId),
+    // The Styling locks: one running Styling per Consultation, and one per user, so of two requests
+    // at once only one can start one.
+    uniqueIndex("styling_running_per_consultation_unique").on(table.consultationId).where(sql`${table.status} = 'running'`),
+    uniqueIndex("styling_running_per_user_unique").on(table.userId).where(sql`${table.status} = 'running'`),
     check("styling_photo_style_words", sql`cardinality(${table.photoStyle}) between 1 and 2`),
     check("styling_finished_unless_running", sql`(${table.status} = 'running') = (${table.finishedAt} is null)`),
     check("styling_failure_reason_when_failed", sql`(${table.status} = 'failed') = (${table.failureReason} is not null)`),

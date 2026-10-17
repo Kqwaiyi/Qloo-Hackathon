@@ -22,7 +22,7 @@ export interface UsageSummary {
 
 /** The signed-in user's usage summary, or null for a signed-out visitor. */
 export async function readUsageSummary(
-  ctx: Pick<OperationContext, "auth" | "db" | "clock" | "requestHeaders">,
+  ctx: Pick<OperationContext, "auth" | "db" | "clock" | "stylings" | "requestHeaders">,
 ): Promise<UsageSummary | null> {
   const user = await readSignedInUser(ctx);
   if (!user) return null;

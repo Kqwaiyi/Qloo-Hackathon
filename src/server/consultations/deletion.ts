@@ -4,6 +4,7 @@ import { consultationFolder } from "@/server/consultations/blob-pathnames";
 import { consultation, styling } from "@/server/db/schema";
 import type { OperationContext } from "@/server/operations/context";
 import { finishStyling } from "@/server/stylings/steps";
+import { cancelWorkflowRun } from "@/server/stylings/stop";
 
 /**
  * Deletes a Consultation of this user's for good, even while it's Styling, returning false if they
@@ -18,19 +19,15 @@ export async function deleteConsultationOf(
   ctx: Pick<OperationContext, "db" | "blob" | "clock" | "stylings">,
   { userId, consultationId }: { userId: string; consultationId: string },
 ): Promise<boolean> {
-  // A running Styling stops first, as a stuck one does: its run is cancelled, so it starts no more
-  // steps, and it's finished, so a step under way saves nothing. A run that can't be cancelled
-  // doesn't keep the Consultation, since its steps find the Styling no longer running.
+  // A running Styling stops first: its Workflow run is cancelled, so it starts no more steps, and
+  // it's finished, so a step under way saves nothing. A run that can't be cancelled doesn't keep the
+  // Consultation, since its steps find the Styling no longer running.
   const runningStylings = await ctx.db
     .select({ id: styling.id, workflowRunId: styling.workflowRunId })
     .from(styling)
     .where(and(eq(styling.consultationId, consultationId), eq(styling.userId, userId), eq(styling.status, "running")));
   for (const runningStyling of runningStylings) {
-    if (runningStyling.workflowRunId) {
-      await ctx.stylings.cancel(runningStyling.workflowRunId).catch((error: unknown) => {
-        console.error("A Styling's run couldn't be cancelled:", error instanceof Error ? error.message : "unknown error");
-      });
-    }
+    if (runningStyling.workflowRunId) await cancelWorkflowRun(ctx, runningStyling.workflowRunId);
     await finishStyling(ctx, runningStyling.id, "broke");
   }
 

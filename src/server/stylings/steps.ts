@@ -6,6 +6,7 @@ import { type BudgetTier, byCategoryOrder, isBrandCategory } from "@/config/cons
 import {
   addsToCurrentOutfits,
   BRAND_FETCHES_UP_FRONT,
+  isStuck,
   MAX_BRAND_FETCHES_PER_STYLING,
   MAX_TAILORING_SUBSTITUTES,
   type PreviewRefusalReason,
@@ -307,7 +308,9 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
       }
     },
 
-    finish: (stylingId, outcome) => finishStyling(ctx, stylingId, outcome),
+    async finish(stylingId, outcome) {
+      await finishStyling(ctx, stylingId, outcome);
+    },
   };
 }
 
@@ -343,16 +346,24 @@ async function savePreview(
 }
 
 /**
- * Finishes a running Styling. Whatever Outfits it made switch in at once, after any it adds to, and
- * the Consultation is ready; a Preview not ready by then never will be, so it's marked failed. One
- * that made none has failed: nothing switches, and the Consultation keeps whatever it showed
- * before, or shows No Outfits. A Styling that isn't running any more is left as it is.
+ * How a Styling finishes: after its steps, which all completed or one of which broke, or as stuck,
+ * its stage not having moved for STUCK_STYLING_MS.
  */
-export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, stylingId: string, outcome: StylingOutcome): Promise<void> {
+export type StylingFinish = StylingOutcome | "stuck";
+
+/**
+ * Finishes a running Styling, returning whether it did. Whatever Outfits it made switch in at once,
+ * after any it adds to, and the Consultation is ready; a Preview not ready by then never will be, so
+ * it's marked failed. One that made none has failed, as nothing could be built if its steps all
+ * completed, and otherwise as broken: nothing switches, and the Consultation keeps whatever it
+ * showed before, or shows No Outfits. A Styling that isn't running any more is left as it is, and
+ * so is one finishing as stuck whose stage has moved since it was found.
+ */
+export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, stylingId: string, how: StylingFinish): Promise<boolean> {
   const finishedAt = ctx.clock.now();
-  await ctx.db.transaction(async (tx) => {
+  return ctx.db.transaction(async (tx) => {
     const running = await lockRunningStyling(tx, stylingId);
-    if (!running) return;
+    if (!running || (how === "stuck" && !isStuck(running.stageMovedAt, finishedAt))) return false;
     const beside = await readBuildingBeside(tx, { stylingId, kind: running.kind, consultationId: running.consultationId });
     const made = await tx
       .select({ id: outfit.id, position: outfit.position })
@@ -385,9 +396,9 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
         .update(consultation)
         .set({ state: "ready", photoStyle: running.photoStyle, budgetTier: running.budgetTier })
         .where(eq(consultation.id, running.consultationId));
-      return;
+      return true;
     }
-    const failureReason = outcome === "broke" ? "something_broke" : "nothing_built";
+    const failureReason = how === "completed" ? "nothing_built" : "something_broke";
     await tx.update(styling).set({ status: "failed", failureReason, finishedAt }).where(eq(styling.id, stylingId));
     // A failed "Show 2 more Outfits" passes over the rest of the current Style Icons: that's every
     // Outfit it can build for the photo, until a re-styling builds new ones.
@@ -406,6 +417,7 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
       .update(consultation)
       .set({ state: shown ? "ready" : "no_outfits" })
       .where(eq(consultation.id, running.consultationId));
+    return true;
   });
 }
 
@@ -498,6 +510,7 @@ async function lockRunningStyling(tx: Transaction, stylingId: string) {
       budgetTier: styling.budgetTier,
       photoStyle: styling.photoStyle,
       outfitsWanted: styling.outfitsWanted,
+      stageMovedAt: styling.stageMovedAt,
     })
     .from(styling)
     .where(and(eq(styling.id, stylingId), eq(styling.status, "running")))

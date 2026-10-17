@@ -10,18 +10,22 @@ import { readSignedInUser } from "@/server/operations/session";
 import type { PhotoCategoryFacts } from "@/server/outfit-assembly/categories";
 import { hasCurrentStyleIconLeft, readCurrentStyleIconList } from "@/server/stylings/current-outfits";
 import { readLatestFailedStyling } from "@/server/stylings/failed";
-import { checkStylingStart, createStyling, launchStyling, type NewStyling, type StylingStartRefusal } from "@/server/stylings/start";
+import {
+  AlreadyStylingError,
+  checkStylingStart,
+  createStyling,
+  launchStyling,
+  type NewStyling,
+  type StylingStartRefusal,
+} from "@/server/stylings/start";
 import { outfitsStage } from "@/server/stylings/steps";
+import { finishStuckStylings } from "@/server/stylings/stop";
 
 /**
  * Why a Styling on a Consultation didn't start, whatever its kind. A Consultation that isn't the
  * user's is not found, just like one that doesn't exist.
  */
-export type ConsultationStylingRefusal =
-  | { refusal: "signed-out" | "not-found" }
-  /** A Styling is already running on the Consultation. */
-  | { refusal: "already-styling" }
-  | StylingStartRefusal;
+export type ConsultationStylingRefusal = { refusal: "signed-out" | "not-found" } | StylingStartRefusal;
 
 /** Why "Show 2 more Outfits" didn't start. */
 export type ShowMoreOutfitsRefusal =
@@ -137,7 +141,8 @@ type CurrentConsultation = PhotoCategoryFacts & Pick<NewStyling, "budgetTier" | 
  * Starts a Styling on one of the signed-in user's own Consultations, after the shared start check,
  * once no Styling runs on it. `plan` says what it builds, or why it can't start, holding the
  * Consultation's row to the end of the transaction, so of two presses at once the second finds it
- * Styling.
+ * Styling. One started meanwhile on another of the user's Consultations, past the shared start
+ * check's lock, is caught by the database's.
  */
 async function startStylingOn<R extends { refusal: string }>(
   ctx: OperationContext,
@@ -148,31 +153,38 @@ async function startStylingOn<R extends { refusal: string }>(
   if (!user) return { ok: false, refusal: "signed-out" };
   const stylingStart = await checkStylingStart(ctx, user);
   if (!stylingStart.ok) return stylingStart;
-  const started = await ctx.db.transaction(async (tx): Promise<Result<{ stylingId: string }, ConsultationStylingRefusal | R>> => {
-    const [row] = await tx
-      .select({
-        state: consultation.state,
-        photoType: consultation.photoType,
-        hairCovered: consultation.hairCovered,
-        budgetTier: consultation.budgetTier,
-        photoStyle: consultation.photoStyle,
-      })
-      .from(consultation)
-      .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)))
-      .for("update");
-    if (!row) return { ok: false, refusal: "not-found" };
-    if (row.state === "styling") return { ok: false, refusal: "already-styling" };
-    const planned = await plan(tx, row);
-    if (!planned.ok) return planned;
-    const { ok: _, ...stylingPlan } = planned;
-    const stylingId = await createStyling(tx, ctx.clock.now(), {
-      ...stylingPlan,
-      consultationId,
-      userId: user.id,
-      outfitsWanted: stylingStart.outfitsWanted,
+  let started: Result<{ stylingId: string }, ConsultationStylingRefusal | R>;
+  try {
+    started = await ctx.db.transaction(async (tx): Promise<typeof started> => {
+      const [row] = await tx
+        .select({
+          state: consultation.state,
+          photoType: consultation.photoType,
+          hairCovered: consultation.hairCovered,
+          budgetTier: consultation.budgetTier,
+          photoStyle: consultation.photoStyle,
+        })
+        .from(consultation)
+        .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)))
+        .for("update");
+      if (!row) return { ok: false, refusal: "not-found" };
+      if (row.state === "styling") return { ok: false, refusal: "already-styling" };
+      const planned = await plan(tx, row);
+      if (!planned.ok) return planned;
+      const { ok: _, ...stylingPlan } = planned;
+      const stylingId = await createStyling(tx, ctx.clock.now(), {
+        ...stylingPlan,
+        consultationId,
+        userId: user.id,
+        outfitsWanted: stylingStart.outfitsWanted,
+      });
+      return { ok: true, stylingId };
     });
-    return { ok: true, stylingId };
-  });
+  } catch (error) {
+    // A Styling on another of the user's Consultations started since the shared start check.
+    if (!(error instanceof AlreadyStylingError)) throw error;
+    started = { ok: false, refusal: "already-styling" };
+  }
   if (!started.ok) return started;
   await launchStyling(ctx, started.stylingId);
   return { ok: true };
@@ -203,11 +215,13 @@ export interface PreviewsProgress {
 
 /** The Styling status of one of the signed-in user's own Consultations, or null for anyone else's. */
 export async function readStylingStatus(
-  ctx: Pick<OperationContext, "auth" | "db" | "clock" | "requestHeaders">,
+  ctx: Pick<OperationContext, "auth" | "db" | "clock" | "stylings" | "requestHeaders">,
   consultationId: string,
 ): Promise<StylingStatusView | null> {
   const user = await readSignedInUser(ctx);
   if (!user) return null;
+  // Its Styling, if it's stuck, finishes: the page polling it then shows how it ended.
+  await finishStuckStylings(ctx, { userId: user.id, consultationId });
   // One statement, so the state and the running Styling's progress always agree.
   const [row] = await ctx.db
     .select({

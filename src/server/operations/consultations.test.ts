@@ -81,6 +81,8 @@ describe("starting a Consultation", () => {
     const browser = await signedInUser();
 
     await start(browser, "body_only");
+    // One Styling at a time: the user waits for the first.
+    await harness.stylings.runPending();
     await start(browser, "face");
 
     const stored = await consultationsOf(browser);
@@ -114,6 +116,7 @@ describe("starting a Consultation", () => {
 
     harness.clock.set("2026-10-31T23:00:00Z");
     await start(browser, "full_body");
+    await harness.stylings.runPending();
     harness.clock.set("2026-11-01T01:00:00Z");
     await start(browser, "full_body");
 
@@ -127,6 +130,7 @@ describe("starting a Consultation", () => {
 
     const consent = BOTH_CONSENT_BOXES_TICKED;
     await startConsultation(harness.context(browser), { photo: new Blob([png]), photoType: "full_body", consent });
+    await harness.stylings.runPending();
     await startConsultation(harness.context(browser), { photo: new Blob([webp]), photoType: "full_body", consent });
 
     expect([...harness.blob.objects.values()]).toEqual([
@@ -346,7 +350,9 @@ describe("My Consultations", () => {
     const browser = await signedInUser();
     harness.clock.set("2026-10-15T09:00:00Z");
     const older = await start(browser, "face");
-    harness.clock.set("2026-10-16T18:30:00Z");
+    await harness.stylings.runPending();
+    // Listed within 10 minutes, so its Styling isn't stuck yet.
+    harness.clock.set("2026-10-17T07:55:00Z");
     const newer = await start(browser, "body_only", "low");
     const [olderPhoto, newerPhoto] = (await consultationsOf(browser)).map((row) => row.photoPathname);
     harness.clock.set("2026-10-17T08:00:00Z");
@@ -358,7 +364,7 @@ describe("My Consultations", () => {
         id: newer,
         photoUrl: await harness.blob.signedUrl(newerPhoto!, new Date("2026-10-17T09:00:00Z")),
         photoType: "body_only",
-        createdAt: new Date("2026-10-16T18:30:00Z"),
+        createdAt: new Date("2026-10-17T07:55:00Z"),
         budgetTier: "low",
         state: "styling",
         outfitCount: 0,
@@ -369,7 +375,7 @@ describe("My Consultations", () => {
         photoType: "face",
         createdAt: new Date("2026-10-15T09:00:00Z"),
         budgetTier: null,
-        state: "styling",
+        state: "no_outfits",
         outfitCount: 0,
       },
     ]);
@@ -429,6 +435,7 @@ describe("deleting a Consultation", () => {
   it("keeps the user's other Consultations and their photos", async () => {
     const browser = await signedInUser();
     const kept = await start(browser, "full_body");
+    await harness.stylings.runPending();
     const deleted = await start(browser, "face");
 
     await deleteConsultation(harness.context(browser), deleted);

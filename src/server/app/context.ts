@@ -19,8 +19,11 @@ export async function getOperationContext(): Promise<OperationContext> {
   };
 }
 
-/** What reads need: the services and the request's headers. Pages can't set cookies. */
-export async function getReadContext(): Promise<Pick<OperationContext, "auth" | "db" | "clock" | "blob" | "requestHeaders">> {
+/**
+ * What reads need: the services and the request's headers. Pages can't set cookies. The reads that
+ * run the stuck check cancel a stuck Styling's Workflow run.
+ */
+export async function getReadContext(): Promise<Pick<OperationContext, "auth" | "db" | "clock" | "blob" | "stylings" | "requestHeaders">> {
   const [services, requestHeaders] = await Promise.all([getServices(), currentRequestHeaders()]);
   return { ...services, requestHeaders };
 }

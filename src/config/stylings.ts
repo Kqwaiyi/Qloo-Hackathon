@@ -67,6 +67,17 @@ export const STYLING_STATUS_POLL_INTERVAL_MS = 1000;
 /** A step of the Styling checklist that has run longer than this says it's taking longer than usual. */
 export const SLOW_STEP_MS = 60_000;
 
+/**
+ * A running Styling whose stage hasn't moved for this long is stuck: whatever next reads its status
+ * finishes it, so it can't hold the Styling locks for good.
+ */
+export const STUCK_STYLING_MS = 10 * 60_000;
+
+/** Whether a running Styling whose stage last moved at `stageMovedAt` is stuck by `now`. */
+export function isStuck(stageMovedAt: Date, now: Date): boolean {
+  return now.getTime() - stageMovedAt.getTime() >= STUCK_STYLING_MS;
+}
+
 /** The AI gets this many tries at an Outfit's Pieces: bad output is retried once, then tailoring has failed. */
 export const TAILORING_ATTEMPTS = 2;
 

@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "styling_running_per_consultation_unique" ON "styling" USING btree ("consultation_id") WHERE "styling"."status" = 'running';--> statement-breakpoint
+CREATE UNIQUE INDEX "styling_running_per_user_unique" ON "styling" USING btree ("user_id") WHERE "styling"."status" = 'running';
