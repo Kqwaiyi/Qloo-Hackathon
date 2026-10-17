@@ -23,7 +23,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   if (verification?.verified) redirect(APP_HOME);
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight">{COPY.badVerificationLink}</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">{COPY.badLink}</h1>
       {verification ? (
         <SendNewLink email={verification.email} />
       ) : (

@@ -29,6 +29,9 @@ export const SIGN_UP_RATE_LIMIT = { window: 60 * 60, max: 3 } as const;
 /** A verification link works for this long. */
 export const VERIFICATION_LINK_LIFETIME_SECONDS = 24 * 60 * 60;
 
+/** A password reset link works for this long. */
+export const PASSWORD_RESET_LINK_LIFETIME_SECONDS = 60 * 60;
+
 /** An account still unverified this many days after sign-up is deleted. */
 export const UNVERIFIED_ACCOUNT_LIFETIME_DAYS = 7;
 
@@ -42,6 +45,11 @@ export const USERNAME_MAX_LENGTH = 30;
 export const USERNAME_PATTERN = /^[a-zA-Z0-9_.]+$/;
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_LENGTH = 128;
+
+/** Any 8–128 characters: no composition rules and no breached-password check. */
+export function isAllowedPassword(password: string): boolean {
+  return password.length >= PASSWORD_MIN_LENGTH && password.length <= PASSWORD_MAX_LENGTH;
+}
 
 export function isWellFormedUsername(username: string): boolean {
   return username.length >= USERNAME_MIN_LENGTH && username.length <= USERNAME_MAX_LENGTH && USERNAME_PATTERN.test(username);

@@ -7,6 +7,7 @@ import * as z from "zod";
 import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
+  PASSWORD_RESET_LINK_LIFETIME_SECONDS,
   SESSION_EXPIRES_IN_SECONDS,
   SESSION_UPDATE_AGE_SECONDS,
   SIGN_UP_RATE_LIMIT,
@@ -26,7 +27,14 @@ import * as schema from "@/server/db/schema";
 import type { EmailSender } from "@/server/email/send-email";
 import { serializeCookie } from "@/server/http/cookies";
 
-import { AUTH_ERROR_CODES, emailRefusalError, trackApiEndpoints, verificationEmailSender } from "./emails";
+import {
+  AUTH_ERROR_CODES,
+  emailRefusalError,
+  passwordResetEmailSender,
+  trackApiEndpoints,
+  verificationEmailSender,
+} from "./emails";
+import { passwordResetFinisher } from "./password-reset";
 
 type HookContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
 
@@ -76,6 +84,15 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
     if (refusal) throw emailRefusalError(refusal);
   }
 
+  /**
+   * While every email is paused, a reset request says so, before the address is looked up, so every
+   * address still gets the same answer. Any other refusal stays silent (see `passwordResetEmailSender`).
+   */
+  async function beforeRequestPasswordReset(): Promise<void> {
+    const refusal = await emailSender.refusalFor("password-reset", null);
+    if (refusal) throw emailRefusalError(refusal);
+  }
+
   const auth = betterAuth({
     appName: "Outfit Recommender",
     baseURL,
@@ -89,6 +106,10 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
       requireEmailVerification: false,
       minPasswordLength: PASSWORD_MIN_LENGTH,
       maxPasswordLength: PASSWORD_MAX_LENGTH,
+      sendResetPassword: passwordResetEmailSender(emailSender, baseURL),
+      resetPasswordTokenExpiresIn: PASSWORD_RESET_LINK_LIFETIME_SECONDS,
+      revokeSessionsOnPasswordReset: true,
+      onPasswordReset: passwordResetFinisher(db, clock),
     },
     // A soft gate: a new user is signed in at once, and only New Consultation waits for the link.
     emailVerification: {
@@ -134,6 +155,7 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
       before: createAuthMiddleware(async (ctx) => {
         if (ctx.path === AUTH_ENDPOINTS.signUp) await beforeSignUp(ctx);
         if (ctx.path === AUTH_ENDPOINTS.changeEmail) await beforeChangeEmail(ctx);
+        if (ctx.path === AUTH_ENDPOINTS.requestPasswordReset) await beforeRequestPasswordReset();
       }),
     },
     databaseHooks: {

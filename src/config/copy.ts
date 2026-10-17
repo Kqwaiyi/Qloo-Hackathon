@@ -28,9 +28,11 @@ export const COPY = {
   resendLink: "Resend link",
   changeEmail: "Change email",
   emailVerified: "Email verified",
-  badVerificationLink: "This link has expired or isn't valid",
+  /** A verification or password reset link that didn't work. */
+  badLink: "This link has expired or isn't valid",
   sendNewLink: "Send a new link",
   signInForNewLink: "Sign in to get a new one",
+  resetLinkSent: "If an account uses that email, we've sent a link.",
   emailChangeSent: "If that address isn't already in use, we've sent a link to it.",
   didNotSignUp: (date: string) => `Didn't sign up? Ignore this email. The account is removed on ${date}.`,
 } as const;

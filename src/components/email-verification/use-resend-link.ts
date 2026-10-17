@@ -3,11 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import type { Notice } from "@/components/notice";
 import { ROUTES } from "@/config/routes";
 
 import { resendVerificationAction } from "./actions";
 import { resendProblem } from "./messages";
-import type { Notice } from "./notice";
 
 /**
  * Sends the signed-in user a new verification link, with the notice that says how it went. A user

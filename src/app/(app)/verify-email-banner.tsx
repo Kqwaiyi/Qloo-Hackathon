@@ -5,8 +5,8 @@ import { type FormEvent, useId, useState, useTransition } from "react";
 
 import { changeUnverifiedEmailAction } from "@/components/email-verification/actions";
 import { changeEmailProblem } from "@/components/email-verification/messages";
-import { NoticeLine } from "@/components/email-verification/notice";
 import { useResendLink } from "@/components/email-verification/use-resend-link";
+import { NoticeLine } from "@/components/notice";
 import { input } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import { ROUTES } from "@/config/routes";

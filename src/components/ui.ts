@@ -16,4 +16,7 @@ export const label = "mb-1 block text-sm font-medium";
 
 export const fieldError = "mt-1 text-sm text-red-700";
 
-export const textLink = "font-medium underline underline-offset-2 hover:text-stone-600";
+/** A line confirming something just worked, at the top of the page it landed on. */
+export const successNotice = "mb-6 rounded-lg bg-emerald-50 px-4 py-3 font-medium text-emerald-800";
+
+export const textLink ="font-medium underline underline-offset-2 hover:text-stone-600";

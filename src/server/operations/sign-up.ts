@@ -1,9 +1,8 @@
 import * as z from "zod";
 
 import {
+  isAllowedPassword,
   isWellFormedUsername,
-  PASSWORD_MAX_LENGTH,
-  PASSWORD_MIN_LENGTH,
   STYLE_PREFERENCES,
   type StylePreference,
 } from "@/config/accounts";
@@ -70,7 +69,7 @@ export async function signUp(ctx: OperationContext, input: SignUpInput): Promise
   if (!isWellFormedUsername(username)) return invalid("username");
   const email = input.email.trim();
   if (!EMAIL_PATTERN.test(email)) return invalid("email");
-  if (input.password.length < PASSWORD_MIN_LENGTH || input.password.length > PASSWORD_MAX_LENGTH) return invalid("password");
+  if (!isAllowedPassword(input.password)) return invalid("password");
   if (!isStylePreference(input.stylePreference)) return invalid("stylePreference");
   const country = findCountry(input.countryCode);
   if (!country) return invalid("countryCode");

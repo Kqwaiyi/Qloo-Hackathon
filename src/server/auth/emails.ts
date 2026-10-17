@@ -5,7 +5,7 @@ import { COPY } from "@/config/copy";
 import type { EmailKind } from "@/config/email";
 import { AUTH_API_PATH, AUTH_ENDPOINTS, ROUTES } from "@/config/routes";
 import { unverifiedAccountDeletionDate } from "@/server/accounts/verification";
-import { verificationEmail } from "@/server/email/messages";
+import { passwordResetEmail, verificationEmail } from "@/server/email/messages";
 import type { EmailRefusal, EmailSender } from "@/server/email/send-email";
 
 /** The codes of the refusals our hooks and emails add to Better Auth's. Our operations match them. */
@@ -40,6 +40,19 @@ export function verificationEmailSender(emailSender: EmailSender, baseURL: strin
       to: user.email,
       ...verificationEmail({ link, deletionDate: unverifiedAccountDeletionDate(new Date(user.createdAt)) }),
     });
+    if (!result.sent) throw emailRefusalError(result.refusal);
+  };
+}
+
+/**
+ * Better Auth's `sendResetPassword`, through our send function. A refused email throws, which
+ * Better Auth logs and keeps to itself, so the request gets the same reply whatever happened.
+ */
+export function passwordResetEmailSender(emailSender: EmailSender, baseURL: string) {
+  return async ({ user, token }: { user: AuthUser; token: string }): Promise<void> => {
+    // Our own link: Better Auth checks the token, then lands on the reset page with it.
+    const link = `${baseURL}${AUTH_API_PATH}${AUTH_ENDPOINTS.resetPassword}/${encodeURIComponent(token)}?callbackURL=${encodeURIComponent(ROUTES.resetPassword)}`;
+    const result = await emailSender.send({ kind: "password-reset", userId: user.id, to: user.email, ...passwordResetEmail({ link }) });
     if (!result.sent) throw emailRefusalError(result.refusal);
   };
 }

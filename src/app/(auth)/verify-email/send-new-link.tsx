@@ -2,8 +2,8 @@
 
 import { useRouter } from "next/navigation";
 
-import { NoticeLine } from "@/components/email-verification/notice";
 import { useResendLink } from "@/components/email-verification/use-resend-link";
+import { NoticeLine } from "@/components/notice";
 import { primaryButton } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import { APP_HOME } from "@/config/routes";

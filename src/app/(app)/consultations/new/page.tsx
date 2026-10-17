@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { successNotice } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import { EMAIL_VERIFIED_PARAM } from "@/config/routes";
 import { getEmailVerification, requireSignedInUser } from "@/server/data/session";
@@ -15,7 +16,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   return (
     <>
       {params[EMAIL_VERIFIED_PARAM] !== undefined && verification?.verified && (
-        <p role="status" className="mb-6 rounded-lg bg-emerald-50 px-4 py-3 font-medium text-emerald-800">
+        <p role="status" className={successNotice}>
           {COPY.emailVerified}
         </p>
       )}

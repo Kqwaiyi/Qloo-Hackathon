@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { type FormEvent, useEffect, useState, useTransition } from "react";
 
+import { INVALID_EMAIL, INVALID_PASSWORD, PASSWORD_HINT } from "@/components/messages";
 import { PasswordInput } from "@/components/password-input";
 import { fieldError, input, label, primaryButton, secondaryButton, textLink } from "@/components/ui";
 import {
@@ -158,8 +159,8 @@ function DateOfBirthStep({ onAdult, onUnder18 }: { onAdult: (birthDate: BirthDat
 const FIELD_MESSAGES: Record<SignUpField, string> = {
   birthDate: "Go back and enter a real date of birth.",
   username: `Use ${USERNAME_MIN_LENGTH}–${USERNAME_MAX_LENGTH} letters, numbers, dots or underscores.`,
-  email: "Enter a valid email address.",
-  password: `Use ${PASSWORD_MIN_LENGTH} to ${PASSWORD_MAX_LENGTH} characters.`,
+  email: INVALID_EMAIL,
+  password: INVALID_PASSWORD,
   stylePreference: "Choose a Style Preference.",
   countryCode: "Choose your Country.",
 };
@@ -279,7 +280,7 @@ function AccountStep({
           aria-describedby="password-hint"
         />
         <p id="password-hint" className={invalidField === "password" ? fieldError : "mt-1 text-sm text-stone-500"}>
-          At least {PASSWORD_MIN_LENGTH} characters.
+          {PASSWORD_HINT}
         </p>
       </div>
 
