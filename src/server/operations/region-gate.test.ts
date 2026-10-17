@@ -11,7 +11,7 @@ import { readStylingStatus } from "@/server/operations/stylings";
 import { readUsageSummary } from "@/server/operations/usage";
 import { qlooPerson, qlooResponse } from "@/server/qloo/fake";
 import { recordUsage } from "@/server/usage/records";
-import { createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
+import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities: enough Style Icons for a Face Photo's two Outfits.
 const STYLE_ICONS = [qlooPerson("p-1", "Ava Stone", 0.94), qlooPerson("p-2", "Bea Marsh", 0.91), qlooPerson("p-3", "Cleo Hart", 0.88)];
@@ -178,9 +178,9 @@ async function signedInUser({ input = signUpInput(), verified = true } = {}): Pr
   return browser;
 }
 
-/** Presses "Get my Outfits" with a plain JPEG Face Photo, returning what the operation returns. */
+/** Presses "Get my Outfits" with a plain JPEG Face Photo, agreeing on the consent sheet, returning what the operation returns. */
 async function getMyOutfits(browser: TestBrowser) {
-  return startConsultation(harness.context(browser), { photo: await jpeg(), photoType: "face" });
+  return startConsultation(harness.context(browser), { photo: await jpeg(), photoType: "face", consent: BOTH_CONSENT_BOXES_TICKED });
 }
 
 async function jpeg(): Promise<Blob> {

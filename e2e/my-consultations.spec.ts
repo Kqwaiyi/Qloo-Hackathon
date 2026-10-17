@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { plainPhoto, signUpVerifiedUser } from "./support";
+import { agreeOnConsentSheet, plainPhoto, signUpVerifiedUser } from "./support";
 
 test("a Consultation opens from My Consultations, and is deleted for good after a confirmation", async ({ page }) => {
   // Its Styling calls live Qloo, and in development each page compiles on its first visit.
@@ -16,6 +16,7 @@ test("a Consultation opens from My Consultations, and is deleted for good after 
   await page.getByRole("button", { name: /Choose a photo/ }).click();
   await (await fileChooser).setFiles({ name: "me.jpg", mimeType: "image/jpeg", buffer: await plainPhoto() });
   await page.getByRole("button", { name: "Get my Outfits" }).click();
+  await agreeOnConsentSheet(page);
   await expect(page).toHaveURL(/\/consultations\/[0-9a-f-]{36}$/, { timeout: 30_000 });
   const consultationUrl = page.url();
 

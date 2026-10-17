@@ -14,6 +14,14 @@ export interface SignedInUser {
   birthMonth: number;
   /** When they signed up. */
   createdAt: Date;
+  /** The photo notice they last agreed to on the consent sheet, and when, or null if they haven't since signing up or withdrawing. */
+  photoConsent: PhotoConsent | null;
+}
+
+export interface PhotoConsent {
+  /** The PHOTO_NOTICE_VERSION they agreed to. */
+  noticeVersion: number;
+  acceptedAt: Date;
 }
 
 /** The user signed in on this request, or null. */
@@ -31,6 +39,10 @@ export async function readSignedInUser(ctx: Pick<OperationContext, "auth" | "req
     birthYear: user.birthYear!,
     birthMonth: user.birthMonth!,
     createdAt: new Date(user.createdAt),
+    photoConsent:
+      user.acceptedPhotoNoticeVersion == null || user.photoNoticeAcceptedAt == null
+        ? null
+        : { noticeVersion: user.acceptedPhotoNoticeVersion, acceptedAt: new Date(user.photoNoticeAcceptedAt) },
   };
 }
 

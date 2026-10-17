@@ -17,20 +17,31 @@ import {
   SIGNED_LINK_LIFETIME_SECONDS,
 } from "@/config/consultations";
 import type { PreviewState } from "@/config/stylings";
+import { needsPhotoConsent, photoConsentStands, recordPhotoConsent } from "@/server/accounts/photo-consent";
 import type { PhotoCheckResult } from "@/server/ai/provider";
 import type { BlobStore } from "@/server/blob/store";
 import type { Clock } from "@/server/clock";
-import { consultationFolder, photoPathnameFor } from "@/server/consultations/blob-pathnames";
+import { photoPathnameFor } from "@/server/consultations/blob-pathnames";
+import { deleteConsultationOf } from "@/server/consultations/deletion";
 import { judgePhotoCheck, type PhotoRejection } from "@/server/consultations/photo-check";
 import { readPhotoFile } from "@/server/consultations/photo-file";
-import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
+import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
 import { brandPriceRange, outfitPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
+import { isFromSupportedRegion } from "@/server/region-gate";
 import { checkStylingStart, createStyling, launchStyling, type StylingStartRefusal } from "@/server/stylings/start";
-import { finishStyling } from "@/server/stylings/steps";
 import { readUsageLeft, recordUsage } from "@/server/usage/records";
+
+/** The consent sheet's two boxes, as the user left them when they pressed Continue. */
+const photoConsentTicksSchema = z.object({
+  /** Storing their photos and having AI process their face and body. */
+  storeAndProcess: z.boolean(),
+  /** Sending their photos to Google's Gemini. */
+  sendToGemini: z.boolean(),
+});
+export type PhotoConsentTicks = z.infer<typeof photoConsentTicksSchema>;
 
 /** The shape of what "Get my Outfits" sends. The server action parses its form with this. */
 export const startConsultationInputSchema = z.object({
@@ -38,11 +49,15 @@ export const startConsultationInputSchema = z.object({
   photoType: z.enum(PHOTO_TYPES),
   /** A body photo's chosen Budget Tier, No Budget when none is sent. A Face Photo has none. */
   budgetTier: z.enum(BUDGET_TIERS).optional(),
+  /** The consent sheet's boxes. Left out or not both ticked, the user must already have agreed to the current photo notice. */
+  consent: photoConsentTicksSchema.optional(),
 });
 export type StartConsultationInput = z.infer<typeof startConsultationInputSchema>;
 
 export type StartConsultationRefusal =
   | { refusal: "signed-out" | "unverified" | "unusable-file" | "check-errored" }
+  /** The user hasn't agreed to the current photo notice, and didn't tick both of the consent sheet's boxes. */
+  | { refusal: "photo-consent-needed" }
   /** The user has had every photo the photo-check limit allows checked in the rolling window, until `moreFrom`. */
   | { refusal: "photo-check-limit"; moreFrom: Date }
   | { refusal: "photo-rejected"; rejection: PhotoRejection }
@@ -62,6 +77,13 @@ export async function startConsultation(
   if (!user) return { ok: false, refusal: "signed-out" };
   // Verification is a soft gate: an unverified user can look around, but can't start a Consultation.
   if (!user.emailVerified) return { ok: false, refusal: "unverified" };
+  // The region gate comes before consent, so nothing is recorded from where the app isn't
+  // available. The shared start check below runs it again for every other start, at no cost.
+  if (!isFromSupportedRegion(ctx.requestHeaders)) return { ok: false, refusal: "unsupported-region" };
+  // Both of the consent sheet's ticks record the user's agreement to the current photo notice, which
+  // otherwise they must already have given.
+  if (input.consent?.storeAndProcess && input.consent.sendToGemini) await recordPhotoConsent(ctx.db, user.id, ctx.clock.now());
+  else if (needsPhotoConsent(user)) return { ok: false, refusal: "photo-consent-needed" };
   const stylingStart = await checkStylingStart(ctx, user);
   if (!stylingStart.ok) return stylingStart;
   const photoChecks = await readUsageLeft(ctx.db, { kind: "photo_check", userId: user.id, at: ctx.clock.now() });
@@ -89,9 +111,11 @@ export async function startConsultation(
   const id = randomUUID();
   const photoPathname = photoPathnameFor(id, photo.mediaType);
   await ctx.blob.put(photoPathname, photo.bytes, photo.mediaType);
-  let stylingId: string;
+  let stylingId: string | null;
   try {
     stylingId = await ctx.db.transaction(async (tx) => {
+      // Consent withdrawn in another tab while the photo was checked leaves nothing behind.
+      if (!(await photoConsentStands(tx, user.id))) return null;
       const now = ctx.clock.now();
       const budgetTier = hasBudgetTier(input.photoType) ? (input.budgetTier ?? DEFAULT_BUDGET_TIER) : null;
       await tx.insert(consultation).values({
@@ -125,6 +149,10 @@ export async function startConsultation(
   } catch (error) {
     await ctx.blob.delete(photoPathname).catch(() => {});
     throw error;
+  }
+  if (!stylingId) {
+    await ctx.blob.delete(photoPathname);
+    return { ok: false, refusal: "photo-consent-needed" };
   }
   await launchStyling(ctx, stylingId);
   return { ok: true, consultationId: id };
@@ -313,9 +341,8 @@ export async function listConsultations(
 export type DeleteConsultationRefusal = { refusal: "signed-out" | "not-found" };
 
 /**
- * Deletes one of the signed-in user's own Consultations for good, even while it's Styling. A running
- * Styling's Workflow run is cancelled first. Then its Stylings, Style Icons, Outfits and Pieces go,
- * with everything in its Blob folder, its photo and Previews included.
+ * Deletes one of the signed-in user's own Consultations for good, even while it's Styling, as
+ * `deleteConsultationOf` describes.
  */
 export async function deleteConsultation(
   ctx: Pick<OperationContext, "auth" | "db" | "blob" | "clock" | "stylings" | "requestHeaders">,
@@ -323,41 +350,7 @@ export async function deleteConsultation(
 ): Promise<Result<object, DeleteConsultationRefusal>> {
   const user = await readSignedInUser(ctx);
   if (!user) return { ok: false, refusal: "signed-out" };
-  const [owned] = await ctx.db
-    .select({ id: consultation.id })
-    .from(consultation)
-    .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)));
-  if (!owned) return { ok: false, refusal: "not-found" };
-
-  // A running Styling stops first, as a stuck one does: its run is cancelled, so it starts no more
-  // steps, and it's finished, so a step under way saves nothing. A run that can't be cancelled
-  // doesn't keep the Consultation, since its steps find the Styling no longer running.
-  const runningStylings = await ctx.db
-    .select({ id: styling.id, workflowRunId: styling.workflowRunId })
-    .from(styling)
-    .where(and(eq(styling.consultationId, consultationId), eq(styling.status, "running")));
-  for (const runningStyling of runningStylings) {
-    if (runningStyling.workflowRunId) {
-      await ctx.stylings.cancel(runningStyling.workflowRunId).catch((error: unknown) => {
-        console.error("A Styling's run couldn't be cancelled:", error instanceof Error ? error.message : "unknown error");
-      });
-    }
-    await finishStyling(ctx, runningStyling.id, "broke");
-  }
-
-  // The Blob folder goes in the rows' transaction, which holds them meanwhile: a Blob delete that
-  // fails keeps the Consultation, its Styling stopped, to delete again. A Preview that a step under
-  // way stores after the folder goes is deleted by that step, which finds its Styling gone.
-  const deleted = await ctx.db.transaction(async (tx) => {
-    // Its Stylings, Style Icons, Outfits and Pieces go with it.
-    const [row] = await tx
-      .delete(consultation)
-      .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)))
-      .returning({ id: consultation.id });
-    if (!row) return false;
-    await ctx.blob.deleteFolder(consultationFolder(consultationId));
-    return true;
-  });
+  const deleted = await deleteConsultationOf(ctx, { userId: user.id, consultationId });
   return deleted ? { ok: true } : { ok: false, refusal: "not-found" };
 }
 

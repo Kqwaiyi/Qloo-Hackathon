@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { FAKE_AI_SCENARIO_COOKIE } from "../src/server/ai/fake";
-import { plainPhoto, signUpVerifiedUser } from "./support";
+import { agreeOnConsentSheet, plainPhoto, signUpVerifiedUser } from "./support";
 
 test("a photo that looks like another Photo Type is sent again as that type with one tap", async ({ page, context, baseURL }) => {
   await signUpVerifiedUser(page);
@@ -15,9 +15,11 @@ test("a photo that looks like another Photo Type is sent again as that type with
   await page.getByRole("button", { name: /Choose a photo/ }).click();
   await (await fileChooser).setFiles({ name: "me.jpg", mimeType: "image/jpeg", buffer: await plainPhoto() });
   await page.getByRole("button", { name: "Get my Outfits" }).click();
+  await agreeOnConsentSheet(page);
 
   await expect(page.getByText("This looks like a Face Photo.")).toBeVisible();
   await expect(page.getByRole("img", { name: "Your Full-Body Photo" })).toBeVisible();
+  // The rejected photo's check already recorded the consent, so the switch sends it straight away.
   await page.getByRole("button", { name: "Use it as a Face Photo" }).click();
 
   // In development, the first visit compiles the Consultation page while its first Styling starts.

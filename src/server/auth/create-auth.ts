@@ -200,6 +200,9 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
         },
         birthYear: { type: "number", required: false, input: false },
         birthMonth: { type: "number", required: false, input: false },
+        // Set only by "Get my Outfits" with both consent ticks, and cleared by withdrawing photo consent.
+        acceptedPhotoNoticeVersion: { type: "number", required: false, input: false },
+        photoNoticeAcceptedAt: { type: "date", required: false, input: false },
       },
     },
     hooks: {

@@ -85,6 +85,13 @@
       "when": 1792216444322,
       "tag": "0011_app_wide_caps",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792219025974,
+      "tag": "0012_photo_consent",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ import {
   changePasswordInputSchema,
   signOutEverywhere,
   updateProfile,
+  withdrawPhotoConsent,
 } from "@/server/operations/account";
 
 /** Settings → Profile → Save. The page then shows the saved profile. */
@@ -26,6 +27,14 @@ export async function updateProfileAction(input: ProfileInput) {
 export async function changePasswordAction(input: ChangePasswordInput) {
   const result = await changePassword(await getOperationContext(), changePasswordInputSchema.parse(input));
   if (!result.ok && result.refusal === "signed-out") redirect(ROUTES.signIn);
+  return result;
+}
+
+/** Settings → Privacy → "Withdraw photo consent", once confirmed. Pages then show no Consultations. */
+export async function withdrawPhotoConsentAction() {
+  const result = await withdrawPhotoConsent(await getOperationContext());
+  if (result.ok) refresh();
+  else if (result.refusal === "signed-out") redirect(ROUTES.signIn);
   return result;
 }
 

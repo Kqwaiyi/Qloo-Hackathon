@@ -40,23 +40,36 @@ import {
 
 export const stylePreferenceEnum = pgEnum("style_preference", STYLE_PREFERENCES);
 
-export const user = pgTable("user", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  email: text("email").notNull().unique(),
-  emailVerified: boolean("email_verified").notNull().default(false),
-  image: text("image"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  // The username plugin stores the username lowercased for uniqueness, and the username as typed.
-  username: text("username").unique(),
-  displayUsername: text("display_username"),
-  stylePreference: stylePreferenceEnum("style_preference").notNull(),
-  countryCode: text("country_code").notNull(),
-  // Only the birth year and month are kept: the day is dropped at sign-up.
-  birthYear: integer("birth_year").notNull(),
-  birthMonth: integer("birth_month").notNull(),
-});
+export const user = pgTable(
+  "user",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull().unique(),
+    emailVerified: boolean("email_verified").notNull().default(false),
+    image: text("image"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    // The username plugin stores the username lowercased for uniqueness, and the username as typed.
+    username: text("username").unique(),
+    displayUsername: text("display_username"),
+    stylePreference: stylePreferenceEnum("style_preference").notNull(),
+    countryCode: text("country_code").notNull(),
+    // Only the birth year and month are kept: the day is dropped at sign-up.
+    birthYear: integer("birth_year").notNull(),
+    birthMonth: integer("birth_month").notNull(),
+    // The photo notice the user last agreed to on the consent sheet, and when. Withdrawing photo
+    // consent clears both.
+    acceptedPhotoNoticeVersion: integer("accepted_photo_notice_version"),
+    photoNoticeAcceptedAt: timestamp("photo_notice_accepted_at", { withTimezone: true }),
+  },
+  (table) => [
+    check(
+      "user_photo_notice_accepted_together",
+      sql`(${table.acceptedPhotoNoticeVersion} is null) = (${table.photoNoticeAcceptedAt} is null)`,
+    ),
+  ],
+);
 
 export const session = pgTable(
   "session",

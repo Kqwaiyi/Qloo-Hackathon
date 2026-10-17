@@ -53,6 +53,19 @@ export async function signUpVerifiedUser(page: Page): Promise<{ username: string
   return user;
 }
 
+/** The consent sheet "Get my Outfits" opens before a user's first Consultation. */
+export function consentSheet(page: Page) {
+  return page.getByRole("dialog", { name: "Before we use your photos" });
+}
+
+/** Ticks both of the consent sheet's boxes and continues, which sends the photo. */
+export async function agreeOnConsentSheet(page: Page): Promise<void> {
+  const sheet = consentSheet(page);
+  await sheet.getByRole("checkbox", { name: /storing my photos/ }).check();
+  await sheet.getByRole("checkbox", { name: /Google's Gemini/ }).check();
+  await sheet.getByRole("button", { name: "Continue" }).click();
+}
+
 /** A plain JPEG the browser can open. */
 export async function plainPhoto(): Promise<Buffer> {
   return sharp({ create: { width: 300, height: 400, channels: 3, background: "#8a7f72" } }).jpeg().toBuffer();

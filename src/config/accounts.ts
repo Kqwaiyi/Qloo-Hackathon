@@ -40,6 +40,13 @@ export const VERIFICATION_LINK_LIFETIME_SECONDS = 24 * 60 * 60;
 export const EMAIL_CHANGE_STEPS = ["approval", "verification"] as const;
 export type EmailChangeStep = (typeof EMAIL_CHANGE_STEPS)[number];
 
+/**
+ * The photo notice's version: what the consent sheet says happens to a user's photos, including the
+ * COPY lines it shows. Raise it whenever that wording changes, so every user sees the sheet again
+ * before their next Consultation.
+ */
+export const PHOTO_NOTICE_VERSION = 1;
+
 /** A password reset link works for this long. */
 export const PASSWORD_RESET_LINK_LIFETIME_SECONDS = 60 * 60;
 

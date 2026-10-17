@@ -7,12 +7,19 @@ import { openPgliteDatabase } from "@/server/db/pglite";
 import { CapturingEmailTransport } from "@/server/email/capturing";
 import { createEmailSender, type EmailSender } from "@/server/email/send-email";
 import { type CookieToSet, forwardSetCookies, type ResponseCookies } from "@/server/http/cookies";
+import type { PhotoConsentTicks } from "@/server/operations/consultations";
 import type { OperationContext } from "@/server/operations/context";
 import { QlooClient } from "@/server/qloo/client";
 import { FakeQlooTransport } from "@/server/qloo/fake";
 import { InlineStylingRunner } from "@/server/stylings/inline-runner";
 
 const BASE_URL = "http://localhost:3000";
+
+/**
+ * The consent sheet with both boxes ticked, as "Get my Outfits" sends it. Starting a Consultation
+ * with it records the user's agreement to the photo notice first.
+ */
+export const BOTH_CONSENT_BOXES_TICKED: PhotoConsentTicks = { storeAndProcess: true, sendToGemini: true };
 
 /** A clock the test moves by hand. */
 export class TestClock implements Clock {

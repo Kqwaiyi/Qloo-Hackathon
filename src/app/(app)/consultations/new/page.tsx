@@ -6,6 +6,7 @@ import { LimitMessage, type LimitRefusal } from "@/components/limit-message";
 import { successNotice, textLink } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import { EMAIL_VERIFIED_PARAM, ROUTES } from "@/config/routes";
+import { needsPhotoConsent } from "@/server/accounts/photo-consent";
 import { requireSignedInUser } from "@/server/data/session";
 import { getUsageSummary } from "@/server/data/usage";
 
@@ -28,7 +29,11 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
       )}
       <h1 className="mb-6 text-2xl font-semibold tracking-tight">New Consultation</h1>
       {stylingStart.ok ? (
-        <NewConsultation outfitsWanted={stylingStart.outfitsWanted} outfitsLeft={usage.outfitsLeft} />
+        <NewConsultation
+          outfitsWanted={stylingStart.outfitsWanted}
+          outfitsLeft={usage.outfitsLeft}
+          photoConsentNeeded={needsPhotoConsent(user)}
+        />
       ) : stylingStart.refusal === "unverified" ? (
         <VerifyFirst email={user.email} />
       ) : (

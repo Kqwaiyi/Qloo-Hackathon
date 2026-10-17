@@ -10,7 +10,7 @@ import { deleteConsultation, listConsultations, readConsultation, startConsultat
 import { readSignedInUser } from "@/server/operations/session";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { qlooPerson, qlooResponse } from "@/server/qloo/fake";
-import { createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
+import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities: enough Style Icons for a Face Photo's two Outfits.
 const STYLE_ICONS = [qlooPerson("p-1", "Ava Stone", 0.94), qlooPerson("p-2", "Bea Marsh", 0.91), qlooPerson("p-3", "Cleo Hart", 0.88)];
@@ -47,6 +47,7 @@ describe("starting a Consultation", () => {
     const result = await startConsultation(harness.context(browser), {
       photo: new Blob([bytes], { type: "image/jpeg" }),
       photoType: "full_body",
+      consent: BOTH_CONSENT_BOXES_TICKED,
     });
 
     expect(result).toEqual({ ok: true, consultationId: expect.any(String) });
@@ -124,8 +125,9 @@ describe("starting a Consultation", () => {
     const png = await photoBytes("png");
     const webp = await photoBytes("webp");
 
-    await startConsultation(harness.context(browser), { photo: new Blob([png]), photoType: "full_body" });
-    await startConsultation(harness.context(browser), { photo: new Blob([webp]), photoType: "full_body" });
+    const consent = BOTH_CONSENT_BOXES_TICKED;
+    await startConsultation(harness.context(browser), { photo: new Blob([png]), photoType: "full_body", consent });
+    await startConsultation(harness.context(browser), { photo: new Blob([webp]), photoType: "full_body", consent });
 
     expect([...harness.blob.objects.values()]).toEqual([
       { bytes: png, contentType: "image/png" },
@@ -165,7 +167,11 @@ describe("starting a Consultation", () => {
   ])("refuses %s before the photo check, storing nothing", async (_name, makePhoto) => {
     const browser = await signedInUser();
 
-    const result = await startConsultation(harness.context(browser), { photo: await makePhoto(), photoType: "full_body" });
+    const result = await startConsultation(harness.context(browser), {
+      photo: await makePhoto(),
+      photoType: "full_body",
+      consent: BOTH_CONSENT_BOXES_TICKED,
+    });
 
     expect(result).toEqual({ ok: false, refusal: "unusable-file" });
     expect(harness.ai.photoCheckCount).toBe(0);
@@ -265,7 +271,11 @@ describe("the photo check", () => {
     harness.ai.scenario = "wrong-photo-type";
     const bytes = await photoBytes("jpeg");
     const sendSamePhotoAs = (photoType: PhotoType) =>
-      startConsultation(harness.context(browser), { photo: new Blob([bytes], { type: "image/jpeg" }), photoType });
+      startConsultation(harness.context(browser), {
+        photo: new Blob([bytes], { type: "image/jpeg" }),
+        photoType,
+        consent: BOTH_CONSENT_BOXES_TICKED,
+      });
 
     const rejected = await sendSamePhotoAs("full_body");
     if (rejected.ok || rejected.refusal !== "photo-rejected" || rejected.rejection.reason !== "wrong-photo-type") {
@@ -535,12 +545,13 @@ async function start(browser: TestBrowser, photoType: PhotoType, budgetTier?: Bu
   return result.consultationId;
 }
 
-/** Presses "Get my Outfits" with a plain JPEG, returning what the operation returns. */
+/** Presses "Get my Outfits" with a plain JPEG, agreeing on the consent sheet, returning what the operation returns. */
 async function getMyOutfits(browser: TestBrowser, photoType: PhotoType, budgetTier?: BudgetTier) {
   return startConsultation(harness.context(browser), {
     photo: new Blob([await photoBytes("jpeg")], { type: "image/jpeg" }),
     photoType,
     budgetTier,
+    consent: BOTH_CONSENT_BOXES_TICKED,
   });
 }
 

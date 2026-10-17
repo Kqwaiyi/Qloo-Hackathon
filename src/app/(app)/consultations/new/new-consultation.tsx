@@ -29,6 +29,7 @@ import { Stepper } from "../stepper";
 import { StylingStep } from "../styling-step";
 import { startConsultationAction } from "./actions";
 import { CameraView, useCamera } from "./camera";
+import { ConsentSheet } from "./consent-sheet";
 import { shrinkPhoto } from "./shrink-photo";
 
 const PHOTO_SOURCES = ["camera", "upload"] as const;
@@ -44,13 +45,26 @@ interface ChosenPhoto {
   source: PhotoSource;
 }
 
-/** `outfitsWanted` is how many of the `outfitsLeft` in the user's Outfit Allowance the Styling will make. */
-export function NewConsultation({ outfitsWanted, outfitsLeft }: { outfitsWanted: number; outfitsLeft: number }) {
+/**
+ * `outfitsWanted` is how many of the `outfitsLeft` in the user's Outfit Allowance the Styling will
+ * make. `photoConsentNeeded` says the consent sheet comes first: the user hasn't agreed to the
+ * current photo notice.
+ */
+export function NewConsultation({
+  outfitsWanted,
+  outfitsLeft,
+  photoConsentNeeded,
+}: {
+  outfitsWanted: number;
+  outfitsLeft: number;
+  photoConsentNeeded: boolean;
+}) {
   const [step, setStep] = useState<"photo-type" | "photo">("photo-type");
   const [photoType, setPhotoType] = useState<PhotoType>(DEFAULT_PHOTO_TYPE);
   // Kept here so going Back and on again keeps the photo and the Budget Tier.
   const [photo, setPhoto] = useState<ChosenPhoto | null>(null);
   const [budgetTier, setBudgetTier] = useState<BudgetTier>(DEFAULT_BUDGET_TIER);
+  const [consentNeeded, setConsentNeeded] = useState(photoConsentNeeded);
 
   useEffect(() => {
     if (!photo) return;
@@ -68,6 +82,8 @@ export function NewConsultation({ outfitsWanted, outfitsLeft }: { outfitsWanted:
       onPhotoChange={setPhoto}
       budgetTier={budgetTier}
       onBudgetTierChange={setBudgetTier}
+      consentNeeded={consentNeeded}
+      onConsentNeededChange={setConsentNeeded}
       onBack={() => setStep("photo-type")}
     />
   );
@@ -169,6 +185,8 @@ function PhotoStep({
   onPhotoChange,
   budgetTier,
   onBudgetTierChange,
+  consentNeeded,
+  onConsentNeededChange,
   onBack,
 }: {
   /** Beside "Get my Outfits": how many Outfits it will use, of how many are left. */
@@ -180,6 +198,9 @@ function PhotoStep({
   /** Sent only with a photo that has one: a Face Photo has none, since a Hairstyle has no price. */
   budgetTier: BudgetTier;
   onBudgetTierChange: (budgetTier: BudgetTier) => void;
+  /** "Get my Outfits" opens the consent sheet first. */
+  consentNeeded: boolean;
+  onConsentNeededChange: (consentNeeded: boolean) => void;
   onBack: () => void;
 }) {
   const router = useRouter();
@@ -189,6 +210,10 @@ function PhotoStep({
   const shown = photo?.source === source ? photo : null;
   const camera = useCamera(source === "camera" && !shown);
   const [problem, setProblem] = useState<Problem | null>(null);
+  // While the consent sheet is open: the Photo Type "Get my Outfits" will send once the user agrees.
+  const [consentSheetFor, setConsentSheetFor] = useState<PhotoType | null>(null);
+  // The sheet was closed without agreeing, so nothing was sent.
+  const [consentDeclined, setConsentDeclined] = useState(false);
   const [opening, setOpening] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [sending, startSending] = useTransition();
@@ -252,10 +277,29 @@ function PhotoStep({
     onPhotoChange(null);
   }
 
-  /** "Get my Outfits": sends the photo as `type`, which is the chosen Photo Type unless switching. */
+  /**
+   * "Get my Outfits": sends the photo as `type`, which is the chosen Photo Type unless switching,
+   * once the user has agreed on the consent sheet if they still need to.
+   */
   function getOutfits(type: PhotoType) {
     if (!shown) return;
     setProblem(null);
+    setConsentDeclined(false);
+    if (consentNeeded) setConsentSheetFor(type);
+    else send(type, false);
+  }
+
+  /** The consent sheet has closed: the photo goes with both ticks if the user agreed, and otherwise nothing is sent. */
+  function closeConsentSheet(agreed: boolean) {
+    const type = consentSheetFor;
+    setConsentSheetFor(null);
+    if (agreed && type) send(type, true);
+    else setConsentDeclined(true);
+  }
+
+  /** Sends the photo as `type`, with both of the consent sheet's ticks if `consented`. */
+  function send(type: PhotoType, consented: boolean) {
+    if (!shown) return;
     setAccepted(false);
     setStepStartedAt(Date.now());
     startSending(async () => {
@@ -263,6 +307,10 @@ function PhotoStep({
       form.set("photoType", type);
       if (hasBudgetTier(type)) form.set("budgetTier", budgetTier);
       form.set("photo", new File([shown.blob], "photo.jpg", { type: "image/jpeg" }));
+      if (consented) {
+        form.set("consentStoreAndProcess", "on");
+        form.set("consentSendToGemini", "on");
+      }
       let result;
       try {
         result = await startConsultationAction(form);
@@ -271,12 +319,20 @@ function PhotoStep({
         setProblem({ message: COPY.photoCheckFailed });
         return;
       }
+      // The server now has the ticks on record, so the one-tap Photo Type switch after a rejection
+      // needs no second sheet. The refusals that come before the consent check (signed out,
+      // unverified, the region gate) leave this step anyway, and a withdrawal meanwhile asks again below.
+      if (consented) onConsentNeededChange(false);
       if (result.ok) {
         setAccepted(true);
         setStepStartedAt(Date.now());
         startSending(() => router.push(consultationRoute(result.consultationId)));
       } else if (result.refusal === "signed-out") startSending(() => router.push(ROUTES.signIn));
-      else if (result.refusal === "photo-check-limit") setProblem({ message: <LimitMessage refusal={result} /> });
+      else if (result.refusal === "photo-consent-needed") {
+        // Consent was withdrawn, or the photo notice changed, since the page loaded.
+        onConsentNeededChange(true);
+        setConsentSheetFor(type);
+      } else if (result.refusal === "photo-check-limit") setProblem({ message: <LimitMessage refusal={result} /> });
       else if (result.refusal === "photo-rejected") setProblem(rejectionProblem(result.rejection));
       else if (result.refusal === "check-errored") setProblem({ message: COPY.photoCheckFailed });
       else if (result.refusal === "unusable-file") setProblem({ message: COPY.photoUnusable });
@@ -409,7 +465,7 @@ function PhotoStep({
               type="button"
               onClick={() => getOutfits(photoType)}
               disabled={!shown || busy}
-              aria-describedby="allowance-line"
+              aria-describedby="allowance-line consent-declined-line"
               className={primaryButton}
             >
               Get my Outfits
@@ -417,9 +473,15 @@ function PhotoStep({
             <p id="allowance-line" className="text-sm text-stone-600">
               {allowanceLine}
             </p>
+            {consentDeclined && (
+              <p id="consent-declined-line" role="status" className="text-sm text-stone-600">
+                {COPY.agreeToBothBoxes}
+              </p>
+            )}
           </div>
         </div>
       </section>
+      <ConsentSheet open={consentSheetFor !== null} onClose={closeConsentSheet} />
     </>
   );
 }

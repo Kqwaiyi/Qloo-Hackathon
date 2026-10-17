@@ -37,7 +37,8 @@ export type StylingStart = Result<{ outfitsWanted: number }, StylingStartRefusal
  * usage summary runs it too, so the UI says what the operations will do.
  *
  * The region gate comes first, since every Styling calls Gemini, and it holds wherever the request
- * comes from rather than until a time. When several limits are in force, the refusal is the one
+ * comes from rather than until a time. Start a Consultation also runs it itself, just before this,
+ * since photo consent comes between the region gate and the limits. When several limits are in force, the refusal is the one
  * that lifts last, so a user is never told to come back while another still holds. The 24-hour
  * cap's wording gives no time, but it lifts as the Outfit Allowance does, once the Outfit holding it
  * has counted for 24 hours. On a tie, the app-wide limits come first: they're not the user's doing.

@@ -10,7 +10,7 @@ import { requestPasswordReset, resetPassword } from "@/server/operations/passwor
 import { readSignedInUser } from "@/server/operations/session";
 import { signIn } from "@/server/operations/sign-in";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
-import { createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
+import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
 let harness: TestHarness;
 
@@ -315,6 +315,7 @@ async function startWithPlainPhoto(browser: TestBrowser): Promise<string> {
   const result = await startConsultation(harness.context(browser), {
     photo: new Blob([new Uint8Array(jpeg)], { type: "image/jpeg" }),
     photoType: "full_body",
+    consent: BOTH_CONSENT_BOXES_TICKED,
   });
   if (!result.ok) throw new Error(`Couldn't start a Consultation: ${result.refusal}`);
   return result.consultationId;

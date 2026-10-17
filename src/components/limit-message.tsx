@@ -11,7 +11,7 @@ import type { StartConsultationRefusal } from "@/server/operations/consultations
  */
 export type LimitRefusal = Exclude<
   StartConsultationRefusal,
-  { refusal: "signed-out" | "unverified" | "unusable-file" | "check-errored" | "photo-rejected" }
+  { refusal: "signed-out" | "unverified" | "photo-consent-needed" | "unusable-file" | "check-errored" | "photo-rejected" }
 >;
 
 /**

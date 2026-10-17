@@ -11,7 +11,7 @@ import { readSignedInUser } from "@/server/operations/session";
 import { readStylingStatus, type StylingProgressView } from "@/server/operations/stylings";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
-import { createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
+import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities.
 const WOMEN = [qlooPerson("w-1", "Ava Stone", 0.94), qlooPerson("w-2", "Bea Marsh", 0.91), qlooPerson("w-3", "Cleo Hart", 0.88)];
@@ -1078,7 +1078,11 @@ it("starts no Styling for a rejected photo", async () => {
   const browser = await signedInUser();
   harness.ai.scenario = "no-person";
 
-  const result = await startConsultation(harness.context(browser), { photo: await jpeg(), photoType: "full_body" });
+  const result = await startConsultation(harness.context(browser), {
+    photo: await jpeg(),
+    photoType: "full_body",
+    consent: BOTH_CONSENT_BOXES_TICKED,
+  });
 
   expect(result).toMatchObject({ ok: false, refusal: "photo-rejected" });
   expect(harness.stylings.pending).toEqual([]);
@@ -1157,9 +1161,14 @@ function watchChecklist(browser: TestBrowser, consultationId: string) {
   };
 }
 
-/** Presses "Get my Outfits" with a plain JPEG, returning the new Consultation's id. */
+/** Presses "Get my Outfits" with a plain JPEG, agreeing on the consent sheet, returning the new Consultation's id. */
 async function start(browser: TestBrowser, photoType: PhotoType, budgetTier?: BudgetTier): Promise<string> {
-  const result = await startConsultation(harness.context(browser), { photo: await jpeg(), photoType, budgetTier });
+  const result = await startConsultation(harness.context(browser), {
+    photo: await jpeg(),
+    photoType,
+    budgetTier,
+    consent: BOTH_CONSENT_BOXES_TICKED,
+  });
   if (!result.ok) throw new Error(`Couldn't start a Consultation: ${result.refusal}`);
   return result.consultationId;
 }

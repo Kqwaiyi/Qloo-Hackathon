@@ -1,10 +1,15 @@
+import { eq } from "drizzle-orm";
 import * as z from "zod";
 
 import { isAllowedPassword } from "@/config/accounts";
 import { AUTH_ENDPOINTS } from "@/config/routes";
+import { clearPhotoConsent } from "@/server/accounts/photo-consent";
 import { checkProfile, type ProfileField, type ProfileInput, usernameProblem } from "@/server/accounts/profile";
 import { postToAuthEndpoint } from "@/server/auth/endpoint";
-import type { AuthRequestContext, Result } from "@/server/operations/context";
+import { deleteConsultationOf } from "@/server/consultations/deletion";
+import { consultation } from "@/server/db/schema";
+import type { AuthRequestContext, OperationContext, Result } from "@/server/operations/context";
+import { readSignedInUser } from "@/server/operations/session";
 import { signOut } from "@/server/operations/sign-in";
 
 export type UpdateProfileRefusal = { refusal: "signed-out" | "username-taken" } | { refusal: "invalid"; field: ProfileField };
@@ -52,6 +57,25 @@ export async function changePassword(ctx: AuthRequestContext, input: ChangePassw
   // Better Auth's per-IP rate limit, 3 tries in 10 seconds, which answers without a code.
   if (answer.status === 429) return { ok: false, refusal: "rate-limited" };
   throw new Error(`Better Auth couldn't change the password (${answer.status} ${answer.code ?? "no code"}).`);
+}
+
+export type WithdrawPhotoConsentRefusal = { refusal: "signed-out" };
+
+/**
+ * Settings → Privacy → "Withdraw photo consent": forgets the user's agreement to the photo notice,
+ * then deletes every one of their Consultations for good, as deleting each would, stopping any
+ * Styling first. The account stays. The agreement goes first, so no new Consultation can start
+ * meanwhile, and withdrawing again finishes the job if a Consultation's Blob objects couldn't go.
+ */
+export async function withdrawPhotoConsent(
+  ctx: Pick<OperationContext, "auth" | "db" | "blob" | "clock" | "stylings" | "requestHeaders">,
+): Promise<Result<object, WithdrawPhotoConsentRefusal>> {
+  const user = await readSignedInUser(ctx);
+  if (!user) return { ok: false, refusal: "signed-out" };
+  await clearPhotoConsent(ctx.db, user.id);
+  const consultations = await ctx.db.select({ id: consultation.id }).from(consultation).where(eq(consultation.userId, user.id));
+  for (const { id } of consultations) await deleteConsultationOf(ctx, { userId: user.id, consultationId: id });
+  return { ok: true };
 }
 
 export type SignOutEverywhereRefusal = { refusal: "signed-out" };

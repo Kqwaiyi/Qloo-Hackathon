@@ -15,10 +15,20 @@ export const COPY = {
   photoMoreThanOnePerson: "There's more than one person here. Use a photo of just you.",
   photoTooUnclear: "This photo is too blurry, dark or tightly cropped to work with.",
   photoNotAppropriate: "We can't use this photo.",
+  /** Part of the photo notice too, on the consent sheet: raise PHOTO_NOTICE_VERSION when it changes. */
   contentRules: "Only use photos of yourself that you have the rights to, with no nudity or intimate images.",
   photoHairNotVisible: "We need to see your hair to suggest a Hairstyle.",
   /** The region gate. It mentions neither the Country setting nor VPNs. */
   unsupportedRegion: "Outfit Recommender isn't available where you are right now.",
+  /** The quiet line after the consent sheet is closed without agreeing. */
+  agreeToBothBoxes: "To get Outfits, agree to both boxes on the consent sheet.",
+  /**
+   * On the consent sheet, as part of the photo notice (raise PHOTO_NOTICE_VERSION when it changes),
+   * and on `/privacy` once ticket 32 writes it.
+   */
+  deletionPromise:
+    "Your photos and Previews are deleted immediately. Leftover records in our providers' systems are gone within a day, and Google's abuse-monitoring copy within 55 days.",
+  withdrawPhotoConsent: "Withdraw photo consent",
   /** The allowance line beside every action that uses Outfits. */
   outfitsItUses: (outfits: number, left: number) => `Uses ${outfits} of your ${left} Outfits left today`,
   allowanceUsedUp: (allowance: number, time: string) => `You've made today's ${allowance} Outfits. More from ${time}.`,

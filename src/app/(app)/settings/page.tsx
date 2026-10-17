@@ -15,10 +15,11 @@ import { signOutEverywhereAction } from "./actions";
 import { EmailForm } from "./email-form";
 import { PasswordForm } from "./password-form";
 import { ProfileForm } from "./profile-form";
+import { WithdrawPhotoConsent } from "./withdraw-photo-consent";
 
 export const metadata: Metadata = { title: "Settings" };
 
-/** Profile, Sign-in and Privacy. Photo consent and account deletion come with later tickets. */
+/** Profile, Sign-in and Privacy. Account deletion comes with a later ticket. */
 export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await requireSignedInUser();
   const [teamEmail, pendingEmailChange, params] = await Promise.all([getTeamEmail(), getPendingEmailChange(), searchParams]);
@@ -70,7 +71,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
       </Section>
 
       <Section title="Privacy">
-        <ul className="space-y-2">
+        <WithdrawPhotoConsent />
+        <ul className="mt-6 space-y-2 border-t border-stone-200 pt-4">
           <li>
             <Link href={ROUTES.privacy} className={textLink}>
               Privacy Policy
