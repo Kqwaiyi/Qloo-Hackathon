@@ -5,18 +5,11 @@ import { type FormEvent, useEffect, useState, useTransition } from "react";
 
 import { INVALID_EMAIL, INVALID_PASSWORD, PASSWORD_HINT } from "@/components/messages";
 import { PasswordInput } from "@/components/password-input";
-import { fieldError, input, label, primaryButton, secondaryButton, textLink } from "@/components/ui";
-import {
-  isWellFormedUsername,
-  PASSWORD_MAX_LENGTH,
-  PASSWORD_MIN_LENGTH,
-  STYLE_PREFERENCE_LABELS,
-  STYLE_PREFERENCES,
-  USERNAME_MAX_LENGTH,
-  USERNAME_MIN_LENGTH,
-  USERNAME_PATTERN,
-} from "@/config/accounts";
+import { CountryField, StylePreferenceField, UsernameField } from "@/components/profile-fields";
+import { fieldError, fieldHint, input, label, primaryButton, secondaryButton, textLink } from "@/components/ui";
+import { isWellFormedUsername, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "@/config/accounts";
 import { COPY } from "@/config/copy";
+import type { CountryOption } from "@/config/countries";
 import { ROUTES } from "@/config/routes";
 import type { BirthDateFields } from "@/server/accounts/birth-date";
 import type { SignUpField, SignUpRefusal } from "@/server/operations/sign-up";
@@ -24,14 +17,9 @@ import type { SignUpField, SignUpRefusal } from "@/server/operations/sign-up";
 import { checkDateOfBirthAction, signUpAction } from "./actions";
 import { AgeGateMessage } from "./age-gate-message";
 
-interface CountryOption {
-  code: string;
-  name: string;
-}
-
 type Step = { name: "date-of-birth" } | { name: "account"; birthDate: BirthDateFields } | { name: "under-18" };
 
-export function SignUpFlow({ countries }: { countries: CountryOption[] }) {
+export function SignUpFlow({ countries }: { countries: readonly CountryOption[] }) {
   const [step, setStep] = useState<Step>({ name: "date-of-birth" });
 
   if (step.name === "under-18") return <AgeGateMessage />;
@@ -156,13 +144,11 @@ function DateOfBirthStep({ onAdult, onUnder18 }: { onAdult: (birthDate: BirthDat
   );
 }
 
-const FIELD_MESSAGES: Record<SignUpField, string> = {
+/** What the form says beside a field the server found wrong. The shared profile fields say their own. */
+const FIELD_MESSAGES: Record<Exclude<SignUpField, "username" | "stylePreference" | "countryCode">, string> = {
   birthDate: "Go back and enter a real date of birth.",
-  username: `Use ${USERNAME_MIN_LENGTH}–${USERNAME_MAX_LENGTH} letters, numbers, dots or underscores.`,
   email: INVALID_EMAIL,
   password: INVALID_PASSWORD,
-  stylePreference: "Choose a Style Preference.",
-  countryCode: "Choose your Country.",
 };
 
 /** A step 2 refusal the form shows beside its fields. */
@@ -175,7 +161,7 @@ function AccountStep({
   onUnder18,
 }: {
   birthDate: BirthDateFields;
-  countries: CountryOption[];
+  countries: readonly CountryOption[];
   onBack: () => void;
   onUnder18: () => void;
 }) {
@@ -205,31 +191,15 @@ function AccountStep({
 
   return (
     <form onSubmit={submit} className="mt-6 space-y-5">
-      <div>
-        <label htmlFor="username" className={label}>
-          Username
-        </label>
-        <input
-          id="username"
-          required
-          autoComplete="username"
-          minLength={USERNAME_MIN_LENGTH}
-          maxLength={USERNAME_MAX_LENGTH}
-          pattern={USERNAME_PATTERN.source.slice(1, -1)}
-          title={FIELD_MESSAGES.username}
-          value={username}
-          onChange={(event) => {
-            setUsername(event.target.value);
-            if (problem?.refusal === "username-taken") setProblem(null);
-          }}
-          aria-invalid={usernameTaken || invalidField === "username"}
-          aria-describedby="username-hint"
-          className={input}
-        />
-        <p id="username-hint" className={usernameTaken || invalidField === "username" ? fieldError : "mt-1 text-sm text-stone-500"}>
-          {usernameTaken ? COPY.usernameTaken : FIELD_MESSAGES.username}
-        </p>
-      </div>
+      <UsernameField
+        value={username}
+        onChange={(value) => {
+          setUsername(value);
+          if (problem?.refusal === "username-taken") setProblem(null);
+        }}
+        taken={usernameTaken}
+        invalid={invalidField === "username"}
+      />
 
       <div>
         <label htmlFor="email" className={label}>
@@ -279,56 +249,14 @@ function AccountStep({
           aria-invalid={invalidField === "password"}
           aria-describedby="password-hint"
         />
-        <p id="password-hint" className={invalidField === "password" ? fieldError : "mt-1 text-sm text-stone-500"}>
+        <p id="password-hint" className={invalidField === "password" ? fieldError : fieldHint}>
           {PASSWORD_HINT}
         </p>
       </div>
 
-      <fieldset>
-        <legend className={label}>Style Preference</legend>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          {STYLE_PREFERENCES.map((preference) => (
-            <label
-              key={preference}
-              className="flex cursor-pointer items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 has-[:checked]:border-stone-900 has-[:checked]:ring-1 has-[:checked]:ring-stone-900"
-            >
-              <input
-                type="radio"
-                name="stylePreference"
-                value={preference}
-                required
-                checked={stylePreference === preference}
-                onChange={() => setStylePreference(preference)}
-                className="accent-stone-900"
-              />
-              {STYLE_PREFERENCE_LABELS[preference]}
-            </label>
-          ))}
-        </div>
-        {invalidField === "stylePreference" && <p className={fieldError}>{FIELD_MESSAGES.stylePreference}</p>}
-      </fieldset>
+      <StylePreferenceField value={stylePreference} onChange={setStylePreference} invalid={invalidField === "stylePreference"} />
 
-      <div>
-        <label htmlFor="country" className={label}>
-          Country
-        </label>
-        <select
-          id="country"
-          required
-          value={countryCode}
-          onChange={(event) => setCountryCode(event.target.value)}
-          aria-invalid={invalidField === "countryCode"}
-          className={input}
-        >
-          <option value="" disabled />
-          {countries.map((country) => (
-            <option key={country.code} value={country.code}>
-              {country.name}
-            </option>
-          ))}
-        </select>
-        {invalidField === "countryCode" && <p className={fieldError}>{FIELD_MESSAGES.countryCode}</p>}
-      </div>
+      <CountryField countries={countries} value={countryCode} onChange={setCountryCode} invalid={invalidField === "countryCode"} />
 
       <label className="flex items-start gap-2 text-sm">
         <input
@@ -378,7 +306,7 @@ function AccountStep({
 }
 
 /** The Country from the browser's language settings (en-GB → United Kingdom), if it's on the list. */
-function countryFromBrowser(countries: CountryOption[]): string {
+function countryFromBrowser(countries: readonly CountryOption[]): string {
   const codes = new Set(countries.map((country) => country.code));
   for (const tag of navigator.languages?.length ? navigator.languages : [navigator.language]) {
     try {

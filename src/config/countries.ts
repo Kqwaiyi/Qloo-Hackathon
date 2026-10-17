@@ -259,3 +259,14 @@ const COUNTRIES_BY_CODE = new Map(COUNTRIES.map((entry) => [entry.code, entry]))
 export function findCountry(code: string): Country | undefined {
   return COUNTRIES_BY_CODE.get(code.toUpperCase());
 }
+
+/** A Country as a form's dropdown offers it. */
+export interface CountryOption {
+  code: string;
+  name: string;
+}
+
+/** Every Country, in alphabetical order, for the sign-up and Settings forms. */
+export const COUNTRY_OPTIONS: readonly CountryOption[] = COUNTRIES.map(({ code, name }) => ({ code, name })).sort((a, b) =>
+  a.name.localeCompare(b.name, "en"),
+);

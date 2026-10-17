@@ -27,6 +27,22 @@ export function verificationEmail({ link, deletionDate }: { link: string; deleti
   };
 }
 
+/**
+ * The notice after a password change, so the user hears about a change they didn't make. A reset
+ * sends none: the reset email already went to the same address.
+ */
+export function passwordChangedEmail({ forgotPasswordLink, teamEmail }: { forgotPasswordLink: string; teamEmail: string }): EmailContent {
+  return {
+    subject: "Your Outfit Recommender password was changed",
+    text: [
+      "The password for your Outfit Recommender account was just changed, and your other devices were signed out.",
+      "If you didn't change it, reset your password now:",
+      forgotPasswordLink,
+      `Then email us at ${teamEmail} so we can help secure your account.`,
+    ].join("\n\n"),
+  };
+}
+
 /** The password reset link, for whoever asked for one with this account's address. */
 export function passwordResetEmail({ link }: { link: string }): EmailContent {
   const hours = PASSWORD_RESET_LINK_LIFETIME_SECONDS / 3600;

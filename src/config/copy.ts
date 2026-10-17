@@ -34,5 +34,11 @@ export const COPY = {
   signInForNewLink: "Sign in to get a new one",
   resetLinkSent: "If an account uses that email, we've sent a link.",
   emailChangeSent: "If that address isn't already in use, we've sent a link to it.",
+  /** Settings' read-only date of birth: "Born March 1999 · Wrong? Email us", where "Email us" links to the team. */
+  bornIn: (monthAndYear: string) => `Born ${monthAndYear}`,
+  birthDateWrong: "Wrong?",
+  emailUs: "Email us",
+  signOutEverywhere: "Sign out of all devices",
+  emailUsForData: "Email us for a copy of your data",
   didNotSignUp: (date: string) => `Didn't sign up? Ignore this email. The account is removed on ${date}.`,
 } as const;

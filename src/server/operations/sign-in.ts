@@ -1,7 +1,7 @@
 import { isAPIError } from "better-auth/api";
 
 import { forwardSetCookies } from "@/server/http/cookies";
-import type { OperationContext, Result } from "@/server/operations/context";
+import type { AuthRequestContext, OperationContext, Result } from "@/server/operations/context";
 
 export interface SignInInput {
   /** A username or an email, in one field. */
@@ -35,7 +35,7 @@ export async function signIn(ctx: OperationContext, input: SignInInput): Promise
 }
 
 /** Ends this device's session. */
-export async function signOut(ctx: OperationContext): Promise<void> {
+export async function signOut(ctx: AuthRequestContext): Promise<void> {
   const { headers } = await ctx.auth.api.signOut({ headers: ctx.requestHeaders, returnHeaders: true });
   forwardSetCookies(headers, ctx.responseCookies);
 }

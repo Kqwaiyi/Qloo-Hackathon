@@ -3,6 +3,10 @@
 export const STYLE_PREFERENCES = ["menswear", "womenswear", "no_preference"] as const;
 export type StylePreference = (typeof STYLE_PREFERENCES)[number];
 
+export function isStylePreference(value: string): value is StylePreference {
+  return (STYLE_PREFERENCES as readonly string[]).includes(value);
+}
+
 export const STYLE_PREFERENCE_LABELS: Record<StylePreference, string> = {
   menswear: "Menswear",
   womenswear: "Womenswear",

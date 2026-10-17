@@ -5,7 +5,7 @@ import { COPY } from "@/config/copy";
 import type { EmailKind } from "@/config/email";
 import { AUTH_API_PATH, AUTH_ENDPOINTS, ROUTES } from "@/config/routes";
 import { unverifiedAccountDeletionDate } from "@/server/accounts/verification";
-import { passwordResetEmail, verificationEmail } from "@/server/email/messages";
+import { passwordChangedEmail, passwordResetEmail, verificationEmail } from "@/server/email/messages";
 import type { EmailRefusal, EmailSender } from "@/server/email/send-email";
 
 /** The codes of the refusals our hooks and emails add to Better Auth's. Our operations match them. */
@@ -54,6 +54,22 @@ export function passwordResetEmailSender(emailSender: EmailSender, baseURL: stri
     const link = `${baseURL}${AUTH_API_PATH}${AUTH_ENDPOINTS.resetPassword}/${encodeURIComponent(token)}?callbackURL=${encodeURIComponent(ROUTES.resetPassword)}`;
     const result = await emailSender.send({ kind: "password-reset", userId: user.id, to: user.email, ...passwordResetEmail({ link }) });
     if (!result.sent) throw emailRefusalError(result.refusal);
+  };
+}
+
+/**
+ * Sends the password-changed notice through our send function. The password has changed by then,
+ * so an email a cap stops or the transport fails is only logged: the change still stands.
+ */
+export function passwordChangedEmailSender(emailSender: EmailSender, baseURL: string, teamEmail: string) {
+  return async (user: Pick<AuthUser, "id" | "email">): Promise<void> => {
+    const content = passwordChangedEmail({ forgotPasswordLink: `${baseURL}${ROUTES.forgotPassword}`, teamEmail });
+    try {
+      const result = await emailSender.send({ kind: "password-changed", userId: user.id, to: user.email, ...content });
+      if (!result.sent) console.error("The password-changed email was refused:", result.refusal);
+    } catch (error) {
+      console.error("The password-changed email failed:", error instanceof Error ? error.message : "unknown error");
+    }
   };
 }
 

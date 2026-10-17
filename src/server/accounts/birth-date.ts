@@ -56,6 +56,11 @@ function compareDates(a: CalendarDate, b: CalendarDate): number {
   return a.year - b.year || a.month - b.month || a.day - b.day;
 }
 
+/** The stored birth year and month as Settings shows them, such as "March 1999". */
+export function birthMonthAndYearText(year: number, month: number): string {
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
 /** "YYYY-MM-DD", the form a date of birth travels in to Better Auth's sign-up endpoint. */
 export function formatBirthDate({ year, month, day }: CalendarDate): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;

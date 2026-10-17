@@ -35,6 +35,10 @@ export const AUTH_ENDPOINTS = {
   requestPasswordReset: "/request-password-reset",
   /** Takes the new password. A link opens it as `/reset-password/<token>`, which checks the token first. */
   resetPassword: "/reset-password",
+  updateUser: "/update-user",
+  changePassword: "/change-password",
+  /** Ends every session of the signed-in user, this one included. */
+  revokeSessions: "/revoke-sessions",
 } as const;
 
 /** Where a signed-in user lands. */
@@ -47,3 +51,7 @@ export const EMAIL_VERIFIED_ROUTE = `${ROUTES.newConsultation}?${EMAIL_VERIFIED_
 /** Where a completed password reset lands: sign-in, since the reset signed the user out everywhere. */
 export const PASSWORD_RESET_PARAM = "password-reset";
 export const PASSWORD_RESET_ROUTE = `${ROUTES.signIn}?${PASSWORD_RESET_PARAM}=1`;
+
+/** Where "Sign out of all devices" lands: sign-in, saying every device is signed out. */
+export const SIGNED_OUT_EVERYWHERE_PARAM = "signed-out-everywhere";
+export const SIGNED_OUT_EVERYWHERE_ROUTE = `${ROUTES.signIn}?${SIGNED_OUT_EVERYWHERE_PARAM}=1`;

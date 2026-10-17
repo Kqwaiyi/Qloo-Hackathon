@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { textLink } from "@/components/ui";
-import { COUNTRIES } from "@/config/countries";
+import { COUNTRY_OPTIONS } from "@/config/countries";
 import { APP_HOME, ROUTES } from "@/config/routes";
 import { getSignedInUser } from "@/server/data/session";
 import { isSignUpBlockedByAgeGate } from "@/server/data/sign-up";
@@ -12,8 +12,6 @@ import { AgeGateMessage } from "./age-gate-message";
 import { SignUpFlow } from "./sign-up-flow";
 
 export const metadata: Metadata = { title: "Create an account" };
-
-const countryOptions = COUNTRIES.map(({ code, name }) => ({ code, name })).sort((a, b) => a.name.localeCompare(b.name, "en"));
 
 export default async function SignUpPage() {
   if (await getSignedInUser()) redirect(APP_HOME);
@@ -24,7 +22,7 @@ export default async function SignUpPage() {
         <AgeGateMessage />
       ) : (
         <>
-          <SignUpFlow countries={countryOptions} />
+          <SignUpFlow countries={COUNTRY_OPTIONS} />
           <p className="mt-6 text-sm text-stone-600">
             Already have an account?{" "}
             <Link href={ROUTES.signIn} className={textLink}>

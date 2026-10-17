@@ -4,7 +4,7 @@ import { useActionState } from "react";
 
 import { INVALID_PASSWORD, PASSWORD_HINT } from "@/components/messages";
 import { PasswordInput } from "@/components/password-input";
-import { fieldError, label, primaryButton } from "@/components/ui";
+import { fieldError, fieldHint, label, primaryButton } from "@/components/ui";
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "@/config/accounts";
 
 import { resetPasswordAction, type ResetPasswordState } from "./actions";
@@ -37,7 +37,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
             aria-invalid={invalid}
             aria-describedby="new-password-hint"
           />
-          <p id="new-password-hint" className={invalid ? fieldError : "mt-1 text-sm text-stone-500"}>
+          <p id="new-password-hint" className={invalid ? fieldError : fieldHint}>
             {invalid ? INVALID_PASSWORD : PASSWORD_HINT}
           </p>
         </div>

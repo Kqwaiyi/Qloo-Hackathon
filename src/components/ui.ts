@@ -16,6 +16,9 @@ export const label = "mb-1 block text-sm font-medium";
 
 export const fieldError = "mt-1 text-sm text-red-700";
 
+/** The quiet line under a field saying what it takes. */
+export const fieldHint = "mt-1 text-sm text-stone-500";
+
 /** A line confirming something just worked, at the top of the page it landed on. */
 export const successNotice = "mb-6 rounded-lg bg-emerald-50 px-4 py-3 font-medium text-emerald-800";
 

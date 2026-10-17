@@ -1,6 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from "better-auth/api";
 import { username } from "better-auth/plugins";
 import * as z from "zod";
 
@@ -30,6 +30,7 @@ import { serializeCookie } from "@/server/http/cookies";
 import {
   AUTH_ERROR_CODES,
   emailRefusalError,
+  passwordChangedEmailSender,
   passwordResetEmailSender,
   trackApiEndpoints,
   verificationEmailSender,
@@ -47,11 +48,13 @@ export interface AuthOptions {
   secret: string;
   /** The send-email function, which every email Better Auth sends goes through. */
   emailSender: EmailSender;
+  /** The team's address, which the password-changed email says to write to. */
+  teamEmail: string;
   /** Whether Better Auth's rate limits apply. Unset, they do in production only, as Better Auth's default. */
   rateLimit?: boolean;
 }
 
-export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSender, rateLimit }: AuthOptions) {
+export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSender, teamEmail, rateLimit }: AuthOptions) {
   /**
    * Rechecks 18+ on every email sign-up, ours or a direct call, before anything is read or written,
    * then the app-wide sign-up email cap.
@@ -91,6 +94,24 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
   async function beforeRequestPasswordReset(): Promise<void> {
     const refusal = await emailSender.refusalFor("password-reset", null);
     if (refusal) throw emailRefusalError(refusal);
+  }
+
+  /** Every password change signs out the user's other devices, whatever the request asked for. */
+  function beforeChangePassword(ctx: HookContext) {
+    return { context: { body: { ...ctx.body, revokeOtherSessions: true } } };
+  }
+
+  const sendPasswordChangedEmail = passwordChangedEmailSender(emailSender, baseURL, teamEmail);
+
+  /**
+   * The notice email after every password change: from our Settings form, and from a direct call
+   * too, so someone holding a stolen sign-in can't change the password unnoticed. A reset sends none.
+   */
+  async function afterChangePassword(ctx: HookContext): Promise<void> {
+    const returned: unknown = ctx.context.returned;
+    if (isAPIError(returned)) return;
+    const changed = returned as { user?: Parameters<typeof sendPasswordChangedEmail>[0] } | undefined;
+    if (changed?.user) await sendPasswordChangedEmail(changed.user);
   }
 
   const auth = betterAuth({
@@ -156,6 +177,10 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
         if (ctx.path === AUTH_ENDPOINTS.signUp) await beforeSignUp(ctx);
         if (ctx.path === AUTH_ENDPOINTS.changeEmail) await beforeChangeEmail(ctx);
         if (ctx.path === AUTH_ENDPOINTS.requestPasswordReset) await beforeRequestPasswordReset();
+        if (ctx.path === AUTH_ENDPOINTS.changePassword) return beforeChangePassword(ctx);
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        if (ctx.path === AUTH_ENDPOINTS.changePassword) await afterChangePassword(ctx);
       }),
     },
     databaseHooks: {

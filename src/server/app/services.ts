@@ -11,7 +11,7 @@ import { VercelBlobStore } from "@/server/blob/vercel";
 import { type Clock, systemClock } from "@/server/clock";
 import { connectDatabase } from "@/server/db/connect";
 import type { Database } from "@/server/db/database";
-import { gmailTransportFromEnvironment } from "@/server/email/gmail";
+import { gmailTransportFromEnvironment, teamGmailAddress } from "@/server/email/gmail";
 import { InboxTransport, LOCAL_INBOX_FOLDER } from "@/server/email/inbox";
 import { createEmailSender, type EmailSender, type EmailTransport } from "@/server/email/send-email";
 import { type QlooClient, qlooClientFromEnvironment } from "@/server/qloo/client";
@@ -29,7 +29,12 @@ export interface Services {
   stylings: StylingRunner;
   /** The send-email function every email goes through. */
   emailSender: EmailSender;
+  /** Where users write to the team: for a copy of their data, a correction, or a change they didn't make. */
+  teamEmail: string;
 }
+
+/** The team's address where GMAIL_USER isn't set (previews, and local development without .env.local). It goes nowhere. */
+const UNSET_TEAM_EMAIL = "team@outfit-recommender.invalid";
 
 // One set per server process. Kept on globalThis so Next.js's module reloading in development
 // doesn't open the database twice.
@@ -47,11 +52,12 @@ async function createServices(): Promise<Services> {
   const db = await connectDatabase();
   const clock = systemClock;
   const emailSender = createEmailSender({ db, clock, transport: emailTransport() });
-  const auth = createAuth({ db, clock, ...authUrls(), secret: authSecret(), emailSender });
+  const teamEmail = teamGmailAddress() ?? UNSET_TEAM_EMAIL;
+  const auth = createAuth({ db, clock, ...authUrls(), secret: authSecret(), emailSender, teamEmail });
   // The fake adapter until the Gemini adapter (ticket 34) can be switched on.
   const ai = fakeAiFromEnvironment();
   const qloo = qlooClientFromEnvironment({ db, clock });
-  return { db, auth, clock, ai, blob: blobStore(), qloo, stylings: workflowStylingRunner, emailSender };
+  return { db, auth, clock, ai, blob: blobStore(), qloo, stylings: workflowStylingRunner, emailSender, teamEmail };
 }
 
 /**

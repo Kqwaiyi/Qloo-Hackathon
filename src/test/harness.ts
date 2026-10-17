@@ -122,7 +122,15 @@ export async function createTestHarness({ rateLimit = false }: { rateLimit?: boo
   const stylings = new InlineStylingRunner({ db, clock, qloo: qlooClient, ai, blob });
   const emails = new CapturingEmailTransport();
   const emailSender = createEmailSender({ db, clock, transport: emails });
-  const auth = createAuth({ db, clock, baseURL: BASE_URL, secret: "test-secret-that-is-at-least-32-characters-long", emailSender, rateLimit });
+  const auth = createAuth({
+    db,
+    clock,
+    baseURL: BASE_URL,
+    secret: "test-secret-that-is-at-least-32-characters-long",
+    emailSender,
+    teamEmail: "team@example.test",
+    rateLimit,
+  });
 
   return {
     db,
