@@ -281,8 +281,9 @@ function PhotoStep({
       else if (result.refusal === "check-errored") setProblem({ message: COPY.photoCheckFailed });
       else if (result.refusal === "unusable-file") setProblem({ message: COPY.photoUnusable });
       else {
-        // The user is unverified, or a limit has stopped every Styling since the page loaded. The
-        // page then shows why in place of this step. A new refusal of another sort fails typecheck here.
+        // The user is unverified, or a limit or the region gate has stopped every Styling since the
+        // page loaded. The page then shows why in place of this step. A new refusal of another sort
+        // fails typecheck here.
         result.refusal satisfies LimitRefusal["refusal"] | "unverified";
         router.refresh();
       }

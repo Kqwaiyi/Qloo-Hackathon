@@ -27,6 +27,7 @@ import type { Database } from "@/server/db/database";
 import * as schema from "@/server/db/schema";
 import type { EmailSender } from "@/server/email/send-email";
 import { serializeCookie } from "@/server/http/cookies";
+import { isFromSupportedRegion } from "@/server/region-gate";
 
 import {
   emailChangeApprovalSender,
@@ -59,7 +60,7 @@ export interface AuthOptions {
 export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSender, teamEmail, rateLimit }: AuthOptions) {
   /**
    * Rechecks 18+ on every email sign-up, ours or a direct call, before anything is read or written,
-   * then the app-wide sign-up email cap.
+   * then the region gate and the app-wide sign-up email cap.
    */
   async function beforeSignUp(ctx: HookContext): Promise<void> {
     // A browser already blocked is refused without restarting its 30 days.
@@ -71,6 +72,8 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
     if (verdict === "under-18") {
       throw under18({ "set-cookie": serializeCookie({ ...AGE_GATE_COOKIE, secure: baseURL.startsWith("https://") }) });
     }
+    // A server call without a request's headers, such as a team script's, has no country to judge.
+    if (ctx.headers && !isFromSupportedRegion(ctx.headers)) throw unsupportedRegion();
     // Near Gmail's daily limit, new sign-ups stop, keeping the rest for existing users.
     if (await emailSender.refusalFor("verification", null)) throw emailRefusalError("sign-ups-paused");
   }
@@ -234,6 +237,10 @@ export type Auth = ReturnType<typeof createAuth>;
 
 function under18(headers: Record<string, string> = {}): APIError {
   return new APIError("BAD_REQUEST", { code: "UNDER_18", message: COPY.under18 }, headers);
+}
+
+function unsupportedRegion(): APIError {
+  return new APIError("FORBIDDEN", { code: "UNSUPPORTED_REGION", message: COPY.unsupportedRegion });
 }
 
 function birthDateRequired(): APIError {

@@ -12,33 +12,34 @@ import { COPY } from "@/config/copy";
 import type { CountryOption } from "@/config/countries";
 import { ROUTES } from "@/config/routes";
 import type { BirthDateFields } from "@/server/accounts/birth-date";
-import type { SignUpField, SignUpRefusal } from "@/server/operations/sign-up";
+import type { SignUpField, SignUpGateRefusal, SignUpRefusal } from "@/server/operations/sign-up";
 
 import { checkDateOfBirthAction, signUpAction } from "./actions";
-import { AgeGateMessage } from "./age-gate-message";
+import { SignUpClosed } from "./sign-up-closed";
 
-type Step = { name: "date-of-birth" } | { name: "account"; birthDate: BirthDateFields } | { name: "under-18" };
+type ClosedReason = SignUpGateRefusal["refusal"];
+
+type Step =
+  | { name: "date-of-birth" }
+  | { name: "account"; birthDate: BirthDateFields }
+  | { name: "closed"; reason: ClosedReason };
 
 export function SignUpFlow({ countries }: { countries: readonly CountryOption[] }) {
   const [step, setStep] = useState<Step>({ name: "date-of-birth" });
+  const close = (reason: ClosedReason) => setStep({ name: "closed", reason });
 
-  if (step.name === "under-18") return <AgeGateMessage />;
+  if (step.name === "closed") return <SignUpClosed reason={step.reason} />;
   if (step.name === "account") {
     return (
       <AccountStep
         birthDate={step.birthDate}
         countries={countries}
         onBack={() => setStep({ name: "date-of-birth" })}
-        onUnder18={() => setStep({ name: "under-18" })}
+        onClosed={close}
       />
     );
   }
-  return (
-    <DateOfBirthStep
-      onAdult={(birthDate) => setStep({ name: "account", birthDate })}
-      onUnder18={() => setStep({ name: "under-18" })}
-    />
-  );
+  return <DateOfBirthStep onAdult={(birthDate) => setStep({ name: "account", birthDate })} onUnder18={() => close("under-18")} />;
 }
 
 const MONTHS = [
@@ -152,18 +153,19 @@ const FIELD_MESSAGES: Record<Exclude<SignUpField, "username" | "stylePreference"
 };
 
 /** A step 2 refusal the form shows beside its fields. */
-type AccountRefusal = Exclude<SignUpRefusal, { refusal: "under-18" }>;
+type AccountRefusal = Exclude<SignUpRefusal, { refusal: ClosedReason }>;
 
 function AccountStep({
   birthDate,
   countries,
   onBack,
-  onUnder18,
+  onClosed,
 }: {
   birthDate: BirthDateFields;
   countries: readonly CountryOption[];
   onBack: () => void;
-  onUnder18: () => void;
+  /** The sign-up hook refused the date of birth or the region, which no field can fix. */
+  onClosed: (reason: ClosedReason) => void;
 }) {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -182,7 +184,7 @@ function AccountStep({
       // On success the action redirects into the app.
       const result = await signUpAction({ birthDate, username, email, password, stylePreference, countryCode, acceptedTerms });
       if (result.ok) return;
-      if (result.refusal === "under-18") onUnder18();
+      if (result.refusal === "under-18" || result.refusal === "unsupported-region") onClosed(result.refusal);
       else setProblem(result);
     });
   }

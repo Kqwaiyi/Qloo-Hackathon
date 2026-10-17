@@ -7,17 +7,22 @@ import type { StartConsultationRefusal } from "@/server/operations/consultations
 
 /**
  * A refusal because a limit has been reached for now: every one that stops a Styling starting, as
- * "Get my Outfits" returns them, and the photo-check limit.
+ * "Get my Outfits" returns them, the region gate included, and the photo-check limit.
  */
 export type LimitRefusal = Exclude<
   StartConsultationRefusal,
   { refusal: "signed-out" | "unverified" | "unusable-file" | "check-errored" | "photo-rejected" }
 >;
 
-/** What the limit says, with the time or date it lifts in the viewer's own time zone. */
-export function LimitMessage({ refusal }: { refusal: LimitRefusal }) {
+/**
+ * What the limit says, with the time or date it lifts in the viewer's own time zone. The return type
+ * makes the switch fail typecheck until every refusal has its wording.
+ */
+export function LimitMessage({ refusal }: { refusal: LimitRefusal }): string {
   const local = useLocalFormatters();
   switch (refusal.refusal) {
+    case "unsupported-region":
+      return COPY.unsupportedRegion;
     case "allowance-used":
       return COPY.allowanceUsedUp(OUTFIT_ALLOWANCE, local.time(refusal.moreFrom));
     case "photo-check-limit":

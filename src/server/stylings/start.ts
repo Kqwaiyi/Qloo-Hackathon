@@ -10,15 +10,15 @@ import { consultation, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import type { SignedInUser } from "@/server/operations/session";
 import { type QlooLimitState, readQlooLimitState } from "@/server/qloo/limit-state";
+import { isFromSupportedRegion } from "@/server/region-gate";
 import { readAppWideOutfitsLeft, readUsageLeft } from "@/server/usage/records";
 
 import { finishStyling } from "./steps";
 
-/**
- * Why a Styling can't start, one refusal per rule. The region gate (ticket 24) and the Styling
- * locks (ticket 30) each add theirs here.
- */
+/** Why a Styling can't start, one refusal per rule. The Styling locks (ticket 30) add theirs here. */
 export type StylingStartRefusal =
+  /** The request comes from a country Gemini doesn't serve, by its IP address. */
+  | { refusal: "unsupported-region" }
   /** The user has made every Outfit their Outfit Allowance allows in the rolling window, until `moreFrom`. */
   | { refusal: "allowance-used"; moreFrom: Date }
   /** Every user together has made as many Outfits in the rolling window as the app-wide 24-hour cap allows. */
@@ -36,12 +36,17 @@ export type StylingStart = Result<{ outfitsWanted: number }, StylingStartRefusal
  * rule that can stop a Styling, or limit how many Outfits it makes, lives in this one place. The
  * usage summary runs it too, so the UI says what the operations will do.
  *
- * When several limits are in force, the refusal is the one that lifts last, so a user is never told
- * to come back while another still holds. The 24-hour cap's wording gives no time, but it lifts as
- * the Outfit Allowance does, once the Outfit holding it has counted for 24 hours. On a tie, the
- * app-wide limits come first: they're not the user's doing.
+ * The region gate comes first, since every Styling calls Gemini, and it holds wherever the request
+ * comes from rather than until a time. When several limits are in force, the refusal is the one
+ * that lifts last, so a user is never told to come back while another still holds. The 24-hour
+ * cap's wording gives no time, but it lifts as the Outfit Allowance does, once the Outfit holding it
+ * has counted for 24 hours. On a tie, the app-wide limits come first: they're not the user's doing.
  */
-export async function checkStylingStart(ctx: Pick<OperationContext, "db" | "clock">, user: SignedInUser): Promise<StylingStart> {
+export async function checkStylingStart(
+  ctx: Pick<OperationContext, "db" | "clock" | "requestHeaders">,
+  user: SignedInUser,
+): Promise<StylingStart> {
+  if (!isFromSupportedRegion(ctx.requestHeaders)) return { ok: false, refusal: "unsupported-region" };
   const now = ctx.clock.now();
   const [outfits, appWide, qloo] = await Promise.all([
     readUsageLeft(ctx.db, { kind: "outfit", userId: user.id, at: now }),

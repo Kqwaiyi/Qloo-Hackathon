@@ -34,10 +34,16 @@ export class TestClock implements Clock {
 export class TestBrowser {
   private readonly jar = new Map<string, { cookie: CookieToSet; expiresAt: number }>();
   private readonly ip?: string;
+  /**
+   * The country of the browser's IP address, as Vercel's `x-vercel-ip-country` header gives it, or
+   * undefined for no header, as in local development. A test may move the browser.
+   */
+  ipCountry?: string;
 
-  /** `ip` is the browser's address, which its requests carry as Vercel sets it. */
-  constructor({ ip }: { ip?: string } = {}) {
+  /** `ip` is the browser's address, which its requests carry as Vercel sets it, and `ipCountry` its country. */
+  constructor({ ip, ipCountry }: { ip?: string; ipCountry?: string } = {}) {
     this.ip = ip;
+    this.ipCountry = ipCountry;
   }
 
   readonly responseCookies: ResponseCookies = {
@@ -62,6 +68,7 @@ export class TestBrowser {
   requestHeaders(): Headers {
     const headers = new Headers({ origin: BASE_URL, "user-agent": "vitest" });
     if (this.ip) headers.set("x-forwarded-for", this.ip);
+    if (this.ipCountry !== undefined) headers.set("x-vercel-ip-country", this.ipCountry);
     const cookieHeader = this.liveCookies()
       .map((cookie) => `${cookie.name}=${encodeURIComponent(cookie.value)}`)
       .join("; ");

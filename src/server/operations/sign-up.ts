@@ -14,6 +14,20 @@ import { AUTH_ENDPOINTS } from "@/config/routes";
 import { AUTH_ERROR_CODES } from "@/server/auth/emails";
 import { postToAuthEndpoint } from "@/server/auth/endpoint";
 import type { OperationContext, Result } from "@/server/operations/context";
+import { isFromSupportedRegion } from "@/server/region-gate";
+
+export type SignUpGateRefusal = { refusal: "under-18" | "unsupported-region" };
+
+/**
+ * Whether the sign-up page shows its steps: not to a browser the age gate has blocked, nor, before
+ * anything is filled in, to a request from a country Gemini doesn't serve. The checks run in the
+ * sign-up hook's order.
+ */
+export function readSignUpGate(ctx: Pick<OperationContext, "requestHeaders">): Result<object, SignUpGateRefusal> {
+  if (isBlockedByAgeGate(ctx.requestHeaders)) return { ok: false, refusal: "under-18" };
+  if (!isFromSupportedRegion(ctx.requestHeaders)) return { ok: false, refusal: "unsupported-region" };
+  return { ok: true };
+}
 
 export type DateOfBirthRefusal = { refusal: "invalid-date" | "under-18" };
 
@@ -43,7 +57,16 @@ export type SignUpInput = z.infer<typeof signUpInputSchema>;
 export type SignUpField = "birthDate" | ProfileField | "email" | "password";
 
 export type SignUpRefusal =
-  | { refusal: "under-18" | "terms-not-accepted" | "username-taken" | "email-taken" | "sign-ups-paused" | "too-many-sign-ups" }
+  | {
+      refusal:
+        | "under-18"
+        | "unsupported-region"
+        | "terms-not-accepted"
+        | "username-taken"
+        | "email-taken"
+        | "sign-ups-paused"
+        | "too-many-sign-ups";
+    }
   | { refusal: "invalid"; field: SignUpField };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+$/;
@@ -51,7 +74,8 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+$/;
 /**
  * Sign-up step 2: creates the account through Better Auth's sign-up endpoint, as any client would,
  * so its per-IP rate limit applies, and signs the user in. Better Auth then emails the verification
- * link. Its sign-up hook rechecks the date of birth, so this refuses an under-18 date too.
+ * link. Its sign-up hook rechecks the date of birth and checks the region, so this refuses an
+ * under-18 date, or a request from a country Gemini doesn't serve, too.
  */
 export async function signUp(ctx: OperationContext, input: SignUpInput): Promise<Result<object, SignUpRefusal>> {
   if (!input.acceptedTerms) return { ok: false, refusal: "terms-not-accepted" };
@@ -77,6 +101,8 @@ export async function signUp(ctx: OperationContext, input: SignUpInput): Promise
   switch (answer.code) {
     case "UNDER_18":
       return { ok: false, refusal: "under-18" };
+    case "UNSUPPORTED_REGION":
+      return { ok: false, refusal: "unsupported-region" };
     case AUTH_ERROR_CODES.signUpsPaused:
       return { ok: false, refusal: "sign-ups-paused" };
     case "USER_ALREADY_EXISTS":
