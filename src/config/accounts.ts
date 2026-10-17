@@ -33,6 +33,13 @@ export const SIGN_UP_RATE_LIMIT = { window: 60 * 60, max: 3 } as const;
 /** A verification link works for this long. */
 export const VERIFICATION_LINK_LIFETIME_SECONDS = 24 * 60 * 60;
 
+/**
+ * A verified user's email change waits on two links in turn: the old address's approval, then the
+ * new address's link. Each works as long as a verification link.
+ */
+export const EMAIL_CHANGE_STEPS = ["approval", "verification"] as const;
+export type EmailChangeStep = (typeof EMAIL_CHANGE_STEPS)[number];
+
 /** A password reset link works for this long. */
 export const PASSWORD_RESET_LINK_LIFETIME_SECONDS = 60 * 60;
 

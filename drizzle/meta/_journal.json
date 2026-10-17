@@ -64,6 +64,13 @@
       "when": 1792187054179,
       "tag": "0008_email_log_rate_limit",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792209692591,
+      "tag": "0009_email_change",
+      "breakpoints": true
     }
   ]
 }

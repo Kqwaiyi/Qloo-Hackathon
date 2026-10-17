@@ -2,26 +2,33 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-import { secondaryButton, textLink } from "@/components/ui";
+import { pendingEmailChangeText } from "@/components/email-change/messages";
+import { secondaryButton, successNotice, textLink } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import { COUNTRY_OPTIONS } from "@/config/countries";
-import { ROUTES } from "@/config/routes";
+import { EMAIL_CHANGED_PARAM, ROUTES } from "@/config/routes";
 import { birthMonthAndYearText } from "@/server/accounts/birth-date";
-import { requireSignedInUser } from "@/server/data/session";
+import { getPendingEmailChange, requireSignedInUser } from "@/server/data/session";
 import { getTeamEmail } from "@/server/data/team";
 
 import { signOutEverywhereAction } from "./actions";
+import { EmailForm } from "./email-form";
 import { PasswordForm } from "./password-form";
 import { ProfileForm } from "./profile-form";
 
 export const metadata: Metadata = { title: "Settings" };
 
-/** Profile, Sign-in and Privacy. Email changes, photo consent and account deletion come with later tickets. */
-export default async function Page() {
+/** Profile, Sign-in and Privacy. Photo consent and account deletion come with later tickets. */
+export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await requireSignedInUser();
-  const teamEmail = await getTeamEmail();
+  const [teamEmail, pendingEmailChange, params] = await Promise.all([getTeamEmail(), getPendingEmailChange(), searchParams]);
   return (
     <>
+      {params[EMAIL_CHANGED_PARAM] !== undefined && (
+        <p role="status" className={successNotice}>
+          Email changed to {user.email}.
+        </p>
+      )}
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
 
       <Section title="Profile">
@@ -42,7 +49,15 @@ export default async function Page() {
           <dt className="text-sm font-medium">Email</dt>
           <dd className="mt-1 break-all text-stone-700">{user.email}</dd>
         </dl>
-        <h3 className="mt-6 font-medium">Password</h3>
+        {pendingEmailChange && (
+          <p className="mt-2 break-words rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {pendingEmailChangeText(pendingEmailChange, user.email)}
+          </p>
+        )}
+        <div className="mt-4">
+          <EmailForm currentEmail={user.email} verified={user.emailVerified} />
+        </div>
+        <h3 className="mt-6 border-t border-stone-200 pt-4 font-medium">Password</h3>
         <div className="mt-3">
           <PasswordForm />
         </div>

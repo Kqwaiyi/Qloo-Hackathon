@@ -14,7 +14,7 @@ import {
   unique,
 } from "drizzle-orm/pg-core";
 
-import { LINES, STYLE_PREFERENCES } from "../../config/accounts";
+import { EMAIL_CHANGE_STEPS, LINES, STYLE_PREFERENCES } from "../../config/accounts";
 import {
   AGE_GROUPS,
   BUDGET_TIERS,
@@ -116,6 +116,23 @@ export const rateLimit = pgTable("rate_limit", {
   count: integer("count").notNull(),
   // Milliseconds since the epoch, as Better Auth keeps it.
   lastRequest: bigint("last_request", { mode: "number" }).notNull(),
+});
+
+// A verified user's email change while it waits on a link. Better Auth's links carry the change
+// themselves; this is the step Settings shows, and the change those links must match to work.
+
+export const emailChangeStepEnum = pgEnum("email_change_step", EMAIL_CHANGE_STEPS);
+
+export const emailChange = pgTable("email_change", {
+  // One change at a time: a newer one replaces it.
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  // Lowercased, as Better Auth keeps addresses.
+  newEmail: text("new_email").notNull(),
+  step: emailChangeStepEnum("step").notNull(),
+  // When the step's link went out.
+  linkSentAt: timestamp("link_sent_at", { withTimezone: true }).notNull(),
 });
 
 // The email log: one row per email sent, which the email caps count. It never holds the address.

@@ -70,6 +70,7 @@ describe("the send-email function", () => {
     ["verification-resend", 5],
     ["password-reset", 3],
     ["email-change", 3],
+    ["email-change-verification", 3],
   ] as const)("lets each account have %s emails %i times in 24 hours", async (kind, cap) => {
     for (let sent = 0; sent < cap; sent += 1) expect(await send(kind, ava)).toEqual({ sent: true });
 

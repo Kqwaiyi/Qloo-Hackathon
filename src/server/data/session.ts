@@ -4,7 +4,9 @@ import { redirect } from "next/navigation";
 import { cache } from "react";
 
 import { ROUTES } from "@/config/routes";
+import type { PendingEmailChange } from "@/server/accounts/email-change";
 import { getReadContext } from "@/server/app/context";
+import { readPendingEmailChange } from "@/server/operations/email-change";
 import { type EmailVerification, readEmailVerification } from "@/server/operations/email-verification";
 import { readSignedInUser, type SignedInUser } from "@/server/operations/session";
 
@@ -22,3 +24,8 @@ export async function requireSignedInUser(): Promise<SignedInUser> {
 export const getEmailVerification = cache(
   async (): Promise<EmailVerification | null> => readEmailVerification(await getReadContext()),
 );
+
+/** The signed-in user's email change and the link it waits on, for Settings. */
+export async function getPendingEmailChange(): Promise<PendingEmailChange | null> {
+  return readPendingEmailChange(await getReadContext());
+}

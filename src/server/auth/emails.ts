@@ -3,9 +3,15 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import { COPY } from "@/config/copy";
 import type { EmailKind } from "@/config/email";
-import { AUTH_API_PATH, AUTH_ENDPOINTS, ROUTES } from "@/config/routes";
+import { AUTH_API_PATH, AUTH_ENDPOINTS, EMAIL_CHANGE_LANDINGS, ROUTES } from "@/config/routes";
 import { unverifiedAccountDeletionDate } from "@/server/accounts/verification";
-import { passwordChangedEmail, passwordResetEmail, verificationEmail } from "@/server/email/messages";
+import {
+  emailChangeApprovalEmail,
+  emailChangeVerificationEmail,
+  passwordChangedEmail,
+  passwordResetEmail,
+  verificationEmail,
+} from "@/server/email/messages";
 import type { EmailRefusal, EmailSender } from "@/server/email/send-email";
 
 /** The codes of the refusals our hooks and emails add to Better Auth's. Our operations match them. */
@@ -13,7 +19,6 @@ export const AUTH_ERROR_CODES = {
   signUpsPaused: "SIGN_UPS_PAUSED",
   emailsPaused: "EMAILS_PAUSED",
   emailLimitReached: "EMAIL_LIMIT_REACHED",
-  emailChangeNeedsApproval: "EMAIL_CHANGE_NEEDS_APPROVAL",
 } as const;
 
 /** The user Better Auth hands its email callbacks: only what our emails need. */
@@ -27,20 +32,28 @@ interface AuthUser {
  * Better Auth's `sendVerificationEmail`, through our send function. The kind of email comes from
  * the endpoint that sends it, which a caller can't disguise: a request through the HTTP handler
  * names it in its URL, and an `auth.api` call carries it (see `trackApiEndpoints`).
+ *
+ * Once the old address approves a verified user's email change, Better Auth sends the new address
+ * its link this way too, with `user.email` already the new address. `onEmailChangeLinkSent` then
+ * hears of it.
  */
-export function verificationEmailSender(emailSender: EmailSender, baseURL: string) {
+export function verificationEmailSender(
+  emailSender: EmailSender,
+  baseURL: string,
+  onEmailChangeLinkSent: (recipient: Pick<AuthUser, "id" | "email">) => Promise<void>,
+) {
   return async ({ user, token }: { user: AuthUser; token: string }, request?: Request): Promise<void> => {
-    // Our own link, always landing on the verification result page, whatever callback the request named.
-    const link = `${baseURL}${AUTH_API_PATH}${AUTH_ENDPOINTS.verifyEmail}?token=${encodeURIComponent(token)}&callbackURL=${encodeURIComponent(ROUTES.verifyEmail)}`;
     const endpoint = request ? new URL(request.url).pathname.slice(AUTH_API_PATH.length) : apiEndpoint.getStore();
-    const result = await emailSender.send({
-      // Anything else counts as a resend, the kind with a per-account cap.
-      kind: (endpoint === undefined ? undefined : VERIFICATION_EMAIL_KINDS[endpoint]) ?? "verification-resend",
-      userId: user.id,
-      to: user.email,
-      ...verificationEmail({ link, deletionDate: unverifiedAccountDeletionDate(new Date(user.createdAt)) }),
-    });
+    // Anything else counts as a resend, the kind with a per-account cap.
+    const kind = (endpoint === undefined ? undefined : VERIFICATION_EMAIL_KINDS[endpoint]) ?? "verification-resend";
+    const finishesEmailChange = kind === "email-change-verification";
+    const link = verifyEmailLink(baseURL, token, finishesEmailChange ? EMAIL_CHANGE_LANDINGS.verification : ROUTES.verifyEmail);
+    const content = finishesEmailChange
+      ? emailChangeVerificationEmail({ link })
+      : verificationEmail({ link, deletionDate: unverifiedAccountDeletionDate(new Date(user.createdAt)) });
+    const result = await emailSender.send({ kind, userId: user.id, to: user.email, ...content });
     if (!result.sent) throw emailRefusalError(result.refusal);
+    if (finishesEmailChange) await onEmailChangeLinkSent(user);
   };
 }
 
@@ -53,6 +66,20 @@ export function passwordResetEmailSender(emailSender: EmailSender, baseURL: stri
     // Our own link: Better Auth checks the token, then lands on the reset page with it.
     const link = `${baseURL}${AUTH_API_PATH}${AUTH_ENDPOINTS.resetPassword}/${encodeURIComponent(token)}?callbackURL=${encodeURIComponent(ROUTES.resetPassword)}`;
     const result = await emailSender.send({ kind: "password-reset", userId: user.id, to: user.email, ...passwordResetEmail({ link }) });
+    if (!result.sent) throw emailRefusalError(result.refusal);
+  };
+}
+
+/**
+ * Better Auth's `sendChangeEmailConfirmation`: a verified user's change, sent to the old address
+ * for approval. A refused email throws, which Better Auth logs and keeps to itself, so the
+ * `/change-email` hook checks the cap first.
+ */
+export function emailChangeApprovalSender(emailSender: EmailSender, baseURL: string, teamEmail: string) {
+  return async ({ user, newEmail, token }: { user: AuthUser; newEmail: string; token: string }): Promise<void> => {
+    const link = verifyEmailLink(baseURL, token, EMAIL_CHANGE_LANDINGS.approval);
+    const content = emailChangeApprovalEmail({ newEmail, link, forgotPasswordLink: `${baseURL}${ROUTES.forgotPassword}`, teamEmail });
+    const result = await emailSender.send({ kind: "email-change", userId: user.id, to: user.email, ...content });
     if (!result.sent) throw emailRefusalError(result.refusal);
   };
 }
@@ -73,11 +100,21 @@ export function passwordChangedEmailSender(emailSender: EmailSender, baseURL: st
   };
 }
 
+/**
+ * Our own link to Better Auth's `/verify-email`, which checks the token, then lands on this page of
+ * ours, whatever callback the request named.
+ */
+function verifyEmailLink(baseURL: string, token: string, landing: string): string {
+  return `${baseURL}${AUTH_API_PATH}${AUTH_ENDPOINTS.verifyEmail}?token=${encodeURIComponent(token)}&callbackURL=${encodeURIComponent(landing)}`;
+}
+
 const VERIFICATION_EMAIL_KINDS: Record<string, EmailKind> = {
   [AUTH_ENDPOINTS.signUp]: "verification",
   [AUTH_ENDPOINTS.sendVerificationEmail]: "verification-resend",
   // An unverified user's email change sends a new link to the new address.
   [AUTH_ENDPOINTS.changeEmail]: "email-change",
+  // Opening a verified user's approval link sends the new address its link.
+  [AUTH_ENDPOINTS.verifyEmail]: "email-change-verification",
 };
 
 /** The endpoint of the `auth.api` call under way, if any. */
@@ -98,15 +135,23 @@ export function trackApiEndpoints(api: object): void {
   }
 }
 
+const EMAILS_PAUSED = { status: "SERVICE_UNAVAILABLE", code: AUTH_ERROR_CODES.emailsPaused, message: "Emails are paused for now." } as const;
+
+/** How Better Auth answers for an email each cap stopped. */
+const EMAIL_REFUSALS: Record<EmailRefusal, { status: ConstructorParameters<typeof APIError>[0]; code: string; message: string }> = {
+  "sign-ups-paused": { status: "SERVICE_UNAVAILABLE", code: AUTH_ERROR_CODES.signUpsPaused, message: COPY.signUpsPaused },
+  "account-limit": { status: "TOO_MANY_REQUESTS", code: AUTH_ERROR_CODES.emailLimitReached, message: "Too many emails for this account today." },
+  "emails-paused": EMAILS_PAUSED,
+  "warnings-paused": EMAILS_PAUSED,
+};
+
 /** The Better Auth error for an email a cap stopped. */
 export function emailRefusalError(refusal: EmailRefusal): APIError {
-  switch (refusal) {
-    case "sign-ups-paused":
-      return new APIError("SERVICE_UNAVAILABLE", { code: AUTH_ERROR_CODES.signUpsPaused, message: COPY.signUpsPaused });
-    case "account-limit":
-      return new APIError("TOO_MANY_REQUESTS", { code: AUTH_ERROR_CODES.emailLimitReached, message: "Too many emails for this account today." });
-    case "emails-paused":
-    case "warnings-paused":
-      return new APIError("SERVICE_UNAVAILABLE", { code: AUTH_ERROR_CODES.emailsPaused, message: "Emails are paused for now." });
-  }
+  const { status, code, message } = EMAIL_REFUSALS[refusal];
+  return new APIError(status, { code, message });
+}
+
+/** The error code of that error, for a refusal that lands on a page instead. */
+export function emailRefusalCode(refusal: EmailRefusal): string {
+  return EMAIL_REFUSALS[refusal].code;
 }

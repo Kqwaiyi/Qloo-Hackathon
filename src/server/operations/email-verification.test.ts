@@ -2,7 +2,8 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { user } from "@/server/db/schema";
-import { changeUnverifiedEmail, readEmailVerification, resendVerificationEmail } from "@/server/operations/email-verification";
+import { changeEmail, readPendingEmailChange } from "@/server/operations/email-change";
+import { readEmailVerification, resendVerificationEmail } from "@/server/operations/email-verification";
 import { readSignedInUser } from "@/server/operations/session";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
@@ -191,7 +192,7 @@ describe("Better Auth's server API, called directly", () => {
       await harness.auth.api.changeEmail({ body: { newEmail: `sol${attempt}@example.com` }, headers: browser.requestHeaders() });
     }
 
-    const fourth = await changeUnverifiedEmail(harness.context(browser), "sol4@example.com");
+    const fourth = await changeEmail(harness.context(browser), "sol4@example.com");
 
     expect(fourth).toEqual({ ok: false, refusal: "change-limit" });
     expect(harness.emails.to("sol3@example.com")).toHaveLength(1);
@@ -204,9 +205,9 @@ describe("changing an unverified user's email", () => {
     await signUp(harness.context(browser), signUpInput({ email: "ivy@exmaple.com" }));
     harness.clock.set("2026-10-18T09:00:00Z");
 
-    const result = await changeUnverifiedEmail(harness.context(browser), "ivy@example.com");
+    const result = await changeEmail(harness.context(browser), "ivy@example.com");
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, awaiting: "verification" });
     expect(await readSignedInUser(harness.context(browser))).toMatchObject({ email: "ivy@example.com", emailVerified: false });
     const [sent] = harness.emails.to("ivy@example.com");
     expect(sent!.text).toContain("Didn't sign up? Ignore this email. The account is removed on 23 October 2026.");
@@ -219,9 +220,9 @@ describe("changing an unverified user's email", () => {
     const browser = new TestBrowser();
     await signUp(harness.context(browser), signUpInput({ email: "kai@example.com" }));
 
-    const result = await changeUnverifiedEmail(harness.context(browser), "jo@example.com");
+    const result = await changeEmail(harness.context(browser), "jo@example.com");
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, awaiting: "verification" });
     expect(await readSignedInUser(harness.context(browser))).toMatchObject({ email: "kai@example.com" });
     expect(harness.emails.to("jo@example.com")).toHaveLength(1);
   });
@@ -230,10 +231,10 @@ describe("changing an unverified user's email", () => {
     const browser = new TestBrowser();
     await signUp(harness.context(browser), signUpInput({ email: "lee@example.com" }));
     for (const attempt of [1, 2, 3]) {
-      expect(await changeUnverifiedEmail(harness.context(browser), `lee${attempt}@example.com`)).toEqual({ ok: true });
+      expect(await changeEmail(harness.context(browser), `lee${attempt}@example.com`)).toEqual({ ok: true, awaiting: "verification" });
     }
 
-    const fourth = await changeUnverifiedEmail(harness.context(browser), "lee4@example.com");
+    const fourth = await changeEmail(harness.context(browser), "lee4@example.com");
 
     expect(fourth).toEqual({ ok: false, refusal: "change-limit" });
     expect(await readSignedInUser(harness.context(browser))).toMatchObject({ email: "lee3@example.com" });
@@ -244,22 +245,18 @@ describe("changing an unverified user's email", () => {
     const browser = new TestBrowser();
     await signUp(harness.context(browser), signUpInput({ email: "max@example.com" }));
 
-    expect(await changeUnverifiedEmail(harness.context(browser), "not an address")).toEqual({ ok: false, refusal: "invalid-email" });
-    expect(await changeUnverifiedEmail(harness.context(browser), " MAX@example.com ")).toEqual({ ok: false, refusal: "same-email" });
+    expect(await changeEmail(harness.context(browser), "not an address")).toEqual({ ok: false, refusal: "invalid-email" });
+    expect(await changeEmail(harness.context(browser), " MAX@example.com ")).toEqual({ ok: false, refusal: "same-email" });
   });
 
-  it("refuses a verified user, whose change needs their old address's approval", async () => {
+  it("asks no approval and leaves no step pending in Settings, since the change is already made", async () => {
     const browser = new TestBrowser();
-    await signUp(harness.context(browser), signUpInput({ email: "ned@example.com" }));
-    await harness.openEmailedLink("ned@example.com", browser);
+    await signUp(harness.context(browser), signUpInput({ email: "ned@exmaple.com" }));
 
-    const result = await changeUnverifiedEmail(harness.context(browser), "ned.new@example.com");
-    const direct = await harness.postToAuth("/change-email", { newEmail: "ned.new@example.com" }, browser);
+    await changeEmail(harness.context(browser), "ned@example.com");
 
-    expect(result).toEqual({ ok: false, refusal: "already-verified" });
-    expect(direct.status).toBe(403);
-    expect(await readSignedInUser(harness.context(browser))).toMatchObject({ email: "ned@example.com" });
-    expect(harness.emails.to("ned.new@example.com")).toEqual([]);
+    expect(harness.emails.to("ned@exmaple.com")).toHaveLength(1);
+    expect(await readPendingEmailChange(harness.context(browser))).toBeNull();
   });
 });
 

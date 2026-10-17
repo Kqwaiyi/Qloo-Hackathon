@@ -6,12 +6,16 @@ export const EMAIL_FROM_NAME = "Outfit Recommender";
 
 /**
  * Each kind of email the app sends, as the email log records it. "verification" is the link sent
- * at sign-up; a link asked for again is a "verification-resend".
+ * at sign-up; a link asked for again is a "verification-resend". "email-change" is the one email
+ * every email change starts with: an unverified user's link to the new address, or a verified
+ * user's approval request to the old one. Once approved, the new address gets an
+ * "email-change-verification".
  */
 export const EMAIL_KINDS = [
   "verification",
   "verification-resend",
   "email-change",
+  "email-change-verification",
   "password-reset",
   "password-changed",
   "inactivity-warning",
@@ -30,9 +34,14 @@ export const SIGN_UP_EMAILS_CAP = 300;
 /** At most this many inactivity warnings go out in the window. */
 export const INACTIVITY_WARNINGS_CAP = 50;
 
-/** Per account, at most this many of each kind go out in the window. */
+/**
+ * Per account, at most this many of each kind go out in the window. "email-change" caps the email
+ * changes themselves, verified or not. Opening an approval link again sends the new address
+ * another link, so those have a cap of their own.
+ */
 export const PER_ACCOUNT_EMAIL_CAPS: Partial<Record<EmailKind, number>> = {
   "verification-resend": 5,
   "password-reset": 3,
   "email-change": 3,
+  "email-change-verification": 3,
 };

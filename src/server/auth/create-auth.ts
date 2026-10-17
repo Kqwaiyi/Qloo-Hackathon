@@ -21,6 +21,7 @@ import { findCountry } from "@/config/countries";
 import { AUTH_API_PATH, AUTH_ENDPOINTS } from "@/config/routes";
 import { AGE_GATE_COOKIE, isBlockedByAgeGate } from "@/server/accounts/age-gate";
 import { judgeAge, parseIsoBirthDate } from "@/server/accounts/birth-date";
+import { endEmailChange, recordEmailChangeStep } from "@/server/accounts/email-change";
 import type { Clock } from "@/server/clock";
 import type { Database } from "@/server/db/database";
 import * as schema from "@/server/db/schema";
@@ -28,13 +29,14 @@ import type { EmailSender } from "@/server/email/send-email";
 import { serializeCookie } from "@/server/http/cookies";
 
 import {
-  AUTH_ERROR_CODES,
+  emailChangeApprovalSender,
   emailRefusalError,
   passwordChangedEmailSender,
   passwordResetEmailSender,
   trackApiEndpoints,
   verificationEmailSender,
 } from "./emails";
+import { emailChangeLinkCheck } from "./email-change";
 import { passwordResetFinisher } from "./password-reset";
 
 type HookContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
@@ -73,18 +75,24 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
     if (await emailSender.refusalFor("verification", null)) throw emailRefusalError("sign-ups-paused");
   }
 
-  /** Only an unverified user's email change, and only while its cap allows. */
+  /**
+   * An email change only while its cap allows. Checked before Better Auth acts, which ignores a
+   * refused email: it would change an unverified user's address anyway, or answer a verified user
+   * as if the approval went. An address already in use is refused the same, so it stays unseen.
+   */
   async function beforeChangeEmail(ctx: HookContext): Promise<void> {
     const session = await getSessionFromCtx(ctx);
     if (!session) return;
-    // A verified user's change needs the old address's approval first, which the verified email
-    // change (ticket 21) adds. Without it, Better Auth would let one through on the new address's link.
-    if (session.user.emailVerified) {
-      throw new APIError("FORBIDDEN", { code: AUTH_ERROR_CODES.emailChangeNeedsApproval, message: "A verified email can't be changed yet." });
-    }
-    // Checked before the change: Better Auth changes the address first, then sends, ignoring a refusal.
     const refusal = await emailSender.refusalFor("email-change", session.user.id);
     if (refusal) throw emailRefusalError(refusal);
+  }
+
+  const checkEmailChangeLink = emailChangeLinkCheck({ db, clock, emailSender, secret });
+
+  /** A verified user's email-change link goes ahead only while it fits their newest change (see `emailChangeLinkCheck`). */
+  async function beforeVerifyEmail(ctx: HookContext): Promise<void> {
+    const refusedLanding = await checkEmailChangeLink(ctx.query?.token);
+    if (refusedLanding) throw ctx.redirect(refusedLanding);
   }
 
   /**
@@ -102,6 +110,18 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
   }
 
   const sendPasswordChangedEmail = passwordChangedEmailSender(emailSender, baseURL, teamEmail);
+  const sendEmailChangeApproval = emailChangeApprovalSender(emailSender, baseURL, teamEmail);
+
+  /** A verified user's change asks the old address to approve it, and then waits on that. */
+  async function sendChangeEmailConfirmation(data: Parameters<typeof sendEmailChangeApproval>[0]): Promise<void> {
+    await sendEmailChangeApproval(data);
+    await recordEmailChangeStep(db, { userId: data.user.id, newEmail: data.newEmail, step: "approval", at: clock.now() });
+  }
+
+  /** Once approved, a change waits on the link its new address was just sent. */
+  async function emailChangeLinkSent(recipient: { id: string; email: string }): Promise<void> {
+    await recordEmailChangeStep(db, { userId: recipient.id, newEmail: recipient.email, step: "verification", at: clock.now() });
+  }
 
   /**
    * The notice email after every password change: from our Settings form, and from a direct call
@@ -137,7 +157,9 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
       sendOnSignUp: true,
       expiresIn: VERIFICATION_LINK_LIFETIME_SECONDS,
       autoSignInAfterVerification: true,
-      sendVerificationEmail: verificationEmailSender(emailSender, baseURL),
+      sendVerificationEmail: verificationEmailSender(emailSender, baseURL, emailChangeLinkSent),
+      // After any verification, an email change included: once the email has changed, nothing waits.
+      afterEmailVerification: (verified) => endEmailChange(db, verified.id),
     },
     session: {
       expiresIn: SESSION_EXPIRES_IN_SECONDS,
@@ -155,8 +177,13 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
       ipAddress: { ipAddressHeaders: ["x-forwarded-for"] },
     },
     user: {
-      // An unverified user's change happens at once, and a new link goes to the new address.
-      changeEmail: { enabled: true, updateEmailWithoutVerification: true },
+      changeEmail: {
+        enabled: true,
+        // An unverified user's change happens at once, and a new link goes to the new address.
+        updateEmailWithoutVerification: true,
+        // A verified user's old address approves first, then the new address gets its link.
+        sendChangeEmailConfirmation,
+      },
       additionalFields: {
         stylePreference: {
           type: [...STYLE_PREFERENCES],
@@ -176,6 +203,7 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
       before: createAuthMiddleware(async (ctx) => {
         if (ctx.path === AUTH_ENDPOINTS.signUp) await beforeSignUp(ctx);
         if (ctx.path === AUTH_ENDPOINTS.changeEmail) await beforeChangeEmail(ctx);
+        if (ctx.path === AUTH_ENDPOINTS.verifyEmail) await beforeVerifyEmail(ctx);
         if (ctx.path === AUTH_ENDPOINTS.requestPasswordReset) await beforeRequestPasswordReset();
         if (ctx.path === AUTH_ENDPOINTS.changePassword) return beforeChangePassword(ctx);
       }),

@@ -28,7 +28,7 @@ export const COPY = {
   resendLink: "Resend link",
   changeEmail: "Change email",
   emailVerified: "Email verified",
-  /** A verification or password reset link that didn't work. */
+  /** A verification, password reset or email-change link that didn't work. */
   badLink: "This link has expired or isn't valid",
   sendNewLink: "Send a new link",
   signInForNewLink: "Sign in to get a new one",

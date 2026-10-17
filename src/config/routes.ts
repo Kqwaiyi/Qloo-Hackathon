@@ -1,3 +1,5 @@
+import type { EmailChangeStep } from "@/config/accounts";
+
 export const ROUTES = {
   home: "/",
   signIn: "/sign-in",
@@ -7,6 +9,8 @@ export const ROUTES = {
   resetPassword: "/reset-password",
   /** Where a verification link lands once Better Auth has checked it: the verification result. */
   verifyEmail: "/verify-email",
+  /** Where a verified user's email-change links land: the old address's approval, then the new address's link. */
+  emailChange: "/email-change",
   newConsultation: "/consultations/new",
   myConsultations: "/consultations",
   settings: "/settings",
@@ -47,6 +51,20 @@ export const APP_HOME = ROUTES.newConsultation;
 /** Where a verification link lands once it has worked: New Consultation, saying "Email verified". */
 export const EMAIL_VERIFIED_PARAM = "email-verified";
 export const EMAIL_VERIFIED_ROUTE = `${ROUTES.newConsultation}?${EMAIL_VERIFIED_PARAM}=1`;
+
+/**
+ * Where each step's link of a verified user's email change lands once Better Auth has checked it:
+ * the email-change page, told which step's link it was. A link that didn't work adds an `error`.
+ */
+export const EMAIL_CHANGE_STEP_PARAM = "step";
+export const EMAIL_CHANGE_LANDINGS: Record<EmailChangeStep, string> = {
+  approval: `${ROUTES.emailChange}?${EMAIL_CHANGE_STEP_PARAM}=approval`,
+  verification: `${ROUTES.emailChange}?${EMAIL_CHANGE_STEP_PARAM}=verification`,
+};
+
+/** Where a finished email change goes on to: Settings, saying the email has changed. */
+export const EMAIL_CHANGED_PARAM = "email-changed";
+export const EMAIL_CHANGED_ROUTE = `${ROUTES.settings}?${EMAIL_CHANGED_PARAM}=1`;
 
 /** Where a completed password reset lands: sign-in, since the reset signed the user out everywhere. */
 export const PASSWORD_RESET_PARAM = "password-reset";

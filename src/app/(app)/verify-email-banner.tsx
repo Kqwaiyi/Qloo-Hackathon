@@ -3,8 +3,8 @@
 import { useRouter } from "next/navigation";
 import { type FormEvent, useId, useState, useTransition } from "react";
 
-import { changeUnverifiedEmailAction } from "@/components/email-verification/actions";
-import { changeEmailProblem } from "@/components/email-verification/messages";
+import { changeEmailAction } from "@/components/email-change/actions";
+import { changeEmailProblem, emailChangeAnswer } from "@/components/email-change/messages";
 import { useResendLink } from "@/components/email-verification/use-resend-link";
 import { NoticeLine } from "@/components/notice";
 import { input } from "@/components/ui";
@@ -29,13 +29,13 @@ export function VerifyEmailBanner({ email, deletionDate }: { email: string; dele
     event.preventDefault();
     setNotice(null);
     startSaving(async () => {
-      const result = await changeUnverifiedEmailAction(newEmail);
+      const result = await changeEmailAction(newEmail);
       if (result.ok) {
         setChanging(false);
         setNewEmail("");
-        setNotice({ text: COPY.emailChangeSent, problem: false });
+        // A user who verified meanwhile has their old address asked to approve, and the banner goes.
+        setNotice({ text: emailChangeAnswer(result.awaiting, email), problem: false });
       } else if (result.refusal === "signed-out") router.push(ROUTES.signIn);
-      else if (result.refusal === "already-verified") router.refresh();
       else setNotice({ text: changeEmailProblem(result.refusal), problem: true });
     });
   }
