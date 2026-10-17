@@ -9,6 +9,7 @@ import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import type { PhotoCategoryFacts } from "@/server/outfit-assembly/categories";
 import { hasCurrentStyleIconLeft, readCurrentStyleIconList } from "@/server/stylings/current-outfits";
+import { readLatestFailedStyling } from "@/server/stylings/failed";
 import { checkStylingStart, createStyling, launchStyling, type NewStyling, type StylingStartRefusal } from "@/server/stylings/start";
 import { outfitsStage } from "@/server/stylings/steps";
 
@@ -94,7 +95,35 @@ export async function changeBudgetTier(
     const currentList = await readCurrentStyleIconList(tx, consultationId);
     // With none to build from, it finds its own, as a first Styling does.
     if (!currentList) return { ok: true, ...change, stage: "style_icons" };
-    return { ok: true, ...change, stage: outfitsStage(current), copiesStyleIconList: currentList };
+    return { ok: true, ...change, stage: outfitsStage(current), copiesStyleIconList: { from: currentList, statuses: "unused" } };
+  });
+}
+
+/** Why Try again didn't start. */
+export type TryAgainRefusal =
+  | ConsultationStylingRefusal
+  /**
+   * The Consultation's latest Styling didn't break, or was "Show 2 more Outfits", whose failure
+   * only ends it: there's nothing to try again.
+   */
+  | { refusal: "nothing-to-try-again" };
+
+/**
+ * Try again, once the Consultation's latest Styling broke: through the shared start check, starts a
+ * Styling that picks up where that one stopped, never checking the photo again. It finds Style
+ * Icons only if the broken one hadn't, and otherwise carries on down its list, for the same Budget
+ * Tier and Photo Style. Its Outfits switch in as the broken one's would have.
+ */
+export async function tryAgain(ctx: OperationContext, consultationId: string): Promise<Result<object, TryAgainRefusal>> {
+  return startStylingOn<TryAgainRefusal>(ctx, consultationId, async (tx, current) => {
+    const failed = await readLatestFailedStyling(tx, consultationId);
+    if (failed?.reason !== "something_broke") return { ok: false, refusal: "nothing-to-try-again" };
+    const tryingAgain = { kind: "try_again", budgetTier: failed.budgetTier, photoStyle: failed.photoStyle } as const;
+    // It broke before saving any Style Icons: find them, as it would have.
+    if (failed.stage === "style_icons") return { ok: true, ...tryingAgain, stage: "style_icons" };
+    // Brands aren't saved, so a body photo's are fetched again, from Qloo's cache, even if it broke
+    // tailoring: Brands and tailoring are both the checklist's Building Outfits.
+    return { ok: true, ...tryingAgain, stage: outfitsStage(current), copiesStyleIconList: { from: failed.stylingId, statuses: "kept" } };
   });
 }
 

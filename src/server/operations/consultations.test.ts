@@ -315,7 +315,7 @@ describe("opening a Consultation", () => {
       everyPreviewRefused: false,
       // No Outfits yet for "Show 2 more Outfits" to add to.
       everyOutfitBuilt: true,
-      failedRestyling: null,
+      failedStyling: null,
     });
   });
 

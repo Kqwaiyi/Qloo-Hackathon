@@ -61,8 +61,17 @@ export const COPY = {
   /** A Photo Style change that built nothing, likewise: the Photo Style version of the line. */
   photoStyleChangeBuiltNothing: (tried: string, previous: string | null, suggestBudgetTier: boolean) =>
     `We couldn't build ${tried} Outfits for this photo. ${previous ? `Your ${previous} Outfits are still here` : tryAnother(suggestBudgetTier)}.`,
-  /** A re-styling that broke, given the Budget Tier or Photo Style of the Outfits still shown, likewise. */
-  restylingBroke: (previous: string | null) => (previous ? `${STYLING_BROKE} Your ${previous} Outfits are still here.` : STYLING_BROKE),
+  /**
+   * A new Consultation whose first Styling built nothing, given its Budget Tier, or null for a Face
+   * Photo, which has none, so only another Photo Style is suggested.
+   */
+  firstStylingBuiltNothing: (tier: string | null) =>
+    `We couldn't build Outfits for this photo${tier ? ` at ${tier}` : ""}. ${tryAnother(tier !== null)}.`,
+  /**
+   * A Styling that broke, shown with "Try again", given the Budget Tier or Photo Style of the
+   * Outfits a re-styling kept, or null when there are none.
+   */
+  stylingBroke: (previous: string | null) => (previous ? `${STYLING_BROKE} Your ${previous} Outfits are still here.` : STYLING_BROKE),
   verifyBanner: (email: string, deletionDate: string) =>
     `We sent a link to ${email}. Verify it to start your first Consultation. Unverified accounts are deleted on ${deletionDate}.`,
   resendLink: "Resend link",

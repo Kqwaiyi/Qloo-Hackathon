@@ -25,14 +25,14 @@ import { photoPathnameFor } from "@/server/consultations/blob-pathnames";
 import { deleteConsultationOf } from "@/server/consultations/deletion";
 import { judgePhotoCheck, type PhotoRejection } from "@/server/consultations/photo-check";
 import { readPhotoFile } from "@/server/consultations/photo-file";
-import type { Database } from "@/server/db/database";
-import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
+import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
 import { brandPriceRange, outfitPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
 import { isFromSupportedRegion } from "@/server/region-gate";
 import { hasCurrentStyleIconLeft } from "@/server/stylings/current-outfits";
+import { type LatestFailedStyling, readLatestFailedStyling } from "@/server/stylings/failed";
 import { checkStylingStart, createStyling, launchStyling, type StylingStartRefusal } from "@/server/stylings/start";
 import { readUsageLeft, recordUsage } from "@/server/usage/records";
 
@@ -182,17 +182,21 @@ export interface ConsultationView {
    */
   everyOutfitBuilt: boolean;
   /**
-   * What the Consultation's latest Styling, a re-styling that built nothing, tried to build for, or
-   * null. The Consultation kept what it had, so its Outfits, if any, are still from before it.
+   * What the Consultation's latest Styling tried to build for, when it made no Outfit, or null. The
+   * Consultation kept what it had, so its Outfits, if any, are still from before it. A failed "Show
+   * 2 more Outfits" isn't one: `everyOutfitBuilt` says it.
    */
-  failedRestyling: FailedRestyling | null;
+  failedStyling: FailedStyling | null;
 }
 
 /**
- * A re-styling that made no Outfit: "We couldn't build Outfits … for this photo.", or, when it
- * broke, "Something went wrong while styling."
+ * A Styling that made no Outfit: "We couldn't build Outfits … for this photo.", or, when it broke,
+ * "Something went wrong while styling.", with Try again. A Try again's kind is the one it tried
+ * again.
  */
-export type FailedRestyling = { reason: StylingFailureReason } & (
+export type FailedStyling = { reason: StylingFailureReason } & (
+  /** A new Consultation's: its Budget Tier, or null for a Face Photo, which has none. */
+  | { kind: "first"; budgetTier: BudgetTier | null }
   | { kind: "photo_style_change"; photoStyle: PhotoStyleWords }
   | { kind: "budget_tier_change"; budgetTier: BudgetTier }
 );
@@ -315,25 +319,23 @@ export async function readConsultation(
     outfits,
     everyPreviewRefused: outfits.length > 0 && outfits.every((outfitView) => outfitView.preview.state === "refused"),
     everyOutfitBuilt: !(await hasCurrentStyleIconLeft(ctx.db, row.id)),
-    failedRestyling: await readFailedRestyling(ctx.db, row.id),
+    failedStyling: failedStylingView(await readLatestFailedStyling(ctx.db, row.id)),
   };
 }
 
-/** The Consultation's latest Styling, if it was a re-styling that failed: what it tried to build for. */
-async function readFailedRestyling(db: Database, consultationId: string): Promise<FailedRestyling | null> {
-  const [latest] = await db
-    .select({ kind: styling.kind, photoStyle: styling.photoStyle, budgetTier: styling.budgetTier, failureReason: styling.failureReason })
-    .from(styling)
-    .where(eq(styling.consultationId, consultationId))
-    .orderBy(desc(styling.startedAt))
-    .limit(1);
-  // Only a failed Styling has a failure reason.
-  if (!latest?.failureReason) return null;
-  const reason = latest.failureReason;
-  if (latest.kind === "photo_style_change") return { kind: latest.kind, photoStyle: latest.photoStyle, reason };
-  // A Budget Tier change always has a Budget Tier to build at.
-  if (latest.kind === "budget_tier_change" && latest.budgetTier) return { kind: latest.kind, budgetTier: latest.budgetTier, reason };
-  return null;
+/** What the page says of the Consultation's latest Styling, if it failed: what it tried to build for. */
+function failedStylingView(failed: LatestFailedStyling | null): FailedStyling | null {
+  if (!failed) return null;
+  const { kind, budgetTier, photoStyle, reason } = failed;
+  switch (kind) {
+    case "first":
+      return { kind, budgetTier, reason };
+    case "photo_style_change":
+      return { kind, photoStyle, reason };
+    case "budget_tier_change":
+      // A Budget Tier change always has a Budget Tier to build at.
+      return budgetTier && { kind, budgetTier, reason };
+  }
 }
 
 /** One row of My Consultations. */

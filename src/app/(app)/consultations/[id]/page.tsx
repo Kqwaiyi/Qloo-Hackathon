@@ -16,7 +16,7 @@ import { ROUTES } from "@/config/routes";
 import { addsToCurrentOutfits } from "@/config/stylings";
 import { getConsultation, getStylingStatus } from "@/server/data/consultations";
 import { getUsageSummary } from "@/server/data/usage";
-import type { ConsultationView, FailedRestyling, OutfitView, PieceView, PreviewView } from "@/server/operations/consultations";
+import type { ConsultationView, FailedStyling, OutfitView, PieceView, PreviewView } from "@/server/operations/consultations";
 
 import { Stepper } from "../stepper";
 import { AllowanceLine } from "./allowance-line";
@@ -24,6 +24,7 @@ import { BudgetTierDropdown } from "./budget-tier-dropdown";
 import { MoreOutfits } from "./more-outfits";
 import { PhotoStyleEditor } from "./photo-style-editor";
 import { StylingProgress } from "./styling-progress";
+import { TryAgain } from "./try-again";
 
 export const metadata: Metadata = { title: "Your Outfits" };
 
@@ -94,10 +95,13 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           </div>
         </div>
       </header>
-      {consultation.failedRestyling && (
-        <p role="status" className="mt-6 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          {failedRestylingLine(consultation.failedRestyling, consultation)}
-        </p>
+      {consultation.failedStyling && (
+        <div className="mt-6 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p role="status">{failedStylingLine(consultation.failedStyling, consultation)}</p>
+          {consultation.failedStyling.reason === "something_broke" && (
+            <TryAgain consultationId={consultation.id} stylingStart={usage.stylingStart} outfitsLeft={usage.outfitsLeft} />
+          )}
+        </div>
       )}
       {consultation.outfits.length > 0 ? (
         <>
@@ -130,17 +134,22 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 }
 
 /**
- * What a failed re-styling says, and that the Outfits from before it are still here, if there are
- * any, by the Budget Tier or Photo Style it changed.
+ * What a failed Styling says. A re-styling's also says the Outfits from before it are still here, if
+ * there are any, by the Budget Tier or Photo Style it changed. A first Styling had none.
  */
-function failedRestylingLine(failedRestyling: FailedRestyling, { budgetTier, photoStyle, outfits, photoType }: ConsultationView): string {
-  const byBudgetTier = failedRestyling.kind === "budget_tier_change";
+function failedStylingLine(failedStyling: FailedStyling, { budgetTier, photoStyle, outfits, photoType }: ConsultationView): string {
+  const byBudgetTier = failedStyling.kind === "budget_tier_change";
   // Only a body photo's Budget Tier can change, and it always has one.
   const previous = outfits.length === 0 ? null : byBudgetTier ? budgetTier && BUDGET_TIER_LABELS[budgetTier] : photoStyleText(photoStyle);
-  if (failedRestyling.reason === "something_broke") return COPY.restylingBroke(previous);
-  return failedRestyling.kind === "budget_tier_change"
-    ? COPY.budgetTierChangeBuiltNothing(BUDGET_TIER_LABELS[failedRestyling.budgetTier], previous)
-    : COPY.photoStyleChangeBuiltNothing(photoStyleText(failedRestyling.photoStyle), previous, hasBudgetTier(photoType));
+  if (failedStyling.reason === "something_broke") return COPY.stylingBroke(previous);
+  switch (failedStyling.kind) {
+    case "first":
+      return COPY.firstStylingBuiltNothing(failedStyling.budgetTier && BUDGET_TIER_LABELS[failedStyling.budgetTier]);
+    case "budget_tier_change":
+      return COPY.budgetTierChangeBuiltNothing(BUDGET_TIER_LABELS[failedStyling.budgetTier], previous);
+    case "photo_style_change":
+      return COPY.photoStyleChangeBuiltNothing(photoStyleText(failedStyling.photoStyle), previous, hasBudgetTier(photoType));
+  }
 }
 
 /** One Outfit, its Preview beside it. Its Style Icon is shown by name only, never with Qloo's image of them. */

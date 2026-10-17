@@ -92,15 +92,17 @@ export interface NewStyling {
   /**
    * Where it starts. At Style Icons, it ranks its own, as a first Styling and a Photo Style change
    * do. Further in, it has them already: "Show 2 more Outfits" carries on down the current ones
-   * from Brands, or from Building Outfits for a Face Photo, and a Budget Tier change builds from
-   * Brands on its own copy of them.
+   * from Brands, or from Building Outfits for a Face Photo, and a Budget Tier change and Try again
+   * build from there on their own copy of them.
    */
   stage: StylingStage;
   /**
-   * A Style Icon list it builds from the top of, by the Styling it belongs to: a Budget Tier
-   * change's, the current one. It gets its own copy, so that list keeps its statuses whatever it does.
+   * A Style Icon list it builds on, by the Styling it belongs to. It gets its own copy, so that
+   * list keeps its statuses whatever it does. A Budget Tier change builds from the top of the
+   * current one, every Style Icon `unused` again. Try again carries on down the broken Styling's,
+   * statuses `kept`, so it passes over the Style Icons that one did.
    */
-  copiesStyleIconList?: string;
+  copiesStyleIconList?: { from: string; statuses: "unused" | "kept" };
 }
 
 /**
@@ -118,13 +120,16 @@ export async function createStyling(tx: Transaction, now: Date, { copiesStyleIco
     tailoringFailures: 0,
     startedAt: now,
   });
-  if (copiesStyleIconList) await copyStyleIconList(tx, { from: copiesStyleIconList, to: id });
+  if (copiesStyleIconList) await copyStyleIconList(tx, { ...copiesStyleIconList, to: id });
   await tx.update(consultation).set({ state: "styling" }).where(eq(consultation.id, newStyling.consultationId));
   return id;
 }
 
-/** Copies one Styling's Style Icon list to another, in the same order and all unused. */
-async function copyStyleIconList(tx: Transaction, { from, to }: { from: string; to: string }): Promise<void> {
+/** Copies one Styling's Style Icon list to another, in the same order, with the statuses `copiesStyleIconList` asks for. */
+async function copyStyleIconList(
+  tx: Transaction,
+  { from, to, statuses }: NonNullable<NewStyling["copiesStyleIconList"]> & { to: string },
+): Promise<void> {
   const icons = await tx
     .select({
       consultationId: styleIcon.consultationId,
@@ -132,11 +137,14 @@ async function copyStyleIconList(tx: Transaction, { from, to }: { from: string; 
       qlooEntityId: styleIcon.qlooEntityId,
       name: styleIcon.name,
       line: styleIcon.line,
+      status: styleIcon.status,
     })
     .from(styleIcon)
     .where(eq(styleIcon.stylingId, from));
   if (icons.length === 0) return;
-  await tx.insert(styleIcon).values(icons.map((icon) => ({ ...icon, id: randomUUID(), stylingId: to, status: "unused" as const })));
+  await tx.insert(styleIcon).values(
+    icons.map((icon) => ({ ...icon, id: randomUUID(), stylingId: to, status: statuses === "kept" ? icon.status : ("unused" as const) })),
+  );
 }
 
 /** Starts a created Styling's run in the background. A Styling whose run can't start has broken. */

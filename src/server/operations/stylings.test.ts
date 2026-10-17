@@ -16,6 +16,7 @@ import {
   readStylingStatus,
   showMoreOutfits,
   type StylingProgressView,
+  tryAgain,
 } from "@/server/operations/stylings";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { readUsageSummary } from "@/server/operations/usage";
@@ -939,8 +940,27 @@ describe("a first Styling that can't build anything", () => {
         finishedAt: new Date("2026-10-16T12:01:00Z"),
       }),
     ]);
-    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "no_outfits", outfits: [] });
+    // The Consultation is kept, saying what it couldn't build at, so another Budget Tier or Photo
+    // Style can be tried from the same photo.
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "no_outfits",
+      outfits: [],
+      failedStyling: { kind: "first", budgetTier: "no_budget", reason: "nothing_built" },
+    });
     expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({ state: "no_outfits", progress: null });
+  });
+
+  it("keeps a Face Photo's Consultation too, with no Budget Tier to say it couldn't build at", async () => {
+    harness.qloo.respond = () => qlooResponse([]);
+    const browser = await signedInUser();
+    const consultationId = await start(browser, "face");
+
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "no_outfits",
+      failedStyling: { kind: "first", budgetTier: null, reason: "nothing_built" },
+    });
   });
 
   it("fails as something broke when Qloo keeps failing, keeping nothing", async () => {
@@ -954,7 +974,11 @@ describe("a first Styling that can't build anything", () => {
       expect.objectContaining({ status: "failed", failureReason: "something_broke", stage: "style_icons", outfitsMade: 0 }),
     ]);
     expect(await harness.db.select().from(styleIcon).where(eq(styleIcon.consultationId, consultationId))).toEqual([]);
-    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "no_outfits", outfits: [] });
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "no_outfits",
+      outfits: [],
+      failedStyling: { kind: "first", budgetTier: "no_budget", reason: "something_broke" },
+    });
   });
 
   it("makes the one Outfit it can when Qloo finds a single Style Icon, and succeeds", async () => {
@@ -1324,7 +1348,7 @@ describe("a Photo Style change", () => {
     const browser = await signedInUser({ stylePreference: "womenswear" });
     const consultationId = await start(browser, "face");
     await harness.stylings.runPending();
-    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ failedRestyling: null });
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ failedStyling: null });
     harness.clock.set("2026-10-16T12:10:00Z");
 
     await changePhotoStyle(harness.context(browser), consultationId, ["edgy"]);
@@ -1336,7 +1360,7 @@ describe("a Photo Style change", () => {
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       state: "ready",
       photoStyle: ["casual"],
-      failedRestyling: { kind: "photo_style_change", photoStyle: ["edgy"], reason: "nothing_built" },
+      failedStyling: { kind: "photo_style_change", photoStyle: ["edgy"], reason: "nothing_built" },
       outfits: [
         { position: 1, styleIconName: "Ava Stone" },
         { position: 2, styleIconName: "Bea Marsh" },
@@ -1364,7 +1388,7 @@ describe("a Photo Style change", () => {
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       state: "ready",
       photoStyle: ["casual"],
-      failedRestyling: { kind: "photo_style_change", photoStyle: ["edgy"], reason: "something_broke" },
+      failedStyling: { kind: "photo_style_change", photoStyle: ["edgy"], reason: "something_broke" },
       outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }],
     });
   });
@@ -1410,7 +1434,7 @@ describe("a Photo Style change", () => {
     await harness.stylings.runPending();
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       // A later Styling has started since, so the failed change has nothing more to say.
-      failedRestyling: null,
+      failedStyling: null,
       outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }, { styleIconName: "Cleo Hart" }, { styleIconName: "Dana Reed" }],
     });
 
@@ -1473,7 +1497,7 @@ describe("a Photo Style change", () => {
       state: "no_outfits",
       photoStyle: ["casual"],
       outfits: [],
-      failedRestyling: { kind: "photo_style_change", photoStyle: ["sporty"] },
+      failedStyling: { kind: "photo_style_change", photoStyle: ["sporty"] },
     });
 
     harness.clock.set("2026-10-16T12:20:00Z");
@@ -1482,7 +1506,7 @@ describe("a Photo Style change", () => {
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       state: "ready",
       photoStyle: ["edgy"],
-      failedRestyling: null,
+      failedStyling: null,
       outfits: [
         { position: 1, styleIconName: "Gwen Black" },
         { position: 2, styleIconName: "Hope Lark" },
@@ -1655,7 +1679,7 @@ describe("a Budget Tier change", () => {
     const consultationId = await start(browser, "body_only");
     await harness.stylings.runPending();
     const before = (await readConsultation(harness.context(browser), consultationId))!;
-    expect(before).toMatchObject({ failedRestyling: null });
+    expect(before).toMatchObject({ failedStyling: null });
     harness.clock.set("2026-10-16T12:10:00Z");
 
     // No Brand's prices are Expensive.
@@ -1670,7 +1694,7 @@ describe("a Budget Tier change", () => {
       state: "ready",
       budgetTier: "no_budget",
       everyOutfitBuilt: false,
-      failedRestyling: { kind: "budget_tier_change", budgetTier: "expensive", reason: "nothing_built" },
+      failedStyling: { kind: "budget_tier_change", budgetTier: "expensive", reason: "nothing_built" },
     });
     expect(kept.outfits.map((o) => o.id)).toEqual(before.outfits.map((o) => o.id));
     // Only the first Styling's 2 count.
@@ -1682,7 +1706,7 @@ describe("a Budget Tier change", () => {
     await harness.stylings.runPending();
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       budgetTier: "no_budget",
-      failedRestyling: null,
+      failedStyling: null,
       outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }, { position: 3, styleIconName: "Cleo Hart" }],
     });
   });
@@ -1704,7 +1728,7 @@ describe("a Budget Tier change", () => {
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       state: "ready",
       budgetTier: "medium",
-      failedRestyling: { kind: "budget_tier_change", budgetTier: "expensive", reason: "something_broke" },
+      failedStyling: { kind: "budget_tier_change", budgetTier: "expensive", reason: "something_broke" },
       outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }],
     });
   });
@@ -1717,7 +1741,10 @@ describe("a Budget Tier change", () => {
     const browser = await signedInUser({ stylePreference: "womenswear" });
     const consultationId = await start(browser, "body_only", "expensive");
     await harness.stylings.runPending();
-    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "no_outfits", failedRestyling: null });
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "no_outfits",
+      failedStyling: { kind: "first", budgetTier: "expensive", reason: "nothing_built" },
+    });
 
     harness.clock.set("2026-10-16T12:10:00Z");
     await changeBudgetTier(harness.context(browser), consultationId, "medium");
@@ -1727,7 +1754,7 @@ describe("a Budget Tier change", () => {
       state: "no_outfits",
       budgetTier: "expensive",
       outfits: [],
-      failedRestyling: { kind: "budget_tier_change", budgetTier: "medium", reason: "nothing_built" },
+      failedStyling: { kind: "budget_tier_change", budgetTier: "medium", reason: "nothing_built" },
     });
 
     harness.clock.set("2026-10-16T12:20:00Z");
@@ -1737,7 +1764,7 @@ describe("a Budget Tier change", () => {
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       state: "ready",
       budgetTier: "low",
-      failedRestyling: null,
+      failedStyling: null,
       outfits: [
         { position: 1, styleIconName: "Ava Stone" },
         { position: 2, styleIconName: "Bea Marsh" },
@@ -1826,6 +1853,272 @@ describe("a Budget Tier change", () => {
     });
     expect(harness.stylings.pending).toEqual([]);
     expect(await stylingsOfKind(consultationId, "budget_tier_change")).toEqual([]);
+  });
+});
+
+describe("Try again", () => {
+  it("picks up a first Styling that broke at Style Icons there, without checking the photo again, then switches in its Outfits", async () => {
+    harness.qloo.respond = () => Response.json({ error: "Internal Server Error" }, { status: 500 });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "full_body", "medium");
+    await harness.stylings.runPending();
+    const photoChecks = harness.ai.photoCheckCount;
+    harness.qloo.respond = qlooAnswering({ female: WOMEN });
+    harness.qloo.requests.length = 0;
+    harness.clock.set("2026-10-16T12:10:00Z");
+
+    expect(await tryAgain(harness.context(browser), consultationId)).toEqual({ ok: true });
+
+    // The Styling step's checklist starts with the photo check ticked.
+    expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({
+      state: "styling",
+      progress: { kind: "try_again", stage: "style_icons", previews: { done: 0, of: 2 }, slow: false },
+    });
+    expect(await stylingsOfKind(consultationId, "try_again")).toEqual([
+      expect.objectContaining({ budgetTier: "medium", photoStyle: ["casual"], status: "running", startedAt: new Date("2026-10-16T12:10:00Z") }),
+    ]);
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "ready",
+      budgetTier: "medium",
+      failedStyling: null,
+      outfits: [
+        { position: 1, styleIconName: "Ava Stone" },
+        { position: 2, styleIconName: "Bea Marsh" },
+      ],
+    });
+    expect(personCalls()).toHaveLength(1);
+    expect(harness.ai.photoCheckCount).toBe(photoChecks);
+    expect(await usageRecordsOf(browser)).toEqual({ photo_check: 1, outfit: 2 });
+  });
+
+  it("carries on down the Style Icons found before it broke, with no person call, passing over the ones it had", async () => {
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+    // Ava Stone's tailoring fails, and the model goes down while tailoring Bea Marsh's.
+    harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails" };
+    harness.ai.duringCall = async (call) => {
+      if (call === "tailorPieces" && harness.ai.tailoringRequests.at(-1)?.styleIconName === "Bea Marsh") throw new Error("The model is down.");
+    };
+    await harness.stylings.runPending();
+    expect(await stylingsOfKind(consultationId, "first")).toEqual([
+      expect.objectContaining({ status: "failed", failureReason: "something_broke", stage: "building_outfits" }),
+    ]);
+    harness.ai.styleIconScenarios = {};
+    harness.ai.duringCall = undefined;
+    harness.qloo.requests.length = 0;
+    const photoChecks = harness.ai.photoCheckCount;
+    harness.clock.set("2026-10-16T12:10:00Z");
+
+    await tryAgain(harness.context(browser), consultationId);
+
+    // The checklist starts with the photo check and the Style Icons ticked.
+    expect(await readStylingStatus(harness.context(browser), consultationId)).toMatchObject({
+      progress: { kind: "try_again", stage: "building_outfits" },
+    });
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.position, o.styleIconName])).toEqual([
+      [1, "Bea Marsh"],
+      [2, "Cleo Hart"],
+    ]);
+    expect(harness.qloo.requests).toEqual([]);
+    expect(harness.ai.photoCheckCount).toBe(photoChecks);
+    // The broken Styling's own list is as it left it.
+    expect(await styleIconStatuses(consultationId, "first")).toEqual([
+      ["Ava Stone", "skipped"],
+      ["Bea Marsh", "unused"],
+      ["Cleo Hart", "unused"],
+      ["Dana Reed", "unused"],
+      ["Esme Vale", "unused"],
+      ["Fay Lowe", "unused"],
+    ]);
+  });
+
+  it("builds as the Photo Style change it tries again: its Outfits, Style Icons and Photo Style switch in together", async () => {
+    const answering = qlooAnsweringByPhotoStyle({ casual: { female: WOMEN }, edgy: { female: EDGY_WOMEN } });
+    // Qloo keeps failing on the edgy person call, for now.
+    let edgyFails = true;
+    harness.qloo.respond = (request) =>
+      edgyFails && request.url.searchParams.get("signal.interests.tags") === "urn:tag:personal_style:qloo:edgy"
+        ? Response.json({ error: "Internal Server Error" }, { status: 500 })
+        : answering(request);
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:10:00Z");
+    await changePhotoStyle(harness.context(browser), consultationId, ["edgy"]);
+    await harness.stylings.runPending();
+    edgyFails = false;
+    harness.clock.set("2026-10-16T12:20:00Z");
+
+    await tryAgain(harness.context(browser), consultationId);
+    // It finds Style Icons for the Photo Style the broken change was for.
+    expect(await stylingsOfKind(consultationId, "try_again")).toEqual([expect.objectContaining({ photoStyle: ["edgy"], stage: "style_icons" })]);
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "ready",
+      photoStyle: ["edgy"],
+      failedStyling: null,
+      outfits: [
+        { position: 1, styleIconName: "Gwen Black" },
+        { position: 2, styleIconName: "Hope Lark" },
+      ],
+    });
+    // "Show 2 more Outfits" then carries on down its Style Icons.
+    harness.clock.set("2026-10-16T12:30:00Z");
+    await showMoreOutfits(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.styleIconName)).toEqual([
+      "Gwen Black",
+      "Hope Lark",
+      "Iris Moon",
+    ]);
+  });
+
+  it("builds as the Budget Tier change it tries again: from Brands, switching in its Outfits and Budget Tier only once it succeeds", async () => {
+    // Qloo keeps failing on the Low Brand calls, for now.
+    let lowBrandsFail = true;
+    harness.qloo.respond = (request) =>
+      lowBrandsFail && request.url.searchParams.get("filter.tags")?.includes("urn:tag:target_income_level:qloo:low_to_medium")
+        ? Response.json({ error: "Internal Server Error" }, { status: 500 })
+        : qlooAnswering({ female: WOMEN })(request);
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+    const before = (await readConsultation(harness.context(browser), consultationId))!;
+    harness.clock.set("2026-10-16T12:10:00Z");
+    await changeBudgetTier(harness.context(browser), consultationId, "low");
+    await harness.stylings.runPending();
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      budgetTier: "no_budget",
+      failedStyling: { kind: "budget_tier_change", budgetTier: "low", reason: "something_broke" },
+    });
+    lowBrandsFail = false;
+    harness.qloo.requests.length = 0;
+    harness.clock.set("2026-10-16T12:20:00Z");
+
+    await tryAgain(harness.context(browser), consultationId);
+
+    expect(await readStylingStatus(harness.context(browser), consultationId)).toMatchObject({
+      progress: { kind: "try_again", stage: "brands" },
+    });
+    expect(await stylingsOfKind(consultationId, "try_again")).toEqual([expect.objectContaining({ budgetTier: "low", photoStyle: ["casual"] })]);
+    // The current Outfits and Budget Tier stay meanwhile.
+    const meanwhile = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(meanwhile).toMatchObject({ budgetTier: "no_budget" });
+    expect(meanwhile.outfits.map((o) => o.id)).toEqual(before.outfits.map((o) => o.id));
+    await harness.stylings.runPending();
+
+    const changed = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(changed).toMatchObject({
+      state: "ready",
+      budgetTier: "low",
+      failedStyling: null,
+      outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }],
+    });
+    expect(changed.outfits.map((o) => o.id)).not.toContain(before.outfits[0]!.id);
+    expect(personCalls()).toEqual([]);
+    expect(brandCalls().map((params) => params.get("filter.tags")!.split(",").includes("urn:tag:target_income_level:qloo:low_to_medium"))).not.toContain(false);
+  });
+
+  it("says what it couldn't build as the Styling it tries again, and can itself be tried again once it breaks", async () => {
+    const answering = qlooAnsweringByPhotoStyle({ casual: { female: WOMEN } });
+    // Qloo keeps failing on the edgy person call, for now.
+    let edgyFails = true;
+    harness.qloo.respond = (request) =>
+      edgyFails && request.url.searchParams.get("signal.interests.tags") === "urn:tag:personal_style:qloo:edgy"
+        ? Response.json({ error: "Internal Server Error" }, { status: 500 })
+        : answering(request);
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:10:00Z");
+    await changePhotoStyle(harness.context(browser), consultationId, ["edgy"]);
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:20:00Z");
+
+    expect(await tryAgain(harness.context(browser), consultationId)).toEqual({ ok: true });
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      photoStyle: ["casual"],
+      failedStyling: { kind: "photo_style_change", photoStyle: ["edgy"], reason: "something_broke" },
+      outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }],
+    });
+
+    // Qloo answers now, but finds no one edgy.
+    edgyFails = false;
+    harness.clock.set("2026-10-16T12:30:00Z");
+    expect(await tryAgain(harness.context(browser), consultationId)).toEqual({ ok: true });
+    await harness.stylings.runPending();
+
+    expect(await stylingsOfKind(consultationId, "try_again")).toEqual([
+      expect.objectContaining({ photoStyle: ["edgy"], status: "failed", failureReason: "something_broke" }),
+      expect.objectContaining({ photoStyle: ["edgy"], status: "failed", failureReason: "nothing_built" }),
+    ]);
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "ready",
+      photoStyle: ["casual"],
+      failedStyling: { kind: "photo_style_change", photoStyle: ["edgy"], reason: "nothing_built" },
+      outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }],
+    });
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ outfitsLeft: 8 });
+  });
+
+  it("starts nothing unless the latest Styling broke: not after one that succeeded or built nothing, nor after a broken \"Show 2 more Outfits\"", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const succeededId = await start(browser, "face");
+    await harness.stylings.runPending();
+    harness.qloo.respond = () => qlooResponse([]);
+    harness.clock.set("2026-10-16T12:10:00Z");
+    const builtNothingId = await start(browser, "face");
+    await harness.stylings.runPending();
+    // "Show 2 more Outfits" breaks, with the model down.
+    harness.clock.set("2026-10-16T12:20:00Z");
+    await showMoreOutfits(harness.context(browser), succeededId);
+    harness.ai.duringCall = async () => {
+      throw new Error("The model is down.");
+    };
+    await harness.stylings.runPending();
+    expect(await stylingsOfKind(succeededId, "more")).toEqual([expect.objectContaining({ failureReason: "something_broke" })]);
+    harness.ai.duringCall = undefined;
+    harness.clock.set("2026-10-16T12:30:00Z");
+
+    expect(await tryAgain(harness.context(browser), succeededId)).toEqual({ ok: false, refusal: "nothing-to-try-again" });
+    expect(await tryAgain(harness.context(browser), builtNothingId)).toEqual({ ok: false, refusal: "nothing-to-try-again" });
+    expect(await readConsultation(harness.context(browser), succeededId)).toMatchObject({ failedStyling: null, everyOutfitBuilt: true });
+    expect(harness.stylings.pending).toEqual([]);
+  });
+
+  it("starts through the shared start check, only on the owner's Consultation and while no Styling runs on it", async () => {
+    harness.qloo.respond = () => Response.json({ error: "Internal Server Error" }, { status: 500 });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+    expect(await tryAgain(harness.context(browser), consultationId)).toEqual({ ok: false, refusal: "already-styling" });
+    await harness.stylings.runPending();
+
+    expect(await tryAgain(harness.context(await signedInUser()), consultationId)).toEqual({ ok: false, refusal: "not-found" });
+    expect(await tryAgain(harness.context(new TestBrowser()), consultationId)).toEqual({ ok: false, refusal: "signed-out" });
+    const userId = (await readSignedInUser(harness.context(browser)))!.id;
+    await recordUsage(harness.db, { kind: "outfit", userId, at: harness.clock.now() }, 10);
+    // The usage summary that disables Try again says the same.
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({
+      stylingStart: { ok: false, refusal: "allowance-used", moreFrom: new Date("2026-10-17T12:00:00Z") },
+    });
+    expect(await tryAgain(harness.context(browser), consultationId)).toEqual({
+      ok: false,
+      refusal: "allowance-used",
+      moreFrom: new Date("2026-10-17T12:00:00Z"),
+    });
+    harness.clock.set("2026-10-17T12:00:00Z");
+    browser.ipCountry = "RU";
+    expect(await tryAgain(harness.context(browser), consultationId)).toEqual({ ok: false, refusal: "unsupported-region" });
+    expect(harness.stylings.pending).toEqual([]);
+    expect(await stylingsOfKind(consultationId, "try_again")).toEqual([]);
   });
 });
 
@@ -1959,14 +2252,28 @@ async function stylingsOfKind(consultationId: string, kind: StylingKind) {
     .where(and(eq(styling.consultationId, consultationId), eq(styling.kind, kind)));
 }
 
-/** Each ranked Style Icon's name and whether it was used, best first. */
-async function styleIconStatuses(consultationId: string) {
+/**
+ * Each ranked Style Icon's name and whether it was used, best first: only those on the list of the
+ * Consultation's Styling of `kind`, when it's given.
+ */
+async function styleIconStatuses(consultationId: string, kind?: StylingKind) {
   const icons = await harness.db
     .select({ name: styleIcon.name, status: styleIcon.status })
     .from(styleIcon)
-    .where(eq(styleIcon.consultationId, consultationId))
+    .innerJoin(styling, eq(styling.id, styleIcon.stylingId))
+    .where(and(eq(styleIcon.consultationId, consultationId), kind && eq(styling.kind, kind)))
     .orderBy(asc(styleIcon.position));
   return icons.map(({ name, status }) => [name, status]);
+}
+
+/** How many usage records the browser's user has, of each kind. */
+async function usageRecordsOf(browser: TestBrowser): Promise<Record<string, number>> {
+  const userId = (await readSignedInUser(harness.context(browser)))!.id;
+  const counts: Record<string, number> = {};
+  for (const { kind } of await harness.db.select({ kind: usageRecord.kind }).from(usageRecord).where(eq(usageRecord.userId, userId))) {
+    counts[kind] = (counts[kind] ?? 0) + 1;
+  }
+  return counts;
 }
 
 /** The stored Pieces of the Consultation's Outfits, in Outfit order. */

@@ -7,7 +7,7 @@ import * as z from "zod";
 import { BUDGET_TIERS, type BudgetTier, type PhotoStyle } from "@/config/consultations";
 import { ROUTES } from "@/config/routes";
 import { getOperationContext } from "@/server/app/context";
-import { changeBudgetTier, changePhotoStyle, photoStyleWordsSchema, showMoreOutfits } from "@/server/operations/stylings";
+import { changeBudgetTier, changePhotoStyle, photoStyleWordsSchema, showMoreOutfits, tryAgain } from "@/server/operations/stylings";
 
 /**
  * "Show 2 more Outfits". The page then shows where things stand: the compact checklist once the
@@ -46,6 +46,17 @@ export async function changeBudgetTierAction(consultationId: string, budgetTier:
     z.string().parse(consultationId),
     z.enum(BUDGET_TIERS).parse(budgetTier),
   );
+  if (!result.ok && result.refusal === "signed-out") redirect(ROUTES.signIn);
+  refresh();
+}
+
+/**
+ * Try again, once the latest Styling broke. The page then shows where things stand: the Styling
+ * step once the Styling has started, or, if it couldn't, why not, such as a limit reached since the
+ * page loaded.
+ */
+export async function tryAgainAction(consultationId: string): Promise<void> {
+  const result = await tryAgain(await getOperationContext(), z.string().parse(consultationId));
   if (!result.ok && result.refusal === "signed-out") redirect(ROUTES.signIn);
   refresh();
 }
