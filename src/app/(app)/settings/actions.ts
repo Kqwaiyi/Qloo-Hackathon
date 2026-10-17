@@ -3,13 +3,16 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { ROUTES, SIGNED_OUT_EVERYWHERE_ROUTE } from "@/config/routes";
+import { ACCOUNT_DELETED_ROUTE, ROUTES, SIGNED_OUT_EVERYWHERE_ROUTE } from "@/config/routes";
 import { getOperationContext } from "@/server/app/context";
 import { type ProfileInput, profileInputSchema } from "@/server/accounts/profile";
 import {
   type ChangePasswordInput,
   changePassword,
   changePasswordInputSchema,
+  type DeleteAccountInput,
+  deleteAccount,
+  deleteAccountInputSchema,
   signOutEverywhere,
   updateProfile,
   withdrawPhotoConsent,
@@ -42,4 +45,12 @@ export async function withdrawPhotoConsentAction() {
 export async function signOutEverywhereAction(): Promise<void> {
   const result = await signOutEverywhere(await getOperationContext());
   redirect(result.ok ? SIGNED_OUT_EVERYWHERE_ROUTE : ROUTES.signIn);
+}
+
+/** Settings → Danger → "Delete account", given the password. Deleted, the user lands on the landing page, signed out. */
+export async function deleteAccountAction(input: DeleteAccountInput) {
+  const result = await deleteAccount(await getOperationContext(), deleteAccountInputSchema.parse(input));
+  if (result.ok) redirect(ACCOUNT_DELETED_ROUTE);
+  if (result.refusal === "signed-out") redirect(ROUTES.signIn);
+  return result;
 }

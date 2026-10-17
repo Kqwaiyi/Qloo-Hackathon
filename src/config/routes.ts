@@ -43,6 +43,8 @@ export const AUTH_ENDPOINTS = {
   changePassword: "/change-password",
   /** Ends every session of the signed-in user, this one included. */
   revokeSessions: "/revoke-sessions",
+  /** Deletes the signed-in user's account, given their password. */
+  deleteUser: "/delete-user",
 } as const;
 
 /** Where a signed-in user lands. */
@@ -73,3 +75,7 @@ export const PASSWORD_RESET_ROUTE = `${ROUTES.signIn}?${PASSWORD_RESET_PARAM}=1`
 /** Where "Sign out of all devices" lands: sign-in, saying every device is signed out. */
 export const SIGNED_OUT_EVERYWHERE_PARAM = "signed-out-everywhere";
 export const SIGNED_OUT_EVERYWHERE_ROUTE = `${ROUTES.signIn}?${SIGNED_OUT_EVERYWHERE_PARAM}=1`;
+
+/** Where deleting the account lands: the landing page, saying the account has been deleted. */
+export const ACCOUNT_DELETED_PARAM = "account-deleted";
+export const ACCOUNT_DELETED_ROUTE = `${ROUTES.home}?${ACCOUNT_DELETED_PARAM}=1`;

@@ -5,6 +5,7 @@ import { username } from "better-auth/plugins";
 import * as z from "zod";
 
 import {
+  DELETE_ACCOUNT_RATE_LIMIT,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   PASSWORD_RESET_LINK_LIFETIME_SECONDS,
@@ -21,13 +22,16 @@ import { findCountry } from "@/config/countries";
 import { AUTH_API_PATH, AUTH_ENDPOINTS } from "@/config/routes";
 import { AGE_GATE_COOKIE, isBlockedByAgeGate } from "@/server/accounts/age-gate";
 import { judgeAge, parseIsoBirthDate } from "@/server/accounts/birth-date";
+import { afterAccountDeletion, beforeAccountDeletion } from "@/server/accounts/deletion";
 import { endEmailChange, recordEmailChangeStep } from "@/server/accounts/email-change";
+import type { BlobStore } from "@/server/blob/store";
 import type { Clock } from "@/server/clock";
 import type { Database } from "@/server/db/database";
 import * as schema from "@/server/db/schema";
 import type { EmailSender } from "@/server/email/send-email";
 import { serializeCookie } from "@/server/http/cookies";
 import { isFromSupportedRegion } from "@/server/region-gate";
+import type { StylingRunner } from "@/server/stylings/runner";
 
 import {
   emailChangeApprovalSender,
@@ -53,11 +57,15 @@ export interface AuthOptions {
   emailSender: EmailSender;
   /** The team's address, which the password-changed email says to write to. */
   teamEmail: string;
+  /** Where photos and Previews are kept, which deleting an account deletes. */
+  blob: BlobStore;
+  /** What runs Stylings, whose Workflow runs deleting an account cancels. */
+  stylings: StylingRunner;
   /** Whether Better Auth's rate limits apply. Unset, they do in production only, as Better Auth's default. */
   rateLimit?: boolean;
 }
 
-export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSender, teamEmail, rateLimit }: AuthOptions) {
+export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSender, teamEmail, blob, stylings, rateLimit }: AuthOptions) {
   /**
    * Rechecks 18+ on every email sign-up, ours or a direct call, before anything is read or written,
    * then the region gate and the app-wide sign-up email cap.
@@ -105,6 +113,15 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
   async function beforeRequestPasswordReset(): Promise<void> {
     const refusal = await emailSender.refusalFor("password-reset", null);
     if (refusal) throw emailRefusalError(refusal);
+  }
+
+  /**
+   * Deleting the account is confirmed with the password only. Without one, Better Auth would take a
+   * sign-in less than a day old instead.
+   */
+  function beforeDeleteUser(ctx: HookContext): void {
+    const password: unknown = ctx.body?.password;
+    if (typeof password !== "string" || password === "") throw passwordRequired();
   }
 
   /** Every password change signs out the user's other devices, whatever the request asked for. */
@@ -173,13 +190,21 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
     rateLimit: {
       enabled: rateLimit,
       storage: "database",
-      customRules: { [AUTH_ENDPOINTS.signUp]: { ...SIGN_UP_RATE_LIMIT } },
+      customRules: {
+        [AUTH_ENDPOINTS.signUp]: { ...SIGN_UP_RATE_LIMIT },
+        [AUTH_ENDPOINTS.deleteUser]: { ...DELETE_ACCOUNT_RATE_LIMIT },
+      },
     },
     advanced: {
       // The client's IP address, as Vercel sets it.
       ipAddress: { ipAddressHeaders: ["x-forwarded-for"] },
     },
     user: {
+      deleteUser: {
+        enabled: true,
+        beforeDelete: (deleted) => beforeAccountDeletion({ db, blob, clock, stylings }, deleted.id),
+        afterDelete: (deleted) => afterAccountDeletion({ db }, deleted.id),
+      },
       changeEmail: {
         enabled: true,
         // An unverified user's change happens at once, and a new link goes to the new address.
@@ -211,6 +236,7 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
         if (ctx.path === AUTH_ENDPOINTS.changeEmail) await beforeChangeEmail(ctx);
         if (ctx.path === AUTH_ENDPOINTS.verifyEmail) await beforeVerifyEmail(ctx);
         if (ctx.path === AUTH_ENDPOINTS.requestPasswordReset) await beforeRequestPasswordReset();
+        if (ctx.path === AUTH_ENDPOINTS.deleteUser) beforeDeleteUser(ctx);
         if (ctx.path === AUTH_ENDPOINTS.changePassword) return beforeChangePassword(ctx);
       }),
       after: createAuthMiddleware(async (ctx) => {
@@ -244,6 +270,10 @@ function under18(headers: Record<string, string> = {}): APIError {
 
 function unsupportedRegion(): APIError {
   return new APIError("FORBIDDEN", { code: "UNSUPPORTED_REGION", message: COPY.unsupportedRegion });
+}
+
+function passwordRequired(): APIError {
+  return new APIError("BAD_REQUEST", { code: "PASSWORD_REQUIRED", message: "Your password is required to delete your account." });
 }
 
 function birthDateRequired(): APIError {

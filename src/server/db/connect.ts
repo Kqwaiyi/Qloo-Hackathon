@@ -1,3 +1,4 @@
+import type { PGlite } from "@electric-sql/pglite";
 import { attachDatabasePool } from "@vercel/functions";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { mkdirSync } from "node:fs";
@@ -23,4 +24,10 @@ export async function connectDatabase(): Promise<Database> {
   const dataDir = process.env.PGLITE_DATA_DIR ?? path.join(process.cwd(), ".data", "pglite");
   if (!dataDir.startsWith("memory://")) mkdirSync(dataDir, { recursive: true });
   return openPgliteDatabase(dataDir);
+}
+
+/** Closes the database's connections, for a script that's done with it. */
+export async function closeDatabase(db: Database): Promise<void> {
+  const client = (db as Database & { $client: Pool | PGlite }).$client;
+  await (client instanceof Pool ? client.end() : client.close());
 }

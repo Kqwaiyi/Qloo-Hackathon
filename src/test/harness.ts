@@ -143,6 +143,8 @@ export async function createTestHarness({ rateLimit = false }: { rateLimit?: boo
     secret: "test-secret-that-is-at-least-32-characters-long",
     emailSender,
     teamEmail: "team@example.test",
+    blob,
+    stylings,
     rateLimit,
   });
 

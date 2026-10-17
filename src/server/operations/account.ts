@@ -1,13 +1,10 @@
-import { eq } from "drizzle-orm";
 import * as z from "zod";
 
 import { isAllowedPassword } from "@/config/accounts";
 import { AUTH_ENDPOINTS } from "@/config/routes";
-import { clearPhotoConsent } from "@/server/accounts/photo-consent";
+import { withdrawPhotoConsentOf } from "@/server/accounts/photo-consent";
 import { checkProfile, type ProfileField, type ProfileInput, usernameProblem } from "@/server/accounts/profile";
 import { postToAuthEndpoint } from "@/server/auth/endpoint";
-import { deleteConsultationOf } from "@/server/consultations/deletion";
-import { consultation } from "@/server/db/schema";
 import type { AuthRequestContext, OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import { signOut } from "@/server/operations/sign-in";
@@ -63,19 +60,39 @@ export type WithdrawPhotoConsentRefusal = { refusal: "signed-out" };
 
 /**
  * Settings → Privacy → "Withdraw photo consent": forgets the user's agreement to the photo notice,
- * then deletes every one of their Consultations for good, as deleting each would, stopping any
- * Styling first. The account stays. The agreement goes first, so no new Consultation can start
- * meanwhile, and withdrawing again finishes the job if a Consultation's Blob objects couldn't go.
+ * then deletes every one of their Consultations for good (see `withdrawPhotoConsentOf`). The
+ * account stays.
  */
 export async function withdrawPhotoConsent(
   ctx: Pick<OperationContext, "auth" | "db" | "blob" | "clock" | "stylings" | "requestHeaders">,
 ): Promise<Result<object, WithdrawPhotoConsentRefusal>> {
   const user = await readSignedInUser(ctx);
   if (!user) return { ok: false, refusal: "signed-out" };
-  await clearPhotoConsent(ctx.db, user.id);
-  const consultations = await ctx.db.select({ id: consultation.id }).from(consultation).where(eq(consultation.userId, user.id));
-  for (const { id } of consultations) await deleteConsultationOf(ctx, { userId: user.id, consultationId: id });
+  await withdrawPhotoConsentOf(ctx, user.id);
   return { ok: true };
+}
+
+/** The password that confirms deleting the account, as sent. Server actions parse their input with this. */
+export const deleteAccountInputSchema = z.object({ password: z.string() });
+export type DeleteAccountInput = z.infer<typeof deleteAccountInputSchema>;
+
+export type DeleteAccountRefusal = { refusal: "signed-out" | "wrong-password" | "rate-limited" };
+
+/** Settings → Danger → "Delete account", confirmed with the password. The user is signed out. */
+export async function deleteAccount(ctx: AuthRequestContext, input: DeleteAccountInput): Promise<Result<object, DeleteAccountRefusal>> {
+  const answer = await postToAuthEndpoint(ctx, AUTH_ENDPOINTS.deleteUser, { password: input.password });
+  if (answer.ok) return { ok: true };
+  switch (answer.code) {
+    case "INVALID_PASSWORD":
+    // Longer than any password can be, or none at all, so it isn't theirs.
+    case "PASSWORD_TOO_LONG":
+    case "PASSWORD_REQUIRED":
+      return { ok: false, refusal: "wrong-password" };
+  }
+  if (answer.status === 401) return { ok: false, refusal: "signed-out" };
+  // Our per-IP rate limit on account deletions, which answers without a code.
+  if (answer.status === 429) return { ok: false, refusal: "rate-limited" };
+  throw new Error(`Better Auth couldn't delete the account (${answer.status} ${answer.code ?? "no code"}).`);
 }
 
 export type SignOutEverywhereRefusal = { refusal: "signed-out" };

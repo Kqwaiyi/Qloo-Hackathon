@@ -30,6 +30,12 @@ export const AGE_GATE_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 /** Better Auth's rate limit on sign-ups, per IP address. */
 export const SIGN_UP_RATE_LIMIT = { window: 60 * 60, max: 3 } as const;
 
+/**
+ * Better Auth's rate limit on account deletions, per IP address. Each try checks a password, so it's
+ * as tight as Better Auth's own limit on password changes: 3 tries in 10 seconds.
+ */
+export const DELETE_ACCOUNT_RATE_LIMIT = { window: 10, max: 3 } as const;
+
 /** A verification link works for this long. */
 export const VERIFICATION_LINK_LIFETIME_SECONDS = 24 * 60 * 60;
 

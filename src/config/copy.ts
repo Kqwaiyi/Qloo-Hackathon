@@ -36,6 +36,12 @@ export const COPY = {
   deletionPromise:
     "Your photos and Previews are deleted immediately. Leftover records in our providers' systems are gone within a day, and Google's abuse-monitoring copy within 55 days.",
   withdrawPhotoConsent: "Withdraw photo consent",
+  deleteAccount: "Delete account",
+  /** The account-deletion modal, which then asks for the password. */
+  accountDeletionWarning:
+    "This deletes your account and every Consultation, with its photos and Previews, right away. Copies in our providers' systems are gone within a day, and Google's abuse-monitoring copy within 55 days. This can't be undone.",
+  /** On the landing page, once the account is deleted. */
+  accountDeleted: "Your account has been deleted.",
   /** The allowance line beside every action that uses Outfits. */
   outfitsItUses: (outfits: number, left: number) => `Uses ${outfits} of your ${left} Outfits left today`,
   allowanceUsedUp: (allowance: number, time: string) => `You've made today's ${allowance} Outfits. More from ${time}.`,

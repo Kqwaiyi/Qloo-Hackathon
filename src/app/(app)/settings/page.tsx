@@ -12,6 +12,7 @@ import { getPendingEmailChange, requireSignedInUser } from "@/server/data/sessio
 import { getTeamEmail } from "@/server/data/team";
 
 import { signOutEverywhereAction } from "./actions";
+import { DeleteAccount } from "./delete-account";
 import { EmailForm } from "./email-form";
 import { PasswordForm } from "./password-form";
 import { ProfileForm } from "./profile-form";
@@ -19,7 +20,7 @@ import { WithdrawPhotoConsent } from "./withdraw-photo-consent";
 
 export const metadata: Metadata = { title: "Settings" };
 
-/** Profile, Sign-in and Privacy. Account deletion comes with a later ticket. */
+/** Profile, Sign-in, Privacy and Danger. */
 export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await requireSignedInUser();
   const [teamEmail, pendingEmailChange, params] = await Promise.all([getTeamEmail(), getPendingEmailChange(), searchParams]);
@@ -90,6 +91,10 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
             <span className="text-stone-600"> or to correct it. We answer within a month.</span>
           </li>
         </ul>
+      </Section>
+
+      <Section title="Danger">
+        <DeleteAccount />
       </Section>
     </>
   );
