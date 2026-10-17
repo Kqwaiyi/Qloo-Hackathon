@@ -1,14 +1,14 @@
 import { and, eq, ne, sql } from "drizzle-orm";
 import * as z from "zod";
 
-import { type ConsultationState, isSamePhotoStyle, PHOTO_STYLES, type PhotoStyleWords } from "@/config/consultations";
+import { type BudgetTier, type ConsultationState, isSamePhotoStyle, PHOTO_STYLES, type PhotoStyleWords } from "@/config/consultations";
 import { SLOW_STEP_MS, type StylingKind, type StylingStage } from "@/config/stylings";
 import type { Transaction } from "@/server/db/database";
 import { consultation, outfit, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import type { PhotoCategoryFacts } from "@/server/outfit-assembly/categories";
-import { hasCurrentStyleIconLeft } from "@/server/stylings/current-outfits";
+import { hasCurrentStyleIconLeft, readCurrentStyleIconList } from "@/server/stylings/current-outfits";
 import { checkStylingStart, createStyling, launchStyling, type NewStyling, type StylingStartRefusal } from "@/server/stylings/start";
 import { outfitsStage } from "@/server/stylings/steps";
 
@@ -68,8 +68,38 @@ export async function changePhotoStyle(
   });
 }
 
+/** Why a Budget Tier change didn't start. */
+export type ChangeBudgetTierRefusal =
+  | ConsultationStylingRefusal
+  /** It's a Face Photo's: a Hairstyle has no price, so there's no Budget Tier to change. */
+  | { refusal: "no-budget-tier" }
+  /** It's the Consultation's Budget Tier already: there's nothing to change. */
+  | { refusal: "same-budget-tier" };
+
+/**
+ * Changes the Budget Tier: through the shared start check, starts a Styling that builds as many
+ * Outfits as that check allows at `budgetTier`, from the top of the current Style Icons. If it
+ * builds any, they replace the current Outfits, with the Budget Tier, all at once when it
+ * finishes. If it builds none, the Consultation keeps what it had.
+ */
+export async function changeBudgetTier(
+  ctx: OperationContext,
+  consultationId: string,
+  budgetTier: BudgetTier,
+): Promise<Result<object, ChangeBudgetTierRefusal>> {
+  return startStylingOn<ChangeBudgetTierRefusal>(ctx, consultationId, async (tx, current) => {
+    if (current.budgetTier === null) return { ok: false, refusal: "no-budget-tier" };
+    if (current.budgetTier === budgetTier) return { ok: false, refusal: "same-budget-tier" };
+    const change = { kind: "budget_tier_change", budgetTier, photoStyle: current.photoStyle } as const;
+    const currentList = await readCurrentStyleIconList(tx, consultationId);
+    // With none to build from, it finds its own, as a first Styling does.
+    if (!currentList) return { ok: true, ...change, stage: "style_icons" };
+    return { ok: true, ...change, stage: outfitsStage(current), copiesStyleIconList: currentList };
+  });
+}
+
 /** What a Styling on a Consultation builds, as the operation starting it decides. */
-type StylingPlan = Pick<NewStyling, "kind" | "budgetTier" | "photoStyle" | "stage">;
+type StylingPlan = Pick<NewStyling, "kind" | "budgetTier" | "photoStyle" | "stage" | "copiesStyleIconList">;
 
 /** What an operation starting a Styling decides from: the Consultation as it stands. */
 type CurrentConsultation = PhotoCategoryFacts & Pick<NewStyling, "budgetTier" | "photoStyle">;

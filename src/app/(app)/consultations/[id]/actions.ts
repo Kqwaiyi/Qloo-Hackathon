@@ -4,10 +4,10 @@ import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import * as z from "zod";
 
-import type { PhotoStyle } from "@/config/consultations";
+import { BUDGET_TIERS, type BudgetTier, type PhotoStyle } from "@/config/consultations";
 import { ROUTES } from "@/config/routes";
 import { getOperationContext } from "@/server/app/context";
-import { changePhotoStyle, photoStyleWordsSchema, showMoreOutfits } from "@/server/operations/stylings";
+import { changeBudgetTier, changePhotoStyle, photoStyleWordsSchema, showMoreOutfits } from "@/server/operations/stylings";
 
 /**
  * "Show 2 more Outfits". The page then shows where things stand: the compact checklist once the
@@ -30,6 +30,21 @@ export async function changePhotoStyleAction(consultationId: string, photoStyle:
     await getOperationContext(),
     z.string().parse(consultationId),
     photoStyleWordsSchema.parse(photoStyle),
+  );
+  if (!result.ok && result.refusal === "signed-out") redirect(ROUTES.signIn);
+  refresh();
+}
+
+/**
+ * Changes the Budget Tier to the one picked. The page then shows where things stand: the Styling
+ * step once the Styling has started, or, if it couldn't, why not, such as a limit reached since the
+ * page loaded.
+ */
+export async function changeBudgetTierAction(consultationId: string, budgetTier: BudgetTier): Promise<void> {
+  const result = await changeBudgetTier(
+    await getOperationContext(),
+    z.string().parse(consultationId),
+    z.enum(BUDGET_TIERS).parse(budgetTier),
   );
   if (!result.ok && result.refusal === "signed-out") redirect(ROUTES.signIn);
   refresh();

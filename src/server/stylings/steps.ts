@@ -61,9 +61,9 @@ export class StylingNotRunningError extends Error {
 export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
   return {
     async ranksStyleIcons(stylingId) {
-      const { kind } = await readRunningStyling(ctx.db, stylingId);
-      // One that adds to the current Outfits carries on down their Style Icons.
-      return !addsToCurrentOutfits(kind);
+      const { stage } = await readRunningStyling(ctx.db, stylingId);
+      // Any other has Style Icons already: the current ones, or its own copy of them.
+      return stage === "style_icons";
     },
 
     async styleIconLines(stylingId) {
@@ -128,11 +128,11 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
         // Each failed tailoring was a try beyond the Outfits wanted: a substitute.
         const triesLeft = running.outfitsWanted + MAX_TAILORING_SUBSTITUTES - made.length - planning!.tailoringFailures;
         const count = Math.min(open.length, triesLeft);
-        if (count <= 0 || !beside.styleIconsRankedBy) return { fetchBrandsFor: [], tries: [] };
+        if (count <= 0 || !beside.styleIconList) return { fetchBrandsFor: [], tries: [] };
         const icons = await tx
           .select({ id: styleIcon.id, line: styleIcon.line })
           .from(styleIcon)
-          .where(and(eq(styleIcon.stylingId, beside.styleIconsRankedBy), eq(styleIcon.status, "unused")))
+          .where(and(eq(styleIcon.stylingId, beside.styleIconList), eq(styleIcon.status, "unused")))
           .orderBy(asc(styleIcon.position));
         if (!needsBrands(outfitCategories(planning!))) {
           return { fetchBrandsFor: [], tries: icons.slice(0, count).map((icon, index) => ({ position: open[index]!, styleIconId: icon.id, brands: null })) };
@@ -391,11 +391,11 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
     await tx.update(styling).set({ status: "failed", failureReason, finishedAt }).where(eq(styling.id, stylingId));
     // A failed "Show 2 more Outfits" passes over the rest of the current Style Icons: that's every
     // Outfit it can build for the photo, until a re-styling builds new ones.
-    if (addsToCurrentOutfits(running.kind) && beside.styleIconsRankedBy) {
+    if (addsToCurrentOutfits(running.kind) && beside.styleIconList) {
       await tx
         .update(styleIcon)
         .set({ status: "skipped" })
-        .where(and(eq(styleIcon.stylingId, beside.styleIconsRankedBy), eq(styleIcon.status, "unused")));
+        .where(and(eq(styleIcon.stylingId, beside.styleIconList), eq(styleIcon.status, "unused")));
     }
     const [shown] = await tx
       .select({ id: outfit.id })
@@ -415,6 +415,7 @@ async function readRunningStyling(db: Database, stylingId: string) {
     .select({
       consultationId: styling.consultationId,
       kind: styling.kind,
+      stage: styling.stage,
       photoStyle: styling.photoStyle,
       budgetTier: styling.budgetTier,
       stylePreference: consultation.stylePreference,

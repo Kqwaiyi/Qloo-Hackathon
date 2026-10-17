@@ -19,11 +19,16 @@ import { getUsageSummary } from "@/server/data/usage";
 import type { ConsultationView, FailedRestyling, OutfitView, PieceView, PreviewView } from "@/server/operations/consultations";
 
 import { Stepper } from "../stepper";
+import { AllowanceLine } from "./allowance-line";
+import { BudgetTierDropdown } from "./budget-tier-dropdown";
 import { MoreOutfits } from "./more-outfits";
 import { PhotoStyleEditor } from "./photo-style-editor";
 import { StylingProgress } from "./styling-progress";
 
 export const metadata: Metadata = { title: "Your Outfits" };
+
+/** The header's allowance line, beside both the Budget Tier dropdown and the Photo Style editor. */
+const RESTYLING_LINE_ID = "restyling-line";
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -50,6 +55,8 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   }
   const usage = await getUsageSummary();
   if (!usage) redirect(ROUTES.signIn);
+  // Re-stylings start from the header, but not while "Show 2 more Outfits" runs.
+  const canRestyle = usage.stylingStart.ok && progress === null;
 
   return (
     <>
@@ -66,15 +73,25 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           <h1 className="text-2xl font-semibold tracking-tight">Your Outfits</h1>
           <p className="text-sm text-stone-600">
             {PHOTO_TYPE_LABELS[consultation.photoType]} · <LocalDate date={consultation.createdAt} />
-            {consultation.budgetTier && <> · Budget Tier: {BUDGET_TIER_LABELS[consultation.budgetTier]}</>}
           </p>
-          <PhotoStyleEditor
-            consultationId={consultation.id}
-            photoStyle={consultation.photoStyle}
-            stylingRunning={progress !== null}
-            stylingStart={usage.stylingStart}
-            outfitsLeft={usage.outfitsLeft}
-          />
+          <div className="mt-2 space-y-2 text-sm">
+            {/* A Face Photo has no Budget Tier. */}
+            {consultation.budgetTier && (
+              <BudgetTierDropdown
+                consultationId={consultation.id}
+                budgetTier={consultation.budgetTier}
+                canStart={canRestyle}
+                allowanceLineId={RESTYLING_LINE_ID}
+              />
+            )}
+            <PhotoStyleEditor
+              consultationId={consultation.id}
+              photoStyle={consultation.photoStyle}
+              canStart={canRestyle}
+              allowanceLineId={RESTYLING_LINE_ID}
+            />
+            <AllowanceLine id={RESTYLING_LINE_ID} stylingStart={usage.stylingStart} outfitsLeft={usage.outfitsLeft} className="text-stone-600" />
+          </div>
         </div>
       </header>
       {consultation.failedRestyling && (
@@ -112,11 +129,17 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   );
 }
 
-/** What a failed re-styling says, and that the Outfits from before it are still here, if there are any. */
-function failedRestylingLine(failedRestyling: FailedRestyling, { photoStyle, outfits, photoType }: ConsultationView): string {
-  const previous = outfits.length > 0 ? photoStyleText(photoStyle) : null;
-  return failedRestyling.reason === "something_broke"
-    ? COPY.photoStyleChangeBroke(previous)
+/**
+ * What a failed re-styling says, and that the Outfits from before it are still here, if there are
+ * any, by the Budget Tier or Photo Style it changed.
+ */
+function failedRestylingLine(failedRestyling: FailedRestyling, { budgetTier, photoStyle, outfits, photoType }: ConsultationView): string {
+  const byBudgetTier = failedRestyling.kind === "budget_tier_change";
+  // Only a body photo's Budget Tier can change, and it always has one.
+  const previous = outfits.length === 0 ? null : byBudgetTier ? budgetTier && BUDGET_TIER_LABELS[budgetTier] : photoStyleText(photoStyle);
+  if (failedRestyling.reason === "something_broke") return COPY.restylingBroke(previous);
+  return failedRestyling.kind === "budget_tier_change"
+    ? COPY.budgetTierChangeBuiltNothing(BUDGET_TIER_LABELS[failedRestyling.budgetTier], previous)
     : COPY.photoStyleChangeBuiltNothing(photoStyleText(failedRestyling.photoStyle), previous, hasBudgetTier(photoType));
 }
 

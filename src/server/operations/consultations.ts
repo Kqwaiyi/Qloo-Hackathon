@@ -192,7 +192,10 @@ export interface ConsultationView {
  * A re-styling that made no Outfit: "We couldn't build Outfits … for this photo.", or, when it
  * broke, "Something went wrong while styling."
  */
-export type FailedRestyling = { kind: "photo_style_change"; photoStyle: PhotoStyleWords; reason: StylingFailureReason };
+export type FailedRestyling = { reason: StylingFailureReason } & (
+  | { kind: "photo_style_change"; photoStyle: PhotoStyleWords }
+  | { kind: "budget_tier_change"; budgetTier: BudgetTier }
+);
 
 export interface OutfitView {
   id: string;
@@ -319,14 +322,18 @@ export async function readConsultation(
 /** The Consultation's latest Styling, if it was a re-styling that failed: what it tried to build for. */
 async function readFailedRestyling(db: Database, consultationId: string): Promise<FailedRestyling | null> {
   const [latest] = await db
-    .select({ kind: styling.kind, photoStyle: styling.photoStyle, failureReason: styling.failureReason })
+    .select({ kind: styling.kind, photoStyle: styling.photoStyle, budgetTier: styling.budgetTier, failureReason: styling.failureReason })
     .from(styling)
     .where(eq(styling.consultationId, consultationId))
     .orderBy(desc(styling.startedAt))
     .limit(1);
   // Only a failed Styling has a failure reason.
-  if (latest?.kind !== "photo_style_change" || !latest.failureReason) return null;
-  return { kind: latest.kind, photoStyle: latest.photoStyle, reason: latest.failureReason };
+  if (!latest?.failureReason) return null;
+  const reason = latest.failureReason;
+  if (latest.kind === "photo_style_change") return { kind: latest.kind, photoStyle: latest.photoStyle, reason };
+  // A Budget Tier change always has a Budget Tier to build at.
+  if (latest.kind === "budget_tier_change" && latest.budgetTier) return { kind: latest.kind, budgetTier: latest.budgetTier, reason };
+  return null;
 }
 
 /** One row of My Consultations. */

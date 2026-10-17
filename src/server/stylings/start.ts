@@ -6,7 +6,7 @@ import { QLOO_BACKSTOP_CALLS } from "@/config/limits";
 import { OUTFITS_PER_STYLING, type StylingKind, type StylingStage } from "@/config/stylings";
 import { startOfNextUtcMonth } from "@/server/clock";
 import type { Transaction } from "@/server/db/database";
-import { consultation, styling } from "@/server/db/schema";
+import { consultation, styleIcon, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import type { SignedInUser } from "@/server/operations/session";
 import { type QlooLimitState, readQlooLimitState } from "@/server/qloo/limit-state";
@@ -90,18 +90,24 @@ export interface NewStyling {
   /** How many Outfits it makes, at most: what `checkStylingStart` allowed. */
   outfitsWanted: number;
   /**
-   * Where it starts: a first Styling and a Photo Style change rank Style Icons of their own, and
-   * "Show 2 more Outfits" carries on down the current ones from Brands, or from Building Outfits
-   * for a Face Photo.
+   * Where it starts. At Style Icons, it ranks its own, as a first Styling and a Photo Style change
+   * do. Further in, it has them already: "Show 2 more Outfits" carries on down the current ones
+   * from Brands, or from Building Outfits for a Face Photo, and a Budget Tier change builds from
+   * Brands on its own copy of them.
    */
   stage: StylingStage;
+  /**
+   * A Style Icon list it builds from the top of, by the Styling it belongs to: a Budget Tier
+   * change's, the current one. It gets its own copy, so that list keeps its statuses whatever it does.
+   */
+  copiesStyleIconList?: string;
 }
 
 /**
- * Creates a running Styling in the caller's transaction, and shows its Consultation as Styling.
- * Once the transaction commits, `launchStyling` sets it going.
+ * Creates a running Styling in the caller's transaction, with any Style Icon list it copies, and
+ * shows its Consultation as Styling. Once the transaction commits, `launchStyling` sets it going.
  */
-export async function createStyling(tx: Transaction, now: Date, newStyling: NewStyling): Promise<string> {
+export async function createStyling(tx: Transaction, now: Date, { copiesStyleIconList, ...newStyling }: NewStyling): Promise<string> {
   const id = randomUUID();
   await tx.insert(styling).values({
     id,
@@ -112,8 +118,25 @@ export async function createStyling(tx: Transaction, now: Date, newStyling: NewS
     tailoringFailures: 0,
     startedAt: now,
   });
+  if (copiesStyleIconList) await copyStyleIconList(tx, { from: copiesStyleIconList, to: id });
   await tx.update(consultation).set({ state: "styling" }).where(eq(consultation.id, newStyling.consultationId));
   return id;
+}
+
+/** Copies one Styling's Style Icon list to another, in the same order and all unused. */
+async function copyStyleIconList(tx: Transaction, { from, to }: { from: string; to: string }): Promise<void> {
+  const icons = await tx
+    .select({
+      consultationId: styleIcon.consultationId,
+      position: styleIcon.position,
+      qlooEntityId: styleIcon.qlooEntityId,
+      name: styleIcon.name,
+      line: styleIcon.line,
+    })
+    .from(styleIcon)
+    .where(eq(styleIcon.stylingId, from));
+  if (icons.length === 0) return;
+  await tx.insert(styleIcon).values(icons.map((icon) => ({ ...icon, id: randomUUID(), stylingId: to, status: "unused" as const })));
 }
 
 /** Starts a created Styling's run in the background. A Styling whose run can't start has broken. */

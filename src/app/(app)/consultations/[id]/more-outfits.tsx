@@ -1,8 +1,7 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useRef } from "react";
 
-import { LimitMessage } from "@/components/limit-message";
 import { secondaryButton } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import type { StylingStage } from "@/config/stylings";
@@ -11,6 +10,8 @@ import type { UsageSummary } from "@/server/operations/usage";
 
 import { StylingChecklist } from "../styling-step";
 import { showMoreOutfitsAction } from "./actions";
+import { AllowanceLine } from "./allowance-line";
+import { useStylingRequest } from "./use-styling-request";
 import { useStylingProgress } from "./styling-progress";
 
 /**
@@ -36,22 +37,13 @@ export function MoreOutfits({
   stylingStart: UsageSummary["stylingStart"];
   outfitsLeft: number;
 }) {
-  const [sending, startSending] = useTransition();
-  const [failed, setFailed] = useState(false);
+  const { sending, failed, send } = useStylingRequest();
   const area = useRef<HTMLElement>(null);
 
   function showMore() {
     // The button is about to give way to the checklist: focus stays where it was.
     area.current?.focus();
-    setFailed(false);
-    startSending(async () => {
-      try {
-        await showMoreOutfitsAction(consultationId);
-      } catch {
-        // The request itself failed: the network, or our side.
-        setFailed(true);
-      }
-    });
+    send(() => showMoreOutfitsAction(consultationId));
   }
 
   return (
@@ -78,15 +70,7 @@ export function MoreOutfits({
           >
             Show 2 more Outfits
           </button>
-          <p id="more-outfits-line" className="text-sm text-stone-600">
-            {stylingStart.ok ? (
-              COPY.outfitsItUses(stylingStart.outfitsWanted, outfitsLeft)
-            ) : (
-              // An unverified user has the banner above saying why. Only a verified user can have
-              // Outfits, so it's never seen here.
-              stylingStart.refusal !== "unverified" && <LimitMessage refusal={stylingStart} />
-            )}
-          </p>
+          <AllowanceLine id="more-outfits-line" stylingStart={stylingStart} outfitsLeft={outfitsLeft} className="text-sm text-stone-600" />
           {failed && (
             <p id="more-outfits-failed" role="alert" className="text-sm text-red-700">
               We couldn&apos;t start more Outfits just now. Try again in a moment.

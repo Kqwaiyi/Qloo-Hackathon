@@ -53,15 +53,16 @@ export const COPY = {
   /** In place of "Show 2 more Outfits" once its Style Icons run out, or it failed. */
   everyOutfitBuilt: (suggestBudgetTier: boolean) => `That's every Outfit we can build for this photo. ${tryAnother(suggestBudgetTier)} for more.`,
   /**
-   * A Photo Style change that built nothing: the Photo Style version of the failed re-styling line,
-   * given the Photo Style of the Outfits still shown, or null on a Consultation with No Outfits,
-   * which had none to keep.
+   * A Budget Tier change that built nothing: the failed re-styling line, given the Budget Tier of
+   * the Outfits still shown, or null on a Consultation with No Outfits, which had none to keep.
    */
+  budgetTierChangeBuiltNothing: (tried: string, previous: string | null) =>
+    `We couldn't build Outfits at ${tried} for this photo. ${previous ? `Your ${previous} Outfits are still here` : tryAnother(true)}.`,
+  /** A Photo Style change that built nothing, likewise: the Photo Style version of the line. */
   photoStyleChangeBuiltNothing: (tried: string, previous: string | null, suggestBudgetTier: boolean) =>
     `We couldn't build ${tried} Outfits for this photo. ${previous ? `Your ${previous} Outfits are still here` : tryAnother(suggestBudgetTier)}.`,
-  /** A Photo Style change that broke, likewise. */
-  photoStyleChangeBroke: (previous: string | null) =>
-    previous ? `${STYLING_BROKE} Your ${previous} Outfits are still here.` : STYLING_BROKE,
+  /** A re-styling that broke, given the Budget Tier or Photo Style of the Outfits still shown, likewise. */
+  restylingBroke: (previous: string | null) => (previous ? `${STYLING_BROKE} Your ${previous} Outfits are still here.` : STYLING_BROKE),
   verifyBanner: (email: string, deletionDate: string) =>
     `We sent a link to ${email}. Verify it to start your first Consultation. Unverified accounts are deleted on ${deletionDate}.`,
   resendLink: "Resend link",
