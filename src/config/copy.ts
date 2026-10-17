@@ -21,6 +21,10 @@ export const COPY = {
   outfitsItUses: (outfits: number, left: number) => `Uses ${outfits} of your ${left} Outfits left today`,
   allowanceUsedUp: (allowance: number, time: string) => `You've made today's ${allowance} Outfits. More from ${time}.`,
   photoCheckLimitReached: (limit: number, time: string) => `You've checked ${limit} photos today. More from ${time}.`,
+  /** The app-wide 24-hour cap. */
+  appWideCapForNow: "Outfit Recommender has made all the Outfits it can for now. Please try again in a few hours.",
+  /** The app-wide monthly cap, and the Qloo backstop. */
+  appWideCapForMonth: (date: string) => `Outfit Recommender has made all the Outfits it can for this month. Back on ${date}.`,
   faceGuide: "keep your face above this line",
   takingLonger: "This is taking longer than usual.",
   aiGenerated: "AI-generated",

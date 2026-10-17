@@ -2,11 +2,12 @@ import { afterEach, beforeAll, beforeEach, describe, expect, expectTypeOf, it, v
 
 import type { Database } from "@/server/db/database";
 import { openPgliteDatabase } from "@/server/db/pglite";
-import { qlooCache } from "@/server/db/schema";
+import { qlooCache, qlooLimitState } from "@/server/db/schema";
 import { TestClock } from "@/test/harness";
 
 import { type QlooBrandQuery, QlooClient, qlooClientFromEnvironment, QlooError, type QlooQuery, QlooRateLimitedError } from "./client";
 import { FakeQlooTransport, qlooResponse, qlooTooManyRequests } from "./fake";
+import { readQlooLimitState } from "./limit-state";
 
 // Small hand-written samples shaped like Qloo's entities, descriptions and images included so the
 // trimming has something to drop. The people and Brands are made up.
@@ -110,6 +111,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.delete(qlooCache);
+  await db.delete(qlooLimitState);
   clock = new TestClock(new Date("2026-10-16T12:00:00Z"));
   qloo = new FakeQlooTransport();
   client = new QlooClient({ db, clock, transport: qloo.send, apiUrl: "https://qloo.test", apiKey: "test-api-key" });
@@ -286,6 +288,67 @@ describe("when Qloo can't answer", () => {
     expect(error).not.toBeInstanceOf(QlooRateLimitedError);
     expect(error).toMatchObject({ status: 400 });
     expect(await cachedBodies()).toEqual([]);
+  });
+});
+
+describe("Qloo's report of this month's calls", () => {
+  /** The headers Qloo sends with every live response: calls left this month, and seconds until they reset. */
+  const MONTH_REPORT = { "X-Month-RateLimit-Remaining": "9702", "X-Month-RateLimit-Reset": "2421095.46" };
+
+  it("is kept from a live response: the calls left, when they reset, and when Qloo said so", async () => {
+    qloo.respond = () => qlooResponse([MIRA_VALE], MONTH_REPORT);
+
+    await client.people(STYLE_ICON_QUERY);
+
+    expect(await readQlooLimitState(db)).toEqual({
+      remainingCalls: 9702,
+      resetsAt: new Date("2026-11-13T12:31:35.460Z"),
+      observedAt: new Date("2026-10-16T12:00:00Z"),
+    });
+  });
+
+  it("is replaced by each newer report, kept without a reset date when Qloo gives none", async () => {
+    qloo.respond = () => qlooResponse([MIRA_VALE], MONTH_REPORT);
+    await client.people(STYLE_ICON_QUERY);
+    qloo.respond = () => qlooResponse([NORTHBOUND], { "X-Month-RateLimit-Remaining": "9701" });
+    clock.set("2026-10-16T12:05:00Z");
+
+    await client.brands(BRAND_QUERY);
+
+    expect(await readQlooLimitState(db)).toEqual({ remainingCalls: 9701, resetsAt: null, observedAt: new Date("2026-10-16T12:05:00Z") });
+  });
+
+  it("stays as it was after a cached answer, or a response without the header", async () => {
+    qloo.respond = () => qlooResponse([MIRA_VALE], MONTH_REPORT);
+    await client.people(STYLE_ICON_QUERY);
+    clock.set("2026-10-16T12:05:00Z");
+    await client.people(STYLE_ICON_QUERY);
+    qloo.respond = () => qlooResponse([NORTHBOUND]);
+
+    await client.brands(BRAND_QUERY);
+
+    expect(qloo.requests).toHaveLength(2);
+    expect(await readQlooLimitState(db)).toMatchObject({ remainingCalls: 9702, observedAt: new Date("2026-10-16T12:00:00Z") });
+  });
+
+  it("is nothing until Qloo has given one", async () => {
+    qloo.respond = () => qlooResponse([MIRA_VALE]);
+
+    await client.people(STYLE_ICON_QUERY);
+
+    expect(await readQlooLimitState(db)).toBeNull();
+  });
+
+  it("is kept from a response refusing the request too", async () => {
+    qloo.respond = () => qlooTooManyRequests({ "X-Month-RateLimit-Remaining": "0", "X-Month-RateLimit-Reset": "60" });
+
+    await expect(client.people(STYLE_ICON_QUERY)).rejects.toBeInstanceOf(QlooRateLimitedError);
+
+    expect(await readQlooLimitState(db)).toEqual({
+      remainingCalls: 0,
+      resetsAt: new Date("2026-10-16T12:01:00Z"),
+      observedAt: new Date("2026-10-16T12:00:00Z"),
+    });
   });
 });
 

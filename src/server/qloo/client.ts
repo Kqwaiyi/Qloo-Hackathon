@@ -6,8 +6,11 @@ import type { Clock } from "@/server/clock";
 import type { Database } from "@/server/db/database";
 import { qlooCache } from "@/server/db/schema";
 
+import { type QlooLimitState, saveQlooLimitState } from "./limit-state";
+
 // The one way the app talks to Qloo (spec: "Qloo client and cache"). Read-only GET requests with
-// the API key, every response cached in the database.
+// the API key, every response cached in the database, and Qloo's report of this month's calls kept
+// for the Qloo backstop.
 
 /** A Qloo tag ID, such as `urn:tag:occupation:person:model`. */
 export type QlooTagId = `urn:tag:${string}`;
@@ -119,9 +122,13 @@ export class QlooClient {
   }
 
   private async send(canonicalRequest: string): Promise<unknown> {
-    const { transport, apiUrl, apiKey } = this.options;
+    const { db, clock, transport, apiUrl, apiKey } = this.options;
     const response = await transport(new Request(new URL(canonicalRequest, apiUrl), { method: "GET", headers: { "X-Api-Key": apiKey } }));
-    if (response.status === 429) throw new QlooRateLimitedError(retryAfterSeconds(response.headers));
+    // Every live response, a refusal included, reports this month's calls for the Qloo backstop.
+    // Cached answers never get here.
+    const limitState = limitStateFrom(response.headers, clock.now());
+    if (limitState) await saveQlooLimitState(db, limitState);
+    if (response.status === 429) throw new QlooRateLimitedError(headerNumber(response.headers, "Retry-After") ?? undefined);
     if (!response.ok) throw new QlooError(`Qloo answered ${response.status}.`, response.status);
     return response.json();
   }
@@ -149,9 +156,27 @@ export class QlooRateLimitedError extends QlooError {
   }
 }
 
-function retryAfterSeconds(headers: Headers): number | undefined {
-  const seconds = Number(headers.get("Retry-After") ?? undefined);
-  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+/**
+ * Qloo's report of this month's calls on a response, observed at `observedAt`, or null when it
+ * carries none. The reset is given in seconds from now, such as `2421095.46`.
+ */
+function limitStateFrom(headers: Headers, observedAt: Date): QlooLimitState | null {
+  const remainingCalls = headerNumber(headers, "X-Month-RateLimit-Remaining");
+  if (remainingCalls === null) return null;
+  const resetSeconds = headerNumber(headers, "X-Month-RateLimit-Reset");
+  return {
+    remainingCalls: Math.floor(remainingCalls),
+    resetsAt: resetSeconds === null ? null : new Date(observedAt.getTime() + resetSeconds * 1000),
+    observedAt,
+  };
+}
+
+/** A header's value as a number of 0 or more, or null when it's missing or isn't one. */
+function headerNumber(headers: Headers, name: string): number | null {
+  const value = headers.get(name)?.trim();
+  if (!value) return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
 /** The Qloo client for QLOO_API_URL and QLOO_API_KEY, over `fetch` unless a transport is given. */

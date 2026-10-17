@@ -11,24 +11,23 @@ const subscribe = () => () => {};
 
 /** A date in the viewer's own time zone. The server, which doesn't know it, renders it in UTC. */
 export function LocalDate({ date }: { date: Date }) {
-  const text = date.toLocaleDateString(LOCALE, useInViewersTimeZone(DATE_FORMAT));
-  return <time dateTime={date.toISOString()}>{text}</time>;
+  return <time dateTime={date.toISOString()}>{useLocalFormatters().date(date)}</time>;
 }
 
 /**
- * A time of day in the viewer's own time zone, such as "09:00" or "14:30", for a sentence. The
- * server, which doesn't know it, renders it in UTC.
+ * Writes dates and times in the viewer's own time zone, for a sentence: a date such as
+ * "1 November 2026", or a time of day such as "09:00" or "14:30". The server, which doesn't know
+ * the time zone, writes them in UTC.
  */
-export function useLocalTime(date: Date): string {
-  return date.toLocaleTimeString(LOCALE, useInViewersTimeZone(TIME_FORMAT));
-}
-
-/** The format set to the viewer's own time zone in the browser, and to UTC on the server. */
-function useInViewersTimeZone(format: Intl.DateTimeFormatOptions): Intl.DateTimeFormatOptions {
+export function useLocalFormatters(): { date: (date: Date) => string; time: (date: Date) => string } {
   const inBrowser = useSyncExternalStore(
     subscribe,
     () => true,
     () => false,
   );
-  return inBrowser ? format : { ...format, timeZone: "UTC" };
+  const timeZone = inBrowser ? undefined : "UTC";
+  return {
+    date: (date) => date.toLocaleDateString(LOCALE, { ...DATE_FORMAT, timeZone }),
+    time: (date) => date.toLocaleTimeString(LOCALE, { ...TIME_FORMAT, timeZone }),
+  };
 }

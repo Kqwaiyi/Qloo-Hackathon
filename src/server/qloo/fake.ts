@@ -31,9 +31,9 @@ export function qlooPerson(entityId: string, name: string, affinity: number) {
   return { entity_id: entityId, name, type: "urn:entity", subtype: "urn:entity:person", properties: {}, query: { affinity } };
 }
 
-/** A successful Insights response holding `entities`, as Qloo sends it. */
-export function qlooResponse(entities: readonly object[]): Response {
-  return Response.json({ success: true, results: { entities } });
+/** A successful Insights response holding `entities`, as Qloo sends it, with any `headers`. */
+export function qlooResponse(entities: readonly object[], headers?: HeadersInit): Response {
+  return Response.json({ success: true, results: { entities } }, { headers });
 }
 
 /** Qloo's "too many requests". */

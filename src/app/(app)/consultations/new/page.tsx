@@ -56,7 +56,10 @@ function VerifyFirst({ email }: { email: string }) {
   );
 }
 
-/** Instead of the Photo Type step while no Styling can start, such as once today's Outfits are made, with when that changes. */
+/**
+ * Instead of the Photo Type step while no Styling can start, such as once today's Outfits are made
+ * or an app-wide cap is reached, saying why and, where the limit says, when that changes.
+ */
 function StylingUnavailable({ refusal }: { refusal: LimitRefusal }) {
   return (
     <>

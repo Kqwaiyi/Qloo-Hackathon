@@ -15,3 +15,15 @@ export const PHOTO_CHECK_LIMIT = 20;
 
 /** How many of each kind of usage a user may have in the window. */
 export const USAGE_LIMITS: Record<UsageKind, number> = { outfit: OUTFIT_ALLOWANCE, photo_check: PHOTO_CHECK_LIMIT };
+
+// The app-wide caps, so the public demo can't run up costs whatever individual users do. They count
+// every user's Outfits together, from the same usage records.
+
+/** The spec's 24-hour cap: how many Outfits every user together may have made in the window. */
+export const APP_WIDE_24_HOUR_CAP = 100;
+
+/** The monthly cap: how many Outfits every user together may have made in a UTC calendar month. */
+export const APP_WIDE_MONTHLY_CAP = 750;
+
+/** The Qloo backstop: no new Styling starts while Qloo's last reported calls left this month are below this. */
+export const QLOO_BACKSTOP_CALLS = 1000;

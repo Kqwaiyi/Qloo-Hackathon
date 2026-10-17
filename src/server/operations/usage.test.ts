@@ -1,12 +1,14 @@
 import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { qlooCache } from "@/server/db/schema";
+import { qlooCache, qlooLimitState, usageRecord } from "@/server/db/schema";
 import { deleteConsultation, readConsultation, startConsultation } from "@/server/operations/consultations";
+import { readSignedInUser } from "@/server/operations/session";
 import { readStylingStatus } from "@/server/operations/stylings";
 import { readUsageSummary } from "@/server/operations/usage";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { qlooPerson, qlooResponse } from "@/server/qloo/fake";
+import { recordUsage } from "@/server/usage/records";
 import { createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities: enough Style Icons for a Face Photo's two Outfits.
@@ -29,6 +31,10 @@ beforeEach(async () => {
   harness.qloo.requests.length = 0;
   harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
   await harness.db.delete(qlooCache);
+  // The app-wide caps count every user's Outfits, so each test starts with none made, and with no
+  // report from Qloo of the calls left.
+  await harness.db.delete(usageRecord);
+  await harness.db.delete(qlooLimitState);
 });
 
 describe("the usage summary", () => {
@@ -283,6 +289,159 @@ describe("the photo-check limit", () => {
     expect(await getMyOutfits(browser)).toMatchObject({ ok: false, refusal: "allowance-used" });
   });
 });
+
+describe("the app-wide 24-hour cap", () => {
+  it("stops every user's Stylings once 100 Outfits have been made in 24 hours, without blaming them", async () => {
+    await outfitsMadeByOthers(100, "2026-10-16T09:00:00Z");
+    const browser = await signedInUser();
+
+    expect(await readUsageSummary(harness.context(browser))).toEqual({
+      outfitsLeft: 10,
+      moreOutfitsFrom: null,
+      stylingStart: { ok: false, refusal: "app-wide-24-hour-cap" },
+    });
+  });
+
+  it("limits a Styling to the Outfits the cap leaves, then stops the next", async () => {
+    await outfitsMadeByOthers(99, "2026-10-16T09:00:00Z");
+    const browser = await signedInUser();
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true, outfitsWanted: 1 } });
+
+    const consultationId = await styleAt(browser, "2026-10-16T12:30:00Z");
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toHaveLength(1);
+    expect(await getMyOutfits(await signedInUser())).toEqual({ ok: false, refusal: "app-wide-24-hour-cap" });
+  });
+
+  it("counts each Outfit for 24 hours, a rolling window rather than a calendar day", async () => {
+    await outfitsMadeByOthers(100, "2026-10-15T13:00:00Z");
+    const browser = await signedInUser();
+
+    harness.clock.set("2026-10-16T12:59:59Z");
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: false, refusal: "app-wide-24-hour-cap" } });
+    harness.clock.set("2026-10-16T13:00:00Z");
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true, outfitsWanted: 2 } });
+  });
+
+  it("refuses a new Consultation before the photo is checked, storing nothing", async () => {
+    await outfitsMadeByOthers(100, "2026-10-16T09:00:00Z");
+
+    expect(await getMyOutfits(await signedInUser())).toEqual({ ok: false, refusal: "app-wide-24-hour-cap" });
+    expect(harness.ai.photoCheckCount).toBe(0);
+    expect(harness.blob.objects.size).toBe(0);
+    expect(harness.stylings.pending).toEqual([]);
+  });
+
+  it.each([
+    // The cap lifts at 13:30 tomorrow, after the user's own Outfits come back at 09:00.
+    { othersMadeAt: "2026-10-16T13:30:00Z", refusal: { refusal: "app-wide-24-hour-cap" } },
+    // The cap lifts at 15:00 today: only the user's own Outfit Allowance holds after that.
+    { othersMadeAt: "2026-10-15T15:00:00Z", refusal: { refusal: "allowance-used", moreFrom: new Date("2026-10-17T09:00:00Z") } },
+  ])("gives whichever lifts later when the user's own Outfit Allowance is used up too (others' made $othersMadeAt)", async ({ othersMadeAt, refusal }) => {
+    await outfitsMadeByOthers(90, othersMadeAt);
+    const browser = await useUpAllowance();
+
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ outfitsLeft: 0, stylingStart: { ok: false, ...refusal } });
+  });
+});
+
+describe("the app-wide monthly cap", () => {
+  it("stops every user's Stylings once 750 Outfits have been made in the UTC calendar month, until the next month starts", async () => {
+    await outfitsMadeByOthers(700, "2026-10-05T09:00:00Z");
+    await outfitsMadeByOthers(50, "2026-10-16T08:00:00Z");
+    const browser = await signedInUser();
+
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({
+      stylingStart: { ok: false, refusal: "app-wide-monthly-cap", backOn: new Date("2026-11-01T00:00:00Z") },
+    });
+    harness.clock.set("2026-10-31T23:59:59Z");
+    expect(await getMyOutfits(browser)).toMatchObject({ ok: false, refusal: "app-wide-monthly-cap" });
+    expect(harness.ai.photoCheckCount).toBe(0);
+    harness.clock.set("2026-11-01T00:00:00Z");
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true, outfitsWanted: 2 } });
+  });
+
+  it("counts only this month's Outfits, and limits a Styling to what it leaves", async () => {
+    await outfitsMadeByOthers(100, "2026-09-30T23:59:59Z");
+    await outfitsMadeByOthers(699, "2026-10-01T00:00:00Z");
+    await outfitsMadeByOthers(50, "2026-10-16T08:00:00Z");
+
+    expect(await readUsageSummary(harness.context(await signedInUser()))).toMatchObject({ stylingStart: { ok: true, outfitsWanted: 1 } });
+  });
+});
+
+describe("the Qloo backstop", () => {
+  it("stops new Stylings once Qloo reports fewer than 1,000 calls left, until Qloo's reset date", async () => {
+    const browser = await styledWhileQlooReports({ callsLeft: 999, resetsInDays: 15 });
+
+    expect(await readUsageSummary(harness.context(browser))).toEqual({
+      outfitsLeft: 8,
+      moreOutfitsFrom: new Date("2026-10-17T12:30:00Z"),
+      stylingStart: { ok: false, refusal: "qloo-backstop", backOn: new Date("2026-10-31T12:30:00Z") },
+    });
+    expect(await getMyOutfits(await signedInUser())).toEqual({ ok: false, refusal: "qloo-backstop", backOn: new Date("2026-10-31T12:30:00Z") });
+    expect(harness.ai.photoCheckCount).toBe(0);
+    expect(harness.blob.objects.size).toBe(0);
+    harness.clock.set("2026-10-31T12:30:00Z");
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true, outfitsWanted: 2 } });
+  });
+
+  it("lets Stylings start while Qloo reports 1,000 calls or more left", async () => {
+    const browser = await styledWhileQlooReports({ callsLeft: 1000, resetsInDays: 15 });
+
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true, outfitsWanted: 2 } });
+  });
+
+  it("lets Stylings start when Qloo's responses don't say how many calls are left", async () => {
+    const browser = await signedInUser();
+
+    await styleAt(browser, "2026-10-16T12:30:00Z");
+
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true, outfitsWanted: 2 } });
+  });
+
+  it("holds until the next UTC calendar month when Qloo doesn't say when its calls reset", async () => {
+    const browser = await styledWhileQlooReports({ callsLeft: 999 });
+
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({
+      stylingStart: { ok: false, refusal: "qloo-backstop", backOn: new Date("2026-11-01T00:00:00Z") },
+    });
+    harness.clock.set("2026-11-01T00:00:00Z");
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true } });
+  });
+
+  it.each([
+    { qlooResetsInDays: 28, refusal: { refusal: "qloo-backstop", backOn: new Date("2026-11-13T12:30:00Z") } },
+    { qlooResetsInDays: 4, refusal: { refusal: "app-wide-monthly-cap", backOn: new Date("2026-11-01T00:00:00Z") } },
+  ])("gives the later date when the monthly cap holds too (Qloo resets in $qlooResetsInDays days)", async ({ qlooResetsInDays, refusal }) => {
+    const browser = await styledWhileQlooReports({ callsLeft: 999, resetsInDays: qlooResetsInDays });
+    await outfitsMadeByOthers(750, "2026-10-05T09:00:00Z");
+
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: false, ...refusal } });
+  });
+});
+
+/**
+ * Has a new user's first Styling run at 12:30 while Qloo reports, on each response, `callsLeft`
+ * calls left this month and, if given, how many days until they reset (Qloo sends seconds). Clears
+ * the fakes' counts of photo checks and stored photos afterwards, and returns the user's browser.
+ */
+async function styledWhileQlooReports({ callsLeft, resetsInDays }: { callsLeft: number; resetsInDays?: number }): Promise<TestBrowser> {
+  const headers: Record<string, string> = { "X-Month-RateLimit-Remaining": String(callsLeft) };
+  if (resetsInDays !== undefined) headers["X-Month-RateLimit-Reset"] = String(resetsInDays * 24 * 60 * 60);
+  harness.qloo.respond = () => qlooResponse(STYLE_ICONS, headers);
+  const browser = await signedInUser();
+  await styleAt(browser, "2026-10-16T12:30:00Z");
+  harness.ai.photoCheckCount = 0;
+  harness.blob.objects.clear();
+  return browser;
+}
+
+/** Records `count` Outfits made at `time` by a new user, as if their Stylings had finished then. */
+async function outfitsMadeByOthers(count: number, time: string): Promise<void> {
+  const user = await readSignedInUser(harness.context(await signedInUser()));
+  await recordUsage(harness.db, { kind: "outfit", userId: user!.id, at: new Date(time) }, count);
+}
 
 /** Sends `count` photos that the check rejects, as showing no one. */
 async function rejectPhotos(browser: TestBrowser, count: number): Promise<void> {

@@ -168,7 +168,11 @@ export const usageRecord = pgTable(
     userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
     usedAt: timestamp("used_at", { withTimezone: true }).notNull(),
   },
-  (table) => [index("usage_record_user_id_kind_used_at_idx").on(table.userId, table.kind, table.usedAt)],
+  (table) => [
+    index("usage_record_user_id_kind_used_at_idx").on(table.userId, table.kind, table.usedAt),
+    // For the app-wide caps, which count every user's.
+    index("usage_record_kind_used_at_idx").on(table.kind, table.usedAt),
+  ],
 );
 
 // Consultations.
@@ -379,3 +383,18 @@ export const qlooCache = pgTable("qloo_cache", {
   body: jsonb("body").notNull(),
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
 });
+
+// The Qloo limit state: what Qloo last reported of this month's calls, which the Qloo backstop reads.
+
+export const qlooLimitState = pgTable(
+  "qloo_limit_state",
+  {
+    // There's only ever the one row.
+    id: integer("id").primaryKey().default(1),
+    remainingCalls: integer("remaining_calls").notNull(),
+    // When they reset, if Qloo said.
+    resetsAt: timestamp("resets_at", { withTimezone: true }),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [check("qloo_limit_state_one_row", sql`${table.id} = 1`)],
+);

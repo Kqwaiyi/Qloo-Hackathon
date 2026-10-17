@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { type ChangeEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState, useTransition } from "react";
 
-import { LimitMessage } from "@/components/limit-message";
+import { LimitMessage, type LimitRefusal } from "@/components/limit-message";
 import { PhotoTypeSilhouette } from "@/components/photo-type-silhouette";
 import { fieldError, primaryButton, secondaryButton } from "@/components/ui";
 import {
@@ -276,13 +276,16 @@ function PhotoStep({
         setStepStartedAt(Date.now());
         startSending(() => router.push(consultationRoute(result.consultationId)));
       } else if (result.refusal === "signed-out") startSending(() => router.push(ROUTES.signIn));
-      // The page shows the "verify your email first" panel instead, or, with today's Outfits made
-      // since it loaded, says when more become available.
-      else if (result.refusal === "unverified" || result.refusal === "allowance-used") router.refresh();
       else if (result.refusal === "photo-check-limit") setProblem({ message: <LimitMessage refusal={result} /> });
       else if (result.refusal === "photo-rejected") setProblem(rejectionProblem(result.rejection));
       else if (result.refusal === "check-errored") setProblem({ message: COPY.photoCheckFailed });
-      else setProblem({ message: COPY.photoUnusable });
+      else if (result.refusal === "unusable-file") setProblem({ message: COPY.photoUnusable });
+      else {
+        // The user is unverified, or a limit has stopped every Styling since the page loaded. The
+        // page then shows why in place of this step. A new refusal of another sort fails typecheck here.
+        result.refusal satisfies LimitRefusal["refusal"] | "unverified";
+        router.refresh();
+      }
     });
   }
 

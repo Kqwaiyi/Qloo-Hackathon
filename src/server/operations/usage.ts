@@ -14,8 +14,8 @@ export interface UsageSummary {
   /** When more Outfits become available, or null while none count against the allowance. */
   moreOutfitsFrom: Date | null;
   /**
-   * Whether a Styling can start now, and how many Outfits it would make, or why it can't. Only a
-   * verified user can start one.
+   * Whether a Styling can start now, and how many Outfits it would make, or why it can't, such as
+   * an app-wide cap or the Qloo backstop. Only a verified user can start one.
    */
   stylingStart: StylingStart | Refusal<{ refusal: "unverified" }>;
 }
