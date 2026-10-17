@@ -5,12 +5,13 @@ import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type BudgetTier, byCategoryOrder, type PhotoType } from "@/config/consultations";
-import { consultation, outfit, piece, qlooCache, styleIcon, styling, user } from "@/server/db/schema";
+import { consultation, outfit, piece, qlooCache, styleIcon, styling, usageRecord, user } from "@/server/db/schema";
 import { readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
-import { readStylingStatus, type StylingProgressView } from "@/server/operations/stylings";
+import { readStylingStatus, showMoreOutfits, type StylingProgressView } from "@/server/operations/stylings";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
+import { recordUsage } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities.
@@ -59,6 +60,8 @@ beforeEach(async () => {
   harness.qloo.respond = qlooAnswering({ female: WOMEN, male: MEN });
   harness.qloo.duringRequest = undefined;
   await harness.db.delete(qlooCache);
+  // The app-wide caps count every user's Outfits, so each test starts with none made.
+  await harness.db.delete(usageRecord);
 });
 
 describe("a new Consultation's first Styling", () => {
@@ -71,7 +74,7 @@ describe("a new Consultation's first Styling", () => {
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "styling", outfits: [] });
     expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({
       state: "styling",
-      progress: { stage: "style_icons", previews: { done: 0, of: 2 }, slow: false },
+      progress: { kind: "first", stage: "style_icons", previews: { done: 0, of: 2 }, slow: false },
     });
     expect(await stylingsOf(consultationId)).toEqual([
       {
@@ -1016,9 +1019,9 @@ describe("the Styling status", () => {
     await harness.stylings.runPending();
 
     expect(checklist.seen).toEqual([
-      { stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
-      { stage: "previews", previews: { done: 0, of: 2 }, slow: false },
-      { stage: "previews", previews: { done: 1, of: 2 }, slow: false },
+      { kind: "first", stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
+      { kind: "first", stage: "previews", previews: { done: 0, of: 2 }, slow: false },
+      { kind: "first", stage: "previews", previews: { done: 1, of: 2 }, slow: false },
     ]);
   });
 
@@ -1034,8 +1037,8 @@ describe("the Styling status", () => {
     await harness.stylings.runPending();
 
     expect(checklist.seen).toEqual([
-      { stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
-      { stage: "previews", previews: { done: 0, of: 1 }, slow: false },
+      { kind: "first", stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
+      { kind: "first", stage: "previews", previews: { done: 0, of: 1 }, slow: false },
     ]);
   });
 
@@ -1071,6 +1074,184 @@ describe("the Styling status", () => {
     await harness.stylings.runPending();
 
     expect(seen).toEqual([false, true]);
+  });
+});
+
+describe('"Show 2 more Outfits"', () => {
+  it("adds a Face Photo's next two Style Icons' Hairstyles below the current Outfits, which stay meanwhile, without asking Qloo for Style Icons again", async () => {
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+
+    expect(await showMoreOutfits(harness.context(browser), consultationId)).toEqual({ ok: true });
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.styleIconName)).toEqual([
+      "Ava Stone",
+      "Bea Marsh",
+    ]);
+    await harness.stylings.runPending();
+
+    const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(outfits.map((o) => [o.position, o.styleIconName, o.pieces.map((p) => p.category)])).toEqual([
+      [1, "Ava Stone", ["hairstyle"]],
+      [2, "Bea Marsh", ["hairstyle"]],
+      [3, "Cleo Hart", ["hairstyle"]],
+      [4, "Dana Reed", ["hairstyle"]],
+    ]);
+    expect(personCalls()).toHaveLength(1);
+    expect(brandCalls()).toEqual([]);
+  });
+
+  it("builds a body photo's Outfits on the next Style Icons' Brands, repeating none in a Category across the current Outfits and the new ones", async () => {
+    // A fourth footwear Brand, so the new Outfits' Shoes needn't repeat.
+    const tread = qlooBrand("b-tread", "Tread", { categories: ["footwear"], affinity: 0.75, price: [35, 75] });
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN }, () => [...BRANDS, tread]);
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+    await harness.db.delete(qlooCache);
+    harness.qloo.requests.length = 0;
+
+    await showMoreOutfits(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Ava Stone", ["Bolt", "Jeanery", "Stride"]],
+      ["Bea Marsh", ["Dune", "Bolt", "Sole"]],
+      ["Cleo Hart", ["Jeanery", "Dune", "Pace"]],
+      ["Dana Reed", ["Ember", "Hem", "Tread"]],
+    ]);
+    // Brands only for the two Style Icons it needs, and no Style Icons asked for again.
+    expect(brandCalls().map((params) => params.get("signal.interests.entities")).toSorted()).toEqual(["w-3", "w-4"]);
+    expect(personCalls()).toEqual([]);
+  });
+
+  it("shows in the Styling status as adding to the Outfits, from Building Outfits: at Brands for a body photo, straight to tailoring for a Face Photo", async () => {
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const bodyOnly = await start(browser, "body_only");
+    const face = await start(browser, "face");
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:10:00Z");
+
+    await showMoreOutfits(harness.context(browser), bodyOnly);
+    await showMoreOutfits(harness.context(browser), face);
+
+    expect(await readStylingStatus(harness.context(browser), bodyOnly)).toEqual({
+      state: "styling",
+      progress: { kind: "more", stage: "brands", previews: { done: 0, of: 2 }, slow: false },
+    });
+    expect(await readStylingStatus(harness.context(browser), face)).toEqual({
+      state: "styling",
+      progress: { kind: "more", stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
+    });
+    expect(await moreStylingsOf(face)).toEqual([expect.objectContaining({ stageMovedAt: new Date("2026-10-16T12:10:00Z") })]);
+  });
+
+  it("makes what it can as the Style Icons run out, then says that's every Outfit and starts no more", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ everyOutfitBuilt: false });
+
+    await showMoreOutfits(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      everyOutfitBuilt: true,
+      outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }, { position: 3, styleIconName: "Cleo Hart" }],
+    });
+    expect(await moreStylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsWanted: 2, outfitsMade: 1 })]);
+    expect(await showMoreOutfits(harness.context(browser), consultationId)).toEqual({ ok: false, refusal: "every-outfit-built" });
+    expect(harness.stylings.pending).toEqual([]);
+  });
+
+  it("keeps the current Outfits when it builds nothing, after fetching Brands for at most 6 Style Icons, and then says that's every Outfit", async () => {
+    const tenWomen = [...SIX_WOMEN, ...["Gia Penn", "Hana Moor", "Ivy Lane", "Jo Park"].map((name, index) => qlooPerson(`w-${index + 7}`, name, 0.78 - index / 100))];
+    // Only Ava Stone's, Bea Marsh's and Jo Park's fans favour Brands that make a whole Outfit.
+    harness.qloo.respond = qlooAnswering({ female: tenWomen }, (styleIconId) => (["w-1", "w-2", "w-10"].includes(styleIconId) ? BRANDS : []));
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+    await harness.db.delete(qlooCache);
+    harness.qloo.requests.length = 0;
+
+    await showMoreOutfits(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    expect(await moreStylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "failed", failureReason: "nothing_built", outfitsMade: 0 })]);
+    expect(new Set(brandCalls().map((params) => params.get("signal.interests.entities")))).toEqual(new Set(["w-3", "w-4", "w-5", "w-6", "w-7", "w-8"]));
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "ready",
+      everyOutfitBuilt: true,
+      outfits: [{ position: 1, styleIconName: "Ava Stone" }, { position: 2, styleIconName: "Bea Marsh" }],
+    });
+    expect(await showMoreOutfits(harness.context(browser), consultationId)).toEqual({ ok: false, refusal: "every-outfit-built" });
+  });
+
+  it("makes one Outfit when the Outfit Allowance has one left", async () => {
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+    // With the first Styling's 2, that's 9 of the 10.
+    const userId = (await readSignedInUser(harness.context(browser)))!.id;
+    await recordUsage(harness.db, { kind: "outfit", userId, at: harness.clock.now() }, 7);
+
+    await showMoreOutfits(harness.context(browser), consultationId);
+    expect(await readStylingStatus(harness.context(browser), consultationId)).toMatchObject({ progress: { previews: { of: 1 } } });
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      everyOutfitBuilt: false,
+      outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }, { position: 3, styleIconName: "Cleo Hart" }],
+    });
+    expect(await moreStylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsWanted: 1, outfitsMade: 1 })]);
+  });
+
+  it("starts nothing more while a Styling runs on the Consultation", async () => {
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+    expect(await showMoreOutfits(harness.context(browser), consultationId)).toEqual({ ok: false, refusal: "already-styling" });
+    await harness.stylings.runPending();
+
+    const [first, second] = await Promise.all([
+      showMoreOutfits(harness.context(browser), consultationId),
+      showMoreOutfits(harness.context(browser), consultationId),
+    ]);
+
+    expect([first, second]).toContainEqual({ ok: true });
+    expect([first, second]).toContainEqual({ ok: false, refusal: "already-styling" });
+    expect(harness.stylings.pending).toHaveLength(1);
+  });
+
+  it("goes through the shared start check, starting nothing once the Outfit Allowance is used up or from a country Gemini doesn't serve", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+    const userId = (await readSignedInUser(harness.context(browser)))!.id;
+    await recordUsage(harness.db, { kind: "outfit", userId, at: harness.clock.now() }, 8);
+
+    expect(await showMoreOutfits(harness.context(browser), consultationId)).toEqual({
+      ok: false,
+      refusal: "allowance-used",
+      moreFrom: new Date("2026-10-17T12:00:00Z"),
+    });
+    harness.clock.set("2026-10-17T12:00:00Z");
+    browser.ipCountry = "RU";
+    expect(await showMoreOutfits(harness.context(browser), consultationId)).toEqual({ ok: false, refusal: "unsupported-region" });
+    expect(harness.stylings.pending).toEqual([]);
+    expect(await moreStylingsOf(consultationId)).toEqual([]);
+  });
+
+  it("is only for the Consultation's owner", async () => {
+    const consultationId = await start(await signedInUser(), "face");
+    await harness.stylings.runPending();
+
+    expect(await showMoreOutfits(harness.context(await signedInUser()), consultationId)).toEqual({ ok: false, refusal: "not-found" });
+    expect(await showMoreOutfits(harness.context(new TestBrowser()), consultationId)).toEqual({ ok: false, refusal: "signed-out" });
+    expect(harness.stylings.pending).toEqual([]);
   });
 });
 
@@ -1175,6 +1356,14 @@ async function start(browser: TestBrowser, photoType: PhotoType, budgetTier?: Bu
 
 async function stylingsOf(consultationId: string) {
   return harness.db.select().from(styling).where(eq(styling.consultationId, consultationId));
+}
+
+/** The Consultation's "Show 2 more Outfits" Stylings. */
+async function moreStylingsOf(consultationId: string) {
+  return harness.db
+    .select()
+    .from(styling)
+    .where(and(eq(styling.consultationId, consultationId), eq(styling.kind, "more")));
 }
 
 /** Each ranked Style Icon's name and whether it was used, best first. */

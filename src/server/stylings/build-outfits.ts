@@ -38,6 +38,11 @@ export type StylingOutcome = "completed" | "broke";
 
 /** The steps, each given the Styling's ID. Each one checks the Styling is still running before it saves. */
 export interface BuildOutfitsSteps {
+  /**
+   * Whether the Styling ranks Style Icons of its own, as a first Styling does, or carries on down
+   * the Consultation's current ones, as "Show 2 more Outfits" does.
+   */
+  ranksStyleIcons(stylingId: string): Promise<boolean>;
   /** The lines whose Style Icons the Styling asks Qloo for, one person call each. */
   styleIconLines(stylingId: string): Promise<Line[]>;
   /** One line's person call. */
@@ -76,14 +81,16 @@ export interface BuildOutfitsSteps {
 export async function buildOutfits(stylingId: string, steps: BuildOutfitsSteps): Promise<void> {
   let outcome: StylingOutcome = "completed";
   try {
-    const lines = await steps.styleIconLines(stylingId);
-    const peopleByLine: PeopleByLine = {};
-    await Promise.all(
-      lines.map(async (line) => {
-        peopleByLine[line] = await steps.fetchStyleIcons(stylingId, line);
-      }),
-    );
-    await steps.saveStyleIcons(stylingId, peopleByLine);
+    if (await steps.ranksStyleIcons(stylingId)) {
+      const lines = await steps.styleIconLines(stylingId);
+      const peopleByLine: PeopleByLine = {};
+      await Promise.all(
+        lines.map(async (line) => {
+          peopleByLine[line] = await steps.fetchStyleIcons(stylingId, line);
+        }),
+      );
+      await steps.saveStyleIcons(stylingId, peopleByLine);
+    }
     // Building Outfits: each round tailors the open positions at once, and a failed one's
     // substitute waits for the next round. A body photo's Style Icons need their Brands first,
     // fetched as the plan asks. Every try and every fetch uses up a Style Icon, so the rounds end.

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import type { BudgetTier, PhotoStyleWords } from "@/config/consultations";
 import { QLOO_BACKSTOP_CALLS } from "@/config/limits";
-import { OUTFITS_PER_STYLING, type StylingKind } from "@/config/stylings";
+import { OUTFITS_PER_STYLING, type StylingKind, type StylingStage } from "@/config/stylings";
 import { startOfNextUtcMonth } from "@/server/clock";
 import type { Transaction } from "@/server/db/database";
 import { consultation, styling } from "@/server/db/schema";
@@ -89,6 +89,11 @@ export interface NewStyling {
   photoStyle: PhotoStyleWords;
   /** How many Outfits it makes, at most: what `checkStylingStart` allowed. */
   outfitsWanted: number;
+  /**
+   * Where it starts: a first Styling ranks its Consultation's Style Icons, and "Show 2 more Outfits"
+   * carries on down them from Brands, or from Building Outfits for a Face Photo.
+   */
+  stage: StylingStage;
 }
 
 /**
@@ -101,8 +106,6 @@ export async function createStyling(tx: Transaction, now: Date, newStyling: NewS
     id,
     ...newStyling,
     status: "running",
-    // A first Styling starts by picking its Consultation's Style Icons.
-    stage: "style_icons",
     stageMovedAt: now,
     outfitsMade: 0,
     tailoringFailures: 0,

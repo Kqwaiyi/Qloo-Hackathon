@@ -43,6 +43,9 @@ export const COPY = {
   previewRefused: "No Preview for this Outfit: the image model declined to make one",
   previewFailed: "No Preview for this Outfit: the image model couldn't make one",
   everyPreviewRefused: "The image model declined this photo. A different photo may work better.",
+  /** In place of "Show 2 more Outfits" once its Style Icons run out, or it failed. A Face Photo has no Budget Tier to suggest. */
+  everyOutfitBuilt: (suggestBudgetTier: boolean) =>
+    `That's every Outfit we can build for this photo. Try another ${suggestBudgetTier ? "Budget Tier or Photo Style" : "Photo Style"} for more.`,
   verifyBanner: (email: string, deletionDate: string) =>
     `We sent a link to ${email}. Verify it to start your first Consultation. Unverified accounts are deleted on ${deletionDate}.`,
   resendLink: "Resend link",

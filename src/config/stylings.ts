@@ -4,6 +4,15 @@
 export const STYLING_KINDS = ["first", "more", "budget_tier_change", "photo_style_change", "try_again"] as const;
 export type StylingKind = (typeof STYLING_KINDS)[number];
 
+/**
+ * Whether a Styling adds to the Consultation's current Outfits, as "Show 2 more Outfits" does: it
+ * carries on down their Style Icons, numbers its Outfits after theirs, and keeps them in view while
+ * it runs.
+ */
+export function addsToCurrentOutfits(kind: StylingKind): boolean {
+  return kind === "more";
+}
+
 export const STYLING_STATUSES = ["running", "succeeded", "failed"] as const;
 export type StylingStatus = (typeof STYLING_STATUSES)[number];
 

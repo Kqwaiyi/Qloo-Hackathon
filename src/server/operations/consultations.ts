@@ -31,6 +31,7 @@ import { readSignedInUser } from "@/server/operations/session";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
 import { brandPriceRange, outfitPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
 import { isFromSupportedRegion } from "@/server/region-gate";
+import { hasCurrentStyleIconLeft } from "@/server/stylings/current-outfits";
 import { checkStylingStart, createStyling, launchStyling, type StylingStartRefusal } from "@/server/stylings/start";
 import { readUsageLeft, recordUsage } from "@/server/usage/records";
 
@@ -144,6 +145,7 @@ export async function startConsultation(
         budgetTier,
         photoStyle: report.photoStyle,
         outfitsWanted: stylingStart.outfitsWanted,
+        stage: "style_icons",
       });
     });
   } catch (error) {
@@ -173,6 +175,11 @@ export interface ConsultationView {
   outfits: OutfitView[];
   /** The image model refused every current Outfit's Preview, so a different photo may work better. */
   everyPreviewRefused: boolean;
+  /**
+   * "Show 2 more Outfits" has nothing left to build from: every one of the current Style Icons has
+   * inspired an Outfit or been passed over. "That's every Outfit we can build for this photo."
+   */
+  everyOutfitBuilt: boolean;
 }
 
 export interface OutfitView {
@@ -292,6 +299,7 @@ export async function readConsultation(
     state: row.state,
     outfits,
     everyPreviewRefused: outfits.length > 0 && outfits.every((outfitView) => outfitView.preview.state === "refused"),
+    everyOutfitBuilt: !(await hasCurrentStyleIconLeft(ctx.db, row.id)),
   };
 }
 

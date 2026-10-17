@@ -11,9 +11,8 @@ import type { StylingProgressView, StylingStatusView } from "@/server/operations
 import { StylingStep } from "../styling-step";
 
 /**
- * Shown while the Consultation's Styling runs. Its checklist follows the stored stage, polled from
- * the Styling status about once a second, and the page reloads once the Styling has finished, so
- * its Outfits appear all at once.
+ * Shown while the Consultation's Styling runs. Its checklist follows the stored stage, and the page
+ * reloads once the Styling has finished, so its Outfits appear all at once.
  */
 export function StylingProgress({
   consultationId,
@@ -27,6 +26,18 @@ export function StylingProgress({
   /** The progress as the page rendered. */
   initial: StylingProgressView;
 }) {
+  const progress = useStylingProgress(consultationId, initial);
+  return (
+    <StylingStep photoUrl={photoUrl} photoType={photoType} stage={progress.stage} previews={progress.previews} slow={progress.slow} />
+  );
+}
+
+/**
+ * The running Styling's progress, from `initial`, as the page rendered it, on: polled from the
+ * Styling status about once a second. Once the Styling has finished, the page refreshes to show
+ * what it made.
+ */
+export function useStylingProgress(consultationId: string, initial: StylingProgressView): StylingProgressView {
   const router = useRouter();
   const [progress, setProgress] = useState(initial);
 
@@ -57,7 +68,5 @@ export function StylingProgress({
     };
   }, [consultationId, router]);
 
-  return (
-    <StylingStep photoUrl={photoUrl} photoType={photoType} stage={progress.stage} previews={progress.previews} slow={progress.slow} />
-  );
+  return progress;
 }

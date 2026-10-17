@@ -313,6 +313,8 @@ describe("opening a Consultation", () => {
       state: "styling",
       outfits: [],
       everyPreviewRefused: false,
+      // No Outfits yet for "Show 2 more Outfits" to add to.
+      everyOutfitBuilt: true,
     });
   });
 

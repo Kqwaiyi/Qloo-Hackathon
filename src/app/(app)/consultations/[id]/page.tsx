@@ -1,14 +1,18 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { LocalDate } from "@/components/local-date";
 import { textLink } from "@/components/ui";
-import { BUDGET_TIER_LABELS, CATEGORY_LABELS, PHOTO_TYPE_LABELS, type PriceRangeUsd } from "@/config/consultations";
+import { BUDGET_TIER_LABELS, CATEGORY_LABELS, hasBudgetTier, PHOTO_TYPE_LABELS, type PriceRangeUsd } from "@/config/consultations";
 import { COPY } from "@/config/copy";
+import { ROUTES } from "@/config/routes";
+import { addsToCurrentOutfits } from "@/config/stylings";
 import { getConsultation, getStylingStatus } from "@/server/data/consultations";
+import { getUsageSummary } from "@/server/data/usage";
 import type { OutfitView, PieceView, PreviewView } from "@/server/operations/consultations";
 
 import { Stepper } from "../stepper";
+import { MoreOutfits } from "./more-outfits";
 import { StylingProgress } from "./styling-progress";
 
 export const metadata: Metadata = { title: "Your Outfits" };
@@ -19,9 +23,11 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const status = await getStylingStatus(id);
   const consultation = status && (await getConsultation(id));
   if (!status || !consultation) notFound();
+  const { progress } = status;
 
-  // Opened mid-Styling, from here or on coming back, it's the Styling step again.
-  if (status.progress) {
+  // Opened mid-Styling, from here or on coming back, it's the Styling step again. "Show 2 more
+  // Outfits" instead keeps the Outfits in view, with its own compact checklist below them.
+  if (progress && !addsToCurrentOutfits(progress.kind)) {
     return (
       <>
         <h1 className="mb-6 text-2xl font-semibold tracking-tight">Your Outfits</h1>
@@ -29,11 +35,13 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           consultationId={consultation.id}
           photoUrl={consultation.photoUrl}
           photoType={consultation.photoType}
-          initial={status.progress}
+          initial={progress}
         />
       </>
     );
   }
+  const usage = await getUsageSummary();
+  if (!usage) redirect(ROUTES.signIn);
 
   return (
     <>
@@ -75,6 +83,14 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               </li>
             ))}
           </ol>
+          <MoreOutfits
+            consultationId={consultation.id}
+            running={progress}
+            everyOutfitBuilt={consultation.everyOutfitBuilt}
+            suggestBudgetTier={hasBudgetTier(consultation.photoType)}
+            stylingStart={usage.stylingStart}
+            outfitsLeft={usage.outfitsLeft}
+          />
         </>
       ) : (
         <p className="mt-8 rounded-xl border-2 border-dashed border-stone-200 p-8 text-center text-stone-600">No Outfits</p>

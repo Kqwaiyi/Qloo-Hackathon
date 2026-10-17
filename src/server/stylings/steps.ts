@@ -4,6 +4,7 @@ import sharp from "sharp";
 
 import { type BudgetTier, byCategoryOrder, isBrandCategory } from "@/config/consultations";
 import {
+  addsToCurrentOutfits,
   BRAND_FETCHES_UP_FRONT,
   MAX_BRAND_FETCHES_PER_STYLING,
   MAX_TAILORING_SUBSTITUTES,
@@ -30,12 +31,13 @@ import {
   pieceBrand,
   planOutfitBrands,
 } from "@/server/outfit-assembly/brands";
-import { outfitCategories } from "@/server/outfit-assembly/categories";
+import { outfitCategories, type PhotoCategoryFacts } from "@/server/outfit-assembly/categories";
 import { rankStyleIcons, styleIconLines, styleIconQuery } from "@/server/outfit-assembly/style-icons";
 import type { QlooBrand, QlooClient } from "@/server/qloo/client";
 import { recordUsage } from "@/server/usage/records";
 
 import type { BuildOutfitsSteps, StylingOutcome } from "./build-outfits";
+import { readBuildingBeside } from "./current-outfits";
 
 /** What the steps run on. The Workflow gives them the app's services; tests give them fakes. */
 export interface StylingContext {
@@ -58,6 +60,12 @@ export class StylingNotRunningError extends Error {
 /** The "build Outfits" steps, running on `ctx`. */
 export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
   return {
+    async ranksStyleIcons(stylingId) {
+      const { kind } = await readRunningStyling(ctx.db, stylingId);
+      // One that adds to the current Outfits carries on down their Style Icons.
+      return !addsToCurrentOutfits(kind);
+    },
+
     async styleIconLines(stylingId) {
       const { stylePreference } = await readRunningStyling(ctx.db, stylingId);
       return styleIconLines(stylePreference);
@@ -90,8 +98,7 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
             })),
           );
         }
-        // A body photo's Outfits are built on Brands, fetched next.
-        await moveStage(tx, ctx.clock, stylingId, needsBrands(outfitCategories({ photoType, hairCovered })) ? "brands" : "building_outfits");
+        await moveStage(tx, ctx.clock, stylingId, outfitsStage({ photoType, hairCovered }));
       });
     },
 
@@ -113,16 +120,19 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
           .select({ position: outfit.position, top: outfit.topBrandEntityId, bottom: outfit.bottomBrandEntityId, shoes: outfit.shoesBrandEntityId })
           .from(outfit)
           .where(eq(outfit.stylingId, stylingId));
+        const beside = await readBuildingBeside(tx, { stylingId, kind: planning!.kind, consultationId: running.consultationId });
         const filled = new Set(made.map((outfitMade) => outfitMade.position));
-        const open = Array.from({ length: running.outfitsWanted }, (_, index) => index + 1).filter((position) => !filled.has(position));
+        const open = Array.from({ length: running.outfitsWanted }, (_, index) => beside.firstPosition + index).filter(
+          (position) => !filled.has(position),
+        );
         // Each failed tailoring was a try beyond the Outfits wanted: a substitute.
         const triesLeft = running.outfitsWanted + MAX_TAILORING_SUBSTITUTES - made.length - planning!.tailoringFailures;
         const count = Math.min(open.length, triesLeft);
-        if (count <= 0) return { fetchBrandsFor: [], tries: [] };
+        if (count <= 0 || !beside.styleIconsRankedBy) return { fetchBrandsFor: [], tries: [] };
         const icons = await tx
           .select({ id: styleIcon.id, line: styleIcon.line })
           .from(styleIcon)
-          .where(and(eq(styleIcon.stylingId, stylingId), eq(styleIcon.status, "unused")))
+          .where(and(eq(styleIcon.stylingId, beside.styleIconsRankedBy), eq(styleIcon.status, "unused")))
           .orderBy(asc(styleIcon.position));
         if (!needsBrands(outfitCategories(planning!))) {
           return { fetchBrandsFor: [], tries: icons.slice(0, count).map((icon, index) => ({ position: open[index]!, styleIconId: icon.id, brands: null })) };
@@ -136,7 +146,7 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
           ready.map((icon) => ({ styleIconId: icon.id, line: icon.line, brands: brandsByStyleIcon[icon.id]! })),
           budgetTier,
           count,
-          brandsUsedBy(made),
+          brandsUsedBy([...beside.outfits, ...made]),
         );
         // Skipped quietly, and not a tailoring failure: the next Style Icon takes its place.
         if (plan.skipped.length > 0) await tx.update(styleIcon).set({ status: "skipped" }).where(inArray(styleIcon.id, plan.skipped));
@@ -301,6 +311,11 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
   };
 }
 
+/** Where a Styling's Outfits start: at Brands for a body photo, whose Outfits are built on them, or straight at Building Outfits. */
+export function outfitsStage(photo: PhotoCategoryFacts): StylingStage {
+  return needsBrands(outfitCategories(photo)) ? "brands" : "building_outfits";
+}
+
 /** The Budget Tier a Styling's Brands are fetched and picked at. Only a Face Photo's Styling has none, and it has no Brands. */
 function brandsBudgetTier(stylingId: string, budgetTier: BudgetTier | null): BudgetTier {
   if (!budgetTier) throw new Error(`Styling ${stylingId} has no Budget Tier for its Brands.`);
@@ -328,16 +343,17 @@ async function savePreview(
 }
 
 /**
- * Finishes a running Styling. Whatever Outfits it made switch in at once and the Consultation is
- * ready; a Preview not ready by then never will be, so it's marked failed. One that made none has
- * failed: nothing switches, and the Consultation keeps whatever it showed before, or shows No
- * Outfits. A Styling that isn't running any more is left as it is.
+ * Finishes a running Styling. Whatever Outfits it made switch in at once, after any it adds to, and
+ * the Consultation is ready; a Preview not ready by then never will be, so it's marked failed. One
+ * that made none has failed: nothing switches, and the Consultation keeps whatever it showed
+ * before, or shows No Outfits. A Styling that isn't running any more is left as it is.
  */
 export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, stylingId: string, outcome: StylingOutcome): Promise<void> {
   const finishedAt = ctx.clock.now();
   await ctx.db.transaction(async (tx) => {
     const running = await lockRunningStyling(tx, stylingId);
     if (!running) return;
+    const beside = await readBuildingBeside(tx, { stylingId, kind: running.kind, consultationId: running.consultationId });
     const made = await tx
       .select({ id: outfit.id, position: outfit.position })
       .from(outfit)
@@ -346,7 +362,8 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
     if (made.length > 0) {
       // A position whose Style Icons all failed tailoring leaves a gap: the rest move up, in order.
       for (const [index, outfitMade] of made.entries()) {
-        if (outfitMade.position !== index + 1) await tx.update(outfit).set({ position: index + 1 }).where(eq(outfit.id, outfitMade.id));
+        const position = beside.firstPosition + index;
+        if (outfitMade.position !== position) await tx.update(outfit).set({ position }).where(eq(outfit.id, outfitMade.id));
       }
       await tx
         .update(outfit)
@@ -361,6 +378,14 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
     }
     const failureReason = outcome === "broke" ? "something_broke" : "nothing_built";
     await tx.update(styling).set({ status: "failed", failureReason, finishedAt }).where(eq(styling.id, stylingId));
+    // A failed "Show 2 more Outfits" passes over the rest of the current Style Icons: that's every
+    // Outfit it can build for the photo, until a re-styling builds new ones.
+    if (addsToCurrentOutfits(running.kind) && beside.styleIconsRankedBy) {
+      await tx
+        .update(styleIcon)
+        .set({ status: "skipped" })
+        .where(and(eq(styleIcon.stylingId, beside.styleIconsRankedBy), eq(styleIcon.status, "unused")));
+    }
     const [shown] = await tx
       .select({ id: outfit.id })
       .from(outfit)
@@ -378,6 +403,7 @@ async function readRunningStyling(db: Database, stylingId: string) {
   const [row] = await db
     .select({
       consultationId: styling.consultationId,
+      kind: styling.kind,
       photoStyle: styling.photoStyle,
       budgetTier: styling.budgetTier,
       stylePreference: consultation.stylePreference,
@@ -453,7 +479,7 @@ async function whileRunning<T>(
 
 async function lockRunningStyling(tx: Transaction, stylingId: string) {
   const [row] = await tx
-    .select({ consultationId: styling.consultationId, userId: styling.userId, outfitsWanted: styling.outfitsWanted })
+    .select({ consultationId: styling.consultationId, userId: styling.userId, kind: styling.kind, outfitsWanted: styling.outfitsWanted })
     .from(styling)
     .where(and(eq(styling.id, stylingId), eq(styling.status, "running")))
     .for("update");

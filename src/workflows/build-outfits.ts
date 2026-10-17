@@ -18,6 +18,7 @@ import {
 export async function buildOutfitsWorkflow(stylingId: string): Promise<void> {
   "use workflow";
   await buildOutfits(stylingId, {
+    ranksStyleIcons,
     styleIconLines,
     fetchStyleIcons,
     saveStyleIcons,
@@ -28,6 +29,12 @@ export async function buildOutfitsWorkflow(stylingId: string): Promise<void> {
     renderPreview,
     finish,
   });
+}
+
+async function ranksStyleIcons(stylingId: string): Promise<boolean> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.ranksStyleIcons(stylingId));
 }
 
 async function styleIconLines(stylingId: string): Promise<Line[]> {
