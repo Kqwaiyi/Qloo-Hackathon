@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { redirect } from "next/navigation";
 
-import { successNotice } from "@/components/ui";
+import { LimitMessage, type LimitRefusal } from "@/components/limit-message";
+import { successNotice, textLink } from "@/components/ui";
 import { COPY } from "@/config/copy";
-import { EMAIL_VERIFIED_PARAM } from "@/config/routes";
-import { getEmailVerification, requireSignedInUser } from "@/server/data/session";
+import { EMAIL_VERIFIED_PARAM, ROUTES } from "@/config/routes";
+import { requireSignedInUser } from "@/server/data/session";
+import { getUsageSummary } from "@/server/data/usage";
 
 import { Stepper } from "../stepper";
 import { NewConsultation } from "./new-consultation";
@@ -11,17 +15,25 @@ import { NewConsultation } from "./new-consultation";
 export const metadata: Metadata = { title: "New Consultation" };
 
 export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  await requireSignedInUser();
-  const [verification, params] = await Promise.all([getEmailVerification(), searchParams]);
+  const user = await requireSignedInUser();
+  const [usage, params] = await Promise.all([getUsageSummary(), searchParams]);
+  if (!usage) redirect(ROUTES.signIn);
+  const { stylingStart } = usage;
   return (
     <>
-      {params[EMAIL_VERIFIED_PARAM] !== undefined && verification?.verified && (
+      {params[EMAIL_VERIFIED_PARAM] !== undefined && user.emailVerified && (
         <p role="status" className={successNotice}>
           {COPY.emailVerified}
         </p>
       )}
       <h1 className="mb-6 text-2xl font-semibold tracking-tight">New Consultation</h1>
-      {verification && !verification.verified ? <VerifyFirst email={verification.email} /> : <NewConsultation />}
+      {stylingStart.ok ? (
+        <NewConsultation outfitsWanted={stylingStart.outfitsWanted} outfitsLeft={usage.outfitsLeft} />
+      ) : stylingStart.refusal === "unverified" ? (
+        <VerifyFirst email={user.email} />
+      ) : (
+        <StylingUnavailable refusal={stylingStart} />
+      )}
     </>
   );
 }
@@ -38,6 +50,27 @@ function VerifyFirst({ email }: { email: string }) {
         <p className="mx-auto mt-2 max-w-md text-stone-600">
           Open the link we sent to <span className="font-medium text-stone-900">{email}</span> to start your first Consultation.
           Can&apos;t find it? Resend it, or fix the address, from the banner above.
+        </p>
+      </section>
+    </>
+  );
+}
+
+/** Instead of the Photo Type step while no Styling can start, such as once today's Outfits are made, with when that changes. */
+function StylingUnavailable({ refusal }: { refusal: LimitRefusal }) {
+  return (
+    <>
+      <Stepper current={1} />
+      <section aria-labelledby="styling-unavailable-heading" className="rounded-xl border-2 border-dashed border-stone-200 p-8 text-center">
+        <h2 id="styling-unavailable-heading" className="text-xl font-semibold tracking-tight">
+          <LimitMessage refusal={refusal} />
+        </h2>
+        <p className="mx-auto mt-2 max-w-md text-stone-600">
+          You can still open and delete your Consultations in{" "}
+          <Link href={ROUTES.myConsultations} className={textLink}>
+            My Consultations
+          </Link>
+          .
         </p>
       </section>
     </>

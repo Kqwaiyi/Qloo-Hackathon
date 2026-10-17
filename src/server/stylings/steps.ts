@@ -33,6 +33,7 @@ import {
 import { outfitCategories } from "@/server/outfit-assembly/categories";
 import { rankStyleIcons, styleIconLines, styleIconQuery } from "@/server/outfit-assembly/style-icons";
 import type { QlooBrand, QlooClient } from "@/server/qloo/client";
+import { recordUsage } from "@/server/usage/records";
 
 import type { BuildOutfitsSteps, StylingOutcome } from "./build-outfits";
 
@@ -352,6 +353,8 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
         .set({ previewState: "failed" })
         .where(and(eq(outfit.stylingId, stylingId), eq(outfit.previewState, "pending")));
       await tx.update(outfit).set({ current: true }).where(eq(outfit.stylingId, stylingId));
+      // Each counts against the Outfit Allowance from now, Preview or not, even if later replaced or deleted.
+      await recordUsage(tx, { kind: "outfit", userId: running.userId, at: finishedAt }, made.length);
       await tx.update(styling).set({ status: "succeeded", outfitsMade: made.length, finishedAt }).where(eq(styling.id, stylingId));
       await tx.update(consultation).set({ state: "ready" }).where(eq(consultation.id, running.consultationId));
       return;
@@ -450,7 +453,7 @@ async function whileRunning<T>(
 
 async function lockRunningStyling(tx: Transaction, stylingId: string) {
   const [row] = await tx
-    .select({ consultationId: styling.consultationId, outfitsWanted: styling.outfitsWanted })
+    .select({ consultationId: styling.consultationId, userId: styling.userId, outfitsWanted: styling.outfitsWanted })
     .from(styling)
     .where(and(eq(styling.id, stylingId), eq(styling.status, "running")))
     .for("update");

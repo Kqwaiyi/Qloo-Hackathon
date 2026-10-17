@@ -17,6 +17,10 @@ export const COPY = {
   photoNotAppropriate: "We can't use this photo.",
   contentRules: "Only use photos of yourself that you have the rights to, with no nudity or intimate images.",
   photoHairNotVisible: "We need to see your hair to suggest a Hairstyle.",
+  /** The allowance line beside every action that uses Outfits. */
+  outfitsItUses: (outfits: number, left: number) => `Uses ${outfits} of your ${left} Outfits left today`,
+  allowanceUsedUp: (allowance: number, time: string) => `You've made today's ${allowance} Outfits. More from ${time}.`,
+  photoCheckLimitReached: (limit: number, time: string) => `You've checked ${limit} photos today. More from ${time}.`,
   faceGuide: "keep your face above this line",
   takingLonger: "This is taking longer than usual.",
   aiGenerated: "AI-generated",

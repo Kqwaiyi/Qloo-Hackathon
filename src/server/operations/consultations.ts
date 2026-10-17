@@ -30,6 +30,7 @@ import { ageGroupAt } from "@/server/outfit-assembly/age-group";
 import { brandPriceRange, outfitPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
 import { checkStylingStart, createStyling, launchStyling, type StylingStartRefusal } from "@/server/stylings/start";
 import { finishStyling } from "@/server/stylings/steps";
+import { readUsageLeft, recordUsage } from "@/server/usage/records";
 
 /** The shape of what "Get my Outfits" sends. The server action parses its form with this. */
 export const startConsultationInputSchema = z.object({
@@ -42,6 +43,8 @@ export type StartConsultationInput = z.infer<typeof startConsultationInputSchema
 
 export type StartConsultationRefusal =
   | { refusal: "signed-out" | "unverified" | "unusable-file" | "check-errored" }
+  /** The user has had every photo the photo-check limit allows checked in the rolling window, until `moreFrom`. */
+  | { refusal: "photo-check-limit"; moreFrom: Date }
   | { refusal: "photo-rejected"; rejection: PhotoRejection }
   | StylingStartRefusal;
 
@@ -59,8 +62,10 @@ export async function startConsultation(
   if (!user) return { ok: false, refusal: "signed-out" };
   // Verification is a soft gate: an unverified user can look around, but can't start a Consultation.
   if (!user.emailVerified) return { ok: false, refusal: "unverified" };
-  const stylingRefusal = await checkStylingStart(ctx, user);
-  if (stylingRefusal) return { ok: false, ...stylingRefusal };
+  const stylingStart = await checkStylingStart(ctx, user);
+  if (!stylingStart.ok) return stylingStart;
+  const photoChecks = await readUsageLeft(ctx.db, { kind: "photo_check", userId: user.id, at: ctx.clock.now() });
+  if (photoChecks.usedUp) return { ok: false, refusal: "photo-check-limit", moreFrom: photoChecks.moreFrom };
 
   // Only requests that skipped the browser's redraw fail here, so it isn't a photo check.
   const photo = await readPhotoFile(input.photo);
@@ -70,10 +75,13 @@ export async function startConsultation(
   try {
     photoCheck = await ctx.ai.checkPhoto({ photo, photoType: input.photoType });
   } catch (error) {
-    // Only the message: a provider's error can carry the request, and with it the photo.
+    // Only the message: a provider's error can carry the request, and with it the photo. A check
+    // that errors doesn't count towards the limit.
     console.error("The photo check errored:", error instanceof Error ? error.message : "unknown error");
     return { ok: false, refusal: "check-errored" };
   }
+  // Counted whether the photo is accepted or rejected.
+  await recordUsage(ctx.db, { kind: "photo_check", userId: user.id, at: ctx.clock.now() });
   const verdict = judgePhotoCheck(photoCheck, input.photoType);
   if (!verdict.accepted) return { ok: false, refusal: "photo-rejected", rejection: verdict.rejection };
   const { report } = verdict;
@@ -105,7 +113,14 @@ export async function startConsultation(
         ageGroup: ageGroupAt(user.birthYear, user.birthMonth, now),
         state: "styling",
       });
-      return createStyling(tx, now, { consultationId: id, userId: user.id, kind: "first", budgetTier, photoStyle: report.photoStyle });
+      return createStyling(tx, now, {
+        consultationId: id,
+        userId: user.id,
+        kind: "first",
+        budgetTier,
+        photoStyle: report.photoStyle,
+        outfitsWanted: stylingStart.outfitsWanted,
+      });
     });
   } catch (error) {
     await ctx.blob.delete(photoPathname).catch(() => {});

@@ -24,6 +24,7 @@ import {
   type PhotoStyleWords,
 } from "../../config/consultations";
 import type { EmailKind } from "../../config/email";
+import { USAGE_KINDS } from "../../config/limits";
 import {
   PREVIEW_REFUSAL_REASONS,
   PREVIEW_STATES,
@@ -151,6 +152,23 @@ export const emailLog = pgTable(
     index("email_log_sent_at_idx").on(table.sentAt),
     index("email_log_user_id_kind_sent_at_idx").on(table.userId, table.kind, table.sentAt),
   ],
+);
+
+// Usage records, which the limits count. They're kept apart from Consultations, so deleting a
+// Consultation keeps them, and they hold no photo and no Outfit content.
+
+export const usageKindEnum = pgEnum("usage_kind", USAGE_KINDS);
+
+export const usageRecord = pgTable(
+  "usage_record",
+  {
+    id: text("id").primaryKey(),
+    kind: usageKindEnum("kind").notNull(),
+    // Whose usage it was. Deleting the account strips it from the record.
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    usedAt: timestamp("used_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("usage_record_user_id_kind_used_at_idx").on(table.userId, table.kind, table.usedAt)],
 );
 
 // Consultations.

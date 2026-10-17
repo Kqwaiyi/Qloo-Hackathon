@@ -5,23 +5,33 @@ import type { BudgetTier, PhotoStyleWords } from "@/config/consultations";
 import { OUTFITS_PER_STYLING, type StylingKind } from "@/config/stylings";
 import type { Transaction } from "@/server/db/database";
 import { consultation, styling } from "@/server/db/schema";
-import type { OperationContext } from "@/server/operations/context";
+import type { OperationContext, Result } from "@/server/operations/context";
 import type { SignedInUser } from "@/server/operations/session";
+import { readUsageLeft } from "@/server/usage/records";
 
 import { finishStyling } from "./steps";
 
 /**
- * Why a Styling can't start, one refusal per rule. None yet: the region gate (ticket 24), the
- * Styling locks (ticket 30) and the limits (tickets 22 and 23) each add theirs here.
+ * Why a Styling can't start, one refusal per rule. The region gate (ticket 24), the Styling locks
+ * (ticket 30) and the app-wide caps and Qloo backstop (ticket 23) each add theirs here.
  */
-export type StylingStartRefusal = { refusal: never };
+export type StylingStartRefusal =
+  /** The user has made every Outfit their Outfit Allowance allows in the rolling window, until `moreFrom`. */
+  { refusal: "allowance-used"; moreFrom: Date };
+
+/** A Styling may start, making at most `outfitsWanted` Outfits, or the reason it can't. */
+export type StylingStart = Result<{ outfitsWanted: number }, StylingStartRefusal>;
 
 /**
  * The check every operation that starts a Styling runs first, before anything that costs, so each
- * rule that can stop a Styling lives in this one place. Null when a Styling may start.
+ * rule that can stop a Styling, or limit how many Outfits it makes, lives in this one place. The
+ * usage summary runs it too, so the UI says what the operations will do.
  */
-export async function checkStylingStart(_ctx: OperationContext, _user: SignedInUser): Promise<StylingStartRefusal | null> {
-  return null;
+export async function checkStylingStart(ctx: Pick<OperationContext, "db" | "clock">, user: SignedInUser): Promise<StylingStart> {
+  const outfits = await readUsageLeft(ctx.db, { kind: "outfit", userId: user.id, at: ctx.clock.now() });
+  if (outfits.usedUp) return { ok: false, refusal: "allowance-used", moreFrom: outfits.moreFrom };
+  // A Styling's usual number of Outfits, or what the allowance leaves if that's fewer.
+  return { ok: true, outfitsWanted: Math.min(OUTFITS_PER_STYLING, outfits.left) };
 }
 
 export interface NewStyling {
@@ -31,6 +41,8 @@ export interface NewStyling {
   /** What it builds for. */
   budgetTier: BudgetTier | null;
   photoStyle: PhotoStyleWords;
+  /** How many Outfits it makes, at most: what `checkStylingStart` allowed. */
+  outfitsWanted: number;
 }
 
 /**
@@ -46,7 +58,6 @@ export async function createStyling(tx: Transaction, now: Date, newStyling: NewS
     // A first Styling starts by picking its Consultation's Style Icons.
     stage: "style_icons",
     stageMovedAt: now,
-    outfitsWanted: OUTFITS_PER_STYLING,
     outfitsMade: 0,
     tailoringFailures: 0,
     startedAt: now,

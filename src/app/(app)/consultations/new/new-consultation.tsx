@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState, useTransition } from "react";
+import { type ChangeEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState, useTransition } from "react";
 
+import { LimitMessage } from "@/components/limit-message";
 import { PhotoTypeSilhouette } from "@/components/photo-type-silhouette";
 import { fieldError, primaryButton, secondaryButton } from "@/components/ui";
 import {
@@ -43,7 +44,8 @@ interface ChosenPhoto {
   source: PhotoSource;
 }
 
-export function NewConsultation() {
+/** `outfitsWanted` is how many of the `outfitsLeft` in the user's Outfit Allowance the Styling will make. */
+export function NewConsultation({ outfitsWanted, outfitsLeft }: { outfitsWanted: number; outfitsLeft: number }) {
   const [step, setStep] = useState<"photo-type" | "photo">("photo-type");
   const [photoType, setPhotoType] = useState<PhotoType>(DEFAULT_PHOTO_TYPE);
   // Kept here so going Back and on again keeps the photo and the Budget Tier.
@@ -59,6 +61,7 @@ export function NewConsultation() {
     <PhotoTypeStep photoType={photoType} onChange={setPhotoType} onContinue={() => setStep("photo")} />
   ) : (
     <PhotoStep
+      allowanceLine={COPY.outfitsItUses(outfitsWanted, outfitsLeft)}
       photoType={photoType}
       onPhotoTypeChange={setPhotoType}
       photo={photo}
@@ -132,9 +135,9 @@ function PhotoTypeStep({
   );
 }
 
-/** What the photo step shows when something is wrong with the photo. */
+/** What the photo step shows when something is wrong with the photo, or stops it being checked. */
 interface Problem {
-  message: string;
+  message: ReactNode;
   /** A second line, such as the content rules. */
   detail?: string;
   /** The Photo Type the photo looks like, offered as a one-tap switch. */
@@ -159,6 +162,7 @@ function rejectionProblem(rejection: PhotoRejection): Problem {
 }
 
 function PhotoStep({
+  allowanceLine,
   photoType,
   onPhotoTypeChange,
   photo,
@@ -167,6 +171,8 @@ function PhotoStep({
   onBudgetTierChange,
   onBack,
 }: {
+  /** Beside "Get my Outfits": how many Outfits it will use, of how many are left. */
+  allowanceLine: string;
   photoType: PhotoType;
   onPhotoTypeChange: (photoType: PhotoType) => void;
   photo: ChosenPhoto | null;
@@ -270,8 +276,10 @@ function PhotoStep({
         setStepStartedAt(Date.now());
         startSending(() => router.push(consultationRoute(result.consultationId)));
       } else if (result.refusal === "signed-out") startSending(() => router.push(ROUTES.signIn));
-      // The page shows the "verify your email first" panel instead.
-      else if (result.refusal === "unverified") router.refresh();
+      // The page shows the "verify your email first" panel instead, or, with today's Outfits made
+      // since it loaded, says when more become available.
+      else if (result.refusal === "unverified" || result.refusal === "allowance-used") router.refresh();
+      else if (result.refusal === "photo-check-limit") setProblem({ message: <LimitMessage refusal={result} /> });
       else if (result.refusal === "photo-rejected") setProblem(rejectionProblem(result.rejection));
       else if (result.refusal === "check-errored") setProblem({ message: COPY.photoCheckFailed });
       else setProblem({ message: COPY.photoUnusable });
@@ -382,7 +390,7 @@ function PhotoStep({
 
         {hasBudgetTier(photoType) && <BudgetTierPicker value={budgetTier} onChange={onBudgetTierChange} />}
 
-        <div className="mt-8 flex justify-between gap-3">
+        <div className="mt-8 flex items-start justify-between gap-3">
           <button
             type="button"
             onClick={onBack}
@@ -391,15 +399,21 @@ function PhotoStep({
           >
             Back
           </button>
-          <button
-            ref={getOutfitsButton}
-            type="button"
-            onClick={() => getOutfits(photoType)}
-            disabled={!shown || busy}
-            className={primaryButton}
-          >
-            Get my Outfits
-          </button>
+          <div className="flex flex-col items-end gap-1.5 text-right">
+            <button
+              ref={getOutfitsButton}
+              type="button"
+              onClick={() => getOutfits(photoType)}
+              disabled={!shown || busy}
+              aria-describedby="allowance-line"
+              className={primaryButton}
+            >
+              Get my Outfits
+            </button>
+            <p id="allowance-line" className="text-sm text-stone-600">
+              {allowanceLine}
+            </p>
+          </div>
         </div>
       </section>
     </>
