@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { type FormEvent, useEffect, useState, useTransition } from "react";
 
-import { INVALID_EMAIL, INVALID_PASSWORD, PASSWORD_HINT } from "@/components/messages";
+import { BirthDateInputs } from "@/components/birth-date-inputs";
+import { INVALID_BIRTH_DATE, INVALID_EMAIL, INVALID_PASSWORD, PASSWORD_HINT } from "@/components/messages";
 import { PasswordInput } from "@/components/password-input";
 import { CountryField, StylePreferenceField, UsernameField } from "@/components/profile-fields";
 import { fieldError, fieldHint, input, label, primaryButton, secondaryButton, textLink } from "@/components/ui";
@@ -42,21 +43,6 @@ export function SignUpFlow({ countries }: { countries: readonly CountryOption[] 
   return <DateOfBirthStep onAdult={(birthDate) => setStep({ name: "account", birthDate })} onUnder18={() => close("under-18")} />;
 }
 
-const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
 function DateOfBirthStep({ onAdult, onUnder18 }: { onAdult: (birthDate: BirthDateFields) => void; onUnder18: () => void }) {
   const [fields, setFields] = useState<BirthDateFields>({ day: "", month: "", year: "" });
   const [invalid, setInvalid] = useState(false);
@@ -72,72 +58,18 @@ function DateOfBirthStep({ onAdult, onUnder18 }: { onAdult: (birthDate: BirthDat
     });
   }
 
-  const update = (field: keyof BirthDateFields) => (value: string) => {
-    setFields((current) => ({ ...current, [field]: value }));
-    setInvalid(false);
-  };
-
   return (
     <form onSubmit={submit} className="mt-6">
-      <fieldset>
-        <legend className="font-medium">What&apos;s your date of birth?</legend>
-        <div className="mt-3 grid grid-cols-[5rem_1fr_6rem] gap-3">
-          <div>
-            <label htmlFor="birth-day" className={label}>
-              Day
-            </label>
-            <input
-              id="birth-day"
-              inputMode="numeric"
-              autoComplete="bday-day"
-              maxLength={2}
-              required
-              value={fields.day}
-              onChange={(event) => update("day")(event.target.value)}
-              aria-invalid={invalid}
-              className={input}
-            />
-          </div>
-          <div>
-            <label htmlFor="birth-month" className={label}>
-              Month
-            </label>
-            <select
-              id="birth-month"
-              autoComplete="bday-month"
-              required
-              value={fields.month}
-              onChange={(event) => update("month")(event.target.value)}
-              aria-invalid={invalid}
-              className={input}
-            >
-              <option value="" disabled />
-              {MONTHS.map((name, index) => (
-                <option key={name} value={String(index + 1)}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="birth-year" className={label}>
-              Year
-            </label>
-            <input
-              id="birth-year"
-              inputMode="numeric"
-              autoComplete="bday-year"
-              maxLength={4}
-              required
-              value={fields.year}
-              onChange={(event) => update("year")(event.target.value)}
-              aria-invalid={invalid}
-              className={input}
-            />
-          </div>
-        </div>
-      </fieldset>
-      {invalid && <p className={fieldError}>Enter a real date of birth.</p>}
+      <BirthDateInputs
+        legend="What's your date of birth?"
+        value={fields}
+        onChange={(birthDate) => {
+          setFields(birthDate);
+          setInvalid(false);
+        }}
+        invalid={invalid}
+      />
+      {invalid && <p className={fieldError}>{INVALID_BIRTH_DATE}</p>}
       <button type="submit" disabled={pending} className={`${primaryButton} mt-6 w-full`}>
         Continue
       </button>

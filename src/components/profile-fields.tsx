@@ -1,5 +1,6 @@
 "use client";
 
+import { ManagedByTheTeam } from "@/components/managed-by-the-team";
 import { CHOOSE_COUNTRY, CHOOSE_STYLE_PREFERENCE, USERNAME_HINT } from "@/components/messages";
 import { fieldError, fieldHint, input, label } from "@/components/ui";
 import { STYLE_PREFERENCE_LABELS, STYLE_PREFERENCES, USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_PATTERN } from "@/config/accounts";
@@ -8,17 +9,22 @@ import type { CountryOption } from "@/config/countries";
 
 // The profile fields that sign-up and Settings share.
 
-/** The username, with Better Auth's rules as its hint, or "That username is taken" in its place. */
+/**
+ * The username, with Better Auth's rules as its hint, or "That username is taken" in its place. On
+ * the Demo Account it's managed by the team: shown, disabled, with a lock instead.
+ */
 export function UsernameField({
   value,
   onChange,
   taken,
   invalid,
+  managed = false,
 }: {
   value: string;
   onChange: (username: string) => void;
   taken: boolean;
   invalid: boolean;
+  managed?: boolean;
 }) {
   return (
     <div>
@@ -28,6 +34,7 @@ export function UsernameField({
       <input
         id="username"
         required
+        disabled={managed}
         autoComplete="username"
         minLength={USERNAME_MIN_LENGTH}
         maxLength={USERNAME_MAX_LENGTH}
@@ -39,9 +46,13 @@ export function UsernameField({
         aria-describedby="username-hint"
         className={input}
       />
-      <p id="username-hint" className={taken || invalid ? fieldError : fieldHint}>
-        {taken ? COPY.usernameTaken : USERNAME_HINT}
-      </p>
+      {managed ? (
+        <ManagedByTheTeam id="username-hint" className="mt-1" />
+      ) : (
+        <p id="username-hint" className={taken || invalid ? fieldError : fieldHint}>
+          {taken ? COPY.usernameTaken : USERNAME_HINT}
+        </p>
+      )}
     </div>
   );
 }

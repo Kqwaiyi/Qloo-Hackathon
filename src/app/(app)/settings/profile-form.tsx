@@ -2,9 +2,11 @@
 
 import { type FormEvent, useState, useTransition } from "react";
 
+import { PROFILE_SAVED } from "@/components/messages";
 import { type Notice, NoticeLine } from "@/components/notice";
 import { CountryField, StylePreferenceField, UsernameField } from "@/components/profile-fields";
 import { primaryButton } from "@/components/ui";
+import { COPY } from "@/config/copy";
 import type { CountryOption } from "@/config/countries";
 import type { UpdateProfileRefusal } from "@/server/operations/account";
 import type { SignedInUser } from "@/server/operations/session";
@@ -12,17 +14,21 @@ import type { SignedInUser } from "@/server/operations/session";
 import { updateProfileAction } from "./actions";
 
 /** A refusal the form shows beside its fields. A signed-out user is sent to sign in instead. */
-type ProfileProblem = Exclude<UpdateProfileRefusal, { refusal: "signed-out" }>;
+type ProfileProblem = Exclude<UpdateProfileRefusal, { refusal: "signed-out" | "managed-by-the-team" }>;
 
-const SAVED: Notice = { text: "Saved. Your next Consultations use it; earlier ones keep the profile they were made with.", problem: false };
 
-/** The username, Style Preference and Country, saved together. */
+/**
+ * The username, Style Preference and Country, saved together. On the Demo Account the username is
+ * managed by the team, and the form saves it as it is.
+ */
 export function ProfileForm({
   profile,
   countries,
+  usernameManaged,
 }: {
   profile: Pick<SignedInUser, "username" | "stylePreference" | "countryCode">;
   countries: readonly CountryOption[];
+  usernameManaged: boolean;
 }) {
   const [username, setUsername] = useState(profile.username);
   const [stylePreference, setStylePreference] = useState<string>(profile.stylePreference);
@@ -36,10 +42,11 @@ export function ProfileForm({
     setProblem(null);
     setNotice(null);
     startSaving(async () => {
-      // A signed-out user is redirected to sign in.
+      // A signed-out user is redirected to sign in, so never gets an answer.
       const result = await updateProfileAction({ username, stylePreference, countryCode });
-      if (result.ok) setNotice(SAVED);
-      else if (result.refusal !== "signed-out") setProblem(result);
+      if (result.ok) setNotice({ text: PROFILE_SAVED, problem: false });
+      else if (result.refusal === "managed-by-the-team") setNotice({ text: COPY.managedByTheTeam, problem: true });
+      else setProblem(result);
     });
   }
 
@@ -55,6 +62,7 @@ export function ProfileForm({
         }}
         taken={problem?.refusal === "username-taken"}
         invalid={invalidField === "username"}
+        managed={usernameManaged}
       />
       <StylePreferenceField value={stylePreference} onChange={setStylePreference} invalid={invalidField === "stylePreference"} />
       <CountryField countries={countries} value={countryCode} onChange={setCountryCode} invalid={invalidField === "countryCode"} />

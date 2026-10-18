@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { pendingEmailChangeText } from "@/components/email-change/messages";
 import { mailto } from "@/components/mailto";
+import { ManagedAction, ManagedByTheTeam } from "@/components/managed-by-the-team";
 import { secondaryButton, successNotice, textLink } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import { COUNTRY_OPTIONS } from "@/config/countries";
@@ -14,6 +15,7 @@ import { getTeamEmail } from "@/server/data/team";
 
 import { signOutEverywhereAction } from "./actions";
 import { DeleteAccount } from "./delete-account";
+import { DemoAccountBirthDateForm } from "./demo-account-birth-date-form";
 import { EmailForm } from "./email-form";
 import { PasswordForm } from "./password-form";
 import { ProfileForm } from "./profile-form";
@@ -21,11 +23,16 @@ import { WithdrawPhotoConsent } from "./withdraw-photo-consent";
 
 export const metadata: Metadata = { title: "Settings" };
 
-/** Profile, Sign-in, Privacy and Danger. */
+/**
+ * Profile, Sign-in, Privacy and Danger. On the Demo Account, what the team manages shows its value
+ * or its button disabled, with a lock and "Managed by the team", and the date of birth can change.
+ */
 export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await requireSignedInUser();
+  const { isDemoAccount } = user;
   const teamEmail = getTeamEmail();
   const [pendingEmailChange, params] = await Promise.all([getPendingEmailChange(), searchParams]);
+  const bornIn = COPY.bornIn(birthMonthAndYearText(user.birthYear, user.birthMonth));
   return (
     <>
       {params[EMAIL_CHANGED_PARAM] !== undefined && (
@@ -39,13 +46,21 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
         <ProfileForm
           profile={{ username: user.username, stylePreference: user.stylePreference, countryCode: user.countryCode }}
           countries={COUNTRY_OPTIONS}
+          usernameManaged={isDemoAccount}
         />
-        <p className="mt-6 border-t border-stone-200 pt-4 text-sm text-stone-700">
-          {COPY.bornIn(birthMonthAndYearText(user.birthYear, user.birthMonth))} · {COPY.birthDateWrong}{" "}
-          <a href={mailto(teamEmail, "My date of birth is wrong")} className={textLink}>
-            {COPY.emailUs}
-          </a>
-        </p>
+        {isDemoAccount ? (
+          <div className="mt-6 border-t border-stone-200 pt-4">
+            <p className="text-sm text-stone-700">{bornIn}</p>
+            <DemoAccountBirthDateForm birthYear={user.birthYear} birthMonth={user.birthMonth} />
+          </div>
+        ) : (
+          <p className="mt-6 border-t border-stone-200 pt-4 text-sm text-stone-700">
+            {bornIn} · {COPY.birthDateWrong}{" "}
+            <a href={mailto(teamEmail, "My date of birth is wrong")} className={textLink}>
+              {COPY.emailUs}
+            </a>
+          </p>
+        )}
       </Section>
 
       <Section title="Sign-in">
@@ -53,28 +68,38 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
           <dt className="text-sm font-medium">Email</dt>
           <dd className="mt-1 break-all text-stone-700">{user.email}</dd>
         </dl>
-        {pendingEmailChange && (
-          <p className="mt-2 break-words rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            {pendingEmailChangeText(pendingEmailChange, user.email)}
-          </p>
+        {isDemoAccount ? (
+          <ManagedByTheTeam id="email-managed" className="mt-1" />
+        ) : (
+          <>
+            {pendingEmailChange && (
+              <p className="mt-2 break-words rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                {pendingEmailChangeText(pendingEmailChange, user.email)}
+              </p>
+            )}
+            <div className="mt-4">
+              <EmailForm currentEmail={user.email} verified={user.emailVerified} />
+            </div>
+          </>
         )}
-        <div className="mt-4">
-          <EmailForm currentEmail={user.email} verified={user.emailVerified} />
-        </div>
         <h3 className="mt-6 border-t border-stone-200 pt-4 font-medium">Password</h3>
-        <div className="mt-3">
-          <PasswordForm />
+        <div className="mt-3">{isDemoAccount ? <ManagedAction id="change-password" label="Change password" /> : <PasswordForm />}</div>
+        <div className="mt-6 border-t border-stone-200 pt-4">
+          {isDemoAccount ? (
+            <ManagedAction id="sign-out-everywhere" label={COPY.signOutEverywhere} />
+          ) : (
+            <form action={signOutEverywhereAction}>
+              <button type="submit" className={secondaryButton}>
+                {COPY.signOutEverywhere}
+              </button>
+              <p className="mt-2 text-sm text-stone-600">Ends every sign-in to your account, this one included.</p>
+            </form>
+          )}
         </div>
-        <form action={signOutEverywhereAction} className="mt-6 border-t border-stone-200 pt-4">
-          <button type="submit" className={secondaryButton}>
-            {COPY.signOutEverywhere}
-          </button>
-          <p className="mt-2 text-sm text-stone-600">Ends every sign-in to your account, this one included.</p>
-        </form>
       </Section>
 
       <Section title="Privacy">
-        <WithdrawPhotoConsent />
+        {isDemoAccount ? <ManagedAction id="withdraw-photo-consent" label={COPY.withdrawPhotoConsent} /> : <WithdrawPhotoConsent />}
         <ul className="mt-6 space-y-2 border-t border-stone-200 pt-4">
           <li>
             <Link href={ROUTES.privacy} className={textLink}>
@@ -95,9 +120,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
         </ul>
       </Section>
 
-      <Section title="Danger">
-        <DeleteAccount />
-      </Section>
+      <Section title="Danger">{isDemoAccount ? <ManagedAction id="delete-account" label={COPY.deleteAccount} /> : <DeleteAccount />}</Section>
     </>
   );
 }

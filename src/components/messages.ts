@@ -10,3 +10,5 @@ export const PASSWORD_HINT = `At least ${PASSWORD_MIN_LENGTH} characters.`;
 export const USERNAME_HINT = `Use ${USERNAME_MIN_LENGTH}–${USERNAME_MAX_LENGTH} letters, numbers, dots or underscores.`;
 export const CHOOSE_STYLE_PREFERENCE = "Choose a Style Preference.";
 export const CHOOSE_COUNTRY = "Choose your Country.";
+export const INVALID_BIRTH_DATE = "Enter a real date of birth.";
+export const PROFILE_SAVED = "Saved. Your next Consultations use it; earlier ones keep the profile they were made with.";

@@ -99,6 +99,8 @@ export const COPY = {
   birthDateWrong: "Wrong?",
   emailUs: "Email us",
   signOutEverywhere: "Sign out of all devices",
+  /** Beside each Settings item the Demo Account can't change, with a lock icon. */
+  managedByTheTeam: "Managed by the team",
   emailUsForData: "Email us for a copy of your data",
   didNotSignUp: (date: string) => `Didn't sign up? Ignore this email. The account is removed on ${date}.`,
 } as const;

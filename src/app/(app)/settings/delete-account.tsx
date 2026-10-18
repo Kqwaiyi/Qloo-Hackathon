@@ -7,8 +7,18 @@ import { RATE_LIMITED } from "@/components/messages";
 import { PasswordInput } from "@/components/password-input";
 import { fieldError, label, secondaryButton } from "@/components/ui";
 import { COPY } from "@/config/copy";
+import type { DeleteAccountRefusal } from "@/server/operations/account";
 
 import { deleteAccountAction } from "./actions";
+
+/** A refusal the modal shows. A signed-out user is sent to sign in instead. */
+type Problem = Exclude<DeleteAccountRefusal["refusal"], "signed-out">;
+
+const PROBLEMS: Record<Problem, string> = {
+  "wrong-password": "That isn't your password.",
+  "rate-limited": RATE_LIMITED,
+  "managed-by-the-team": COPY.managedByTheTeam,
+};
 
 /**
  * "Delete account", which confirms in a modal saying what goes and what providers keep, given the
@@ -16,7 +26,7 @@ import { deleteAccountAction } from "./actions";
  */
 export function DeleteAccount() {
   const [password, setPassword] = useState("");
-  const [problem, setProblem] = useState<"wrong-password" | "rate-limited" | null>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
 
   async function confirmDeletion(): Promise<boolean> {
     setProblem(null);
@@ -55,7 +65,7 @@ export function DeleteAccount() {
             />
             {problem && (
               <p id="delete-account-problem" role="alert" className={fieldError}>
-                {problem === "wrong-password" ? "That isn't your password." : RATE_LIMITED}
+                {PROBLEMS[problem]}
               </p>
             )}
           </>

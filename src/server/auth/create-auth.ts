@@ -6,6 +6,7 @@ import * as z from "zod";
 
 import {
   DELETE_ACCOUNT_RATE_LIMIT,
+  demoAccountEmailOf,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   PASSWORD_RESET_LINK_LIFETIME_SECONDS,
@@ -41,10 +42,11 @@ import {
   trackApiEndpoints,
   verificationEmailSender,
 } from "./emails";
+import { demoAccountGuard } from "./demo-account";
 import { emailChangeLinkCheck } from "./email-change";
 import { passwordResetFinisher } from "./password-reset";
 
-type HookContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
+export type HookContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
 
 export interface AuthOptions {
   db: Database;
@@ -55,7 +57,7 @@ export interface AuthOptions {
   secret: string;
   /** The send-email function, which every email Better Auth sends goes through. */
   emailSender: EmailSender;
-  /** The team's address, which the password-changed email says to write to. */
+  /** The team's address, which the password-changed email says to write to, and whose `+demo` plus-address is the Demo Account's. */
   teamEmail: string;
   /** Where photos and Previews are kept, which deleting an account deletes. */
   blob: BlobStore;
@@ -66,6 +68,8 @@ export interface AuthOptions {
 }
 
 export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSender, teamEmail, blob, stylings, rateLimit }: AuthOptions) {
+  const demoAccountEmail = demoAccountEmailOf(teamEmail);
+
   /**
    * Rechecks 18+ on every email sign-up, ours or a direct call, before anything is read or written,
    * then the region gate and the app-wide sign-up email cap.
@@ -97,6 +101,8 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
     const refusal = await emailSender.refusalFor("email-change", session.user.id);
     if (refusal) throw emailRefusalError(refusal);
   }
+
+  const refuseWhatTheTeamManages = demoAccountGuard(demoAccountEmail);
 
   const checkEmailChangeLink = emailChangeLinkCheck({ db, clock, emailSender, secret });
 
@@ -232,6 +238,7 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        await refuseWhatTheTeamManages(ctx);
         if (ctx.path === AUTH_ENDPOINTS.signUp) await beforeSignUp(ctx);
         if (ctx.path === AUTH_ENDPOINTS.changeEmail) await beforeChangeEmail(ctx);
         if (ctx.path === AUTH_ENDPOINTS.verifyEmail) await beforeVerifyEmail(ctx);
@@ -259,7 +266,8 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
     plugins: [username({ minUsernameLength: USERNAME_MIN_LENGTH, maxUsernameLength: USERNAME_MAX_LENGTH })],
   });
   trackApiEndpoints(auth.api);
-  return auth;
+  // Which account is the Demo Account, for whatever reads a user through Better Auth.
+  return Object.assign(auth, { demoAccountEmail });
 }
 
 export type Auth = ReturnType<typeof createAuth>;

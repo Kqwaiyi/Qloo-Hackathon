@@ -43,6 +43,10 @@ export const AUTH_ENDPOINTS = {
   changePassword: "/change-password",
   /** Ends every session of the signed-in user, this one included. */
   revokeSessions: "/revoke-sessions",
+  /** Ends every session of the signed-in user but this one. */
+  revokeOtherSessions: "/revoke-other-sessions",
+  /** Ends one session of the signed-in user, given its token. */
+  revokeSession: "/revoke-session",
   /** Deletes the signed-in user's account, given their password. */
   deleteUser: "/delete-user",
 } as const;

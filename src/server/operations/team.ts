@@ -1,9 +1,12 @@
+import { isAPIError } from "better-auth/api";
 import { and, asc, eq } from "drizzle-orm";
 
+import { DEMO_ACCOUNT_BIRTH_DATE, DEMO_ACCOUNT_PROFILE, isAllowedPassword } from "@/config/accounts";
 import { byCategoryOrder } from "@/config/consultations";
 import { LANDING_STYLE_ICONS } from "@/config/landing";
-import { judgeAge, parseIsoBirthDate } from "@/server/accounts/birth-date";
+import { judgeAge, parseIsoBirthDate, storeBirthYearAndMonth } from "@/server/accounts/birth-date";
 import { type AccountDeletionContext, deleteAccountOf } from "@/server/accounts/deletion";
+import { checkProfile, usernameProblem } from "@/server/accounts/profile";
 import type { BlobStore } from "@/server/blob/store";
 import { landingSampleFolder, landingSamplePathname } from "@/server/consultations/blob-pathnames";
 import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
@@ -61,10 +64,46 @@ export async function correctBirthDate(
     await deleteAccountOf(ctx, userId);
     return { ok: true, accountDeleted: true };
   }
-  // Better Auth's update-user endpoint refuses the birth fields, but its own update doesn't.
-  const { internalAdapter } = await ctx.auth.$context;
-  await internalAdapter.updateUser(userId, { birthYear: birthDate.year, birthMonth: birthDate.month });
+  await storeBirthYearAndMonth(ctx.auth, userId, birthDate);
   return { ok: true, accountDeleted: false };
+}
+
+/** The password the team chose for the Demo Account, which reaches the script from an environment variable. */
+export interface DemoAccountCreation {
+  password: string;
+}
+
+export type CreateDemoAccountRefusal = { refusal: "invalid-password" | "already-exists" | "username-taken" };
+
+/**
+ * Creates the Demo Account the same way every time: through Better Auth's sign-up, as every account
+ * is made, with the username, profile and date of birth config gives it, at the address config names
+ * it by, and with the team's password. Its address is the team's own, so it's marked verified at
+ * once, and the session sign-up opens, which nobody holds, is ended.
+ */
+export async function createDemoAccount(
+  ctx: Pick<TeamContext, "auth">,
+  { password }: DemoAccountCreation,
+): Promise<Result<object, CreateDemoAccountRefusal>> {
+  if (!isAllowedPassword(password)) return { ok: false, refusal: "invalid-password" };
+  const email = ctx.auth.demoAccountEmail;
+  if (await findUserIdByEmail(ctx, email)) return { ok: false, refusal: "already-exists" };
+  const profile = checkProfile(DEMO_ACCOUNT_PROFILE);
+  if (!profile.ok) throw new Error(`The Demo Account's ${profile.field} in config isn't valid.`);
+
+  // The date of birth isn't a user field: the sign-up hooks check it and keep only its year and month.
+  const body = { ...profile.body, email, password, birthDate: DEMO_ACCOUNT_BIRTH_DATE };
+  let userId: string;
+  try {
+    userId = (await ctx.auth.api.signUpEmail({ body })).user.id;
+  } catch (error) {
+    if (isAPIError(error) && usernameProblem(error.body?.code?.toUpperCase()) === "taken") return { ok: false, refusal: "username-taken" };
+    throw error;
+  }
+  const { internalAdapter } = await ctx.auth.$context;
+  await internalAdapter.updateUser(userId, { emailVerified: true });
+  await internalAdapter.deleteUserSessions(userId);
+  return { ok: true };
 }
 
 /** A Consultation made on the account using this email, to freeze as a landing page sample. */

@@ -53,6 +53,28 @@ export type EmailChangeStep = (typeof EMAIL_CHANGE_STEPS)[number];
  */
 export const PHOTO_NOTICE_VERSION = 1;
 
+/**
+ * The Demo Account, the single shared account the judges use, is named by its email: the team
+ * address's `+demo` plus-address, so its password resets reach the team. The team address itself
+ * is GMAIL_USER, which stays in the environment.
+ */
+const DEMO_ACCOUNT_PLUS_TAG = "demo";
+
+/** The Demo Account's email, given the team's address: "team@gmail.com" makes "team+demo@gmail.com". */
+export function demoAccountEmailOf(teamEmail: string): string {
+  const at = teamEmail.lastIndexOf("@");
+  return `${teamEmail.slice(0, at)}+${DEMO_ACCOUNT_PLUS_TAG}@${teamEmail.slice(at + 1)}`.toLowerCase();
+}
+
+/**
+ * What the team's script creates the Demo Account with. Judges may change its Style Preference,
+ * Country and date of birth in Settings; the rest is managed by the team.
+ */
+export const DEMO_ACCOUNT_PROFILE = { username: "demo", stylePreference: "no_preference", countryCode: "US" } as const;
+
+/** In the 25–29 age group, as sign-up takes it. Only the year and month are kept. */
+export const DEMO_ACCOUNT_BIRTH_DATE = "2000-01-01";
+
 /** A password reset link works for this long. */
 export const PASSWORD_RESET_LINK_LIFETIME_SECONDS = 60 * 60;
 

@@ -16,6 +16,8 @@ export interface SignedInUser {
   createdAt: Date;
   /** The photo notice they last agreed to on the consent sheet, and when, or null if they haven't since signing up or withdrawing. */
   photoConsent: PhotoConsent | null;
+  /** Whether this is the Demo Account, the one the judges share, whose sign-in the team manages. */
+  isDemoAccount: boolean;
 }
 
 export interface PhotoConsent {
@@ -43,6 +45,8 @@ export async function readSignedInUser(ctx: Pick<OperationContext, "auth" | "req
       user.acceptedPhotoNoticeVersion == null || user.photoNoticeAcceptedAt == null
         ? null
         : { noticeVersion: user.acceptedPhotoNoticeVersion, acceptedAt: new Date(user.photoNoticeAcceptedAt) },
+    // Better Auth keeps emails lowercased, as config names the Demo Account's.
+    isDemoAccount: user.email === ctx.auth.demoAccountEmail,
   };
 }
 

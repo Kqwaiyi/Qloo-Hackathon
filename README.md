@@ -37,7 +37,7 @@ The wizard walks through the account, 2-Step Verification and the app password, 
 
 ## Team scripts
 
-Two scripts handle what users ask the team for by email. Each runs the same operation the app would, against the database and Blob store the environment names: with production's `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN` set, production; without them, local development's (stop `npm run dev` first, since PGlite allows one process at a time). Each says which database it's using.
+Two scripts handle what users ask the team for by email, and a third creates the Demo Account. Each runs the same operation the app would, against the database and Blob store the environment names: with production's `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN` set, production; without them, local development's (stop `npm run dev` first, since PGlite allows one process at a time). Each says which database it's using.
 
 ```bash
 npm run team:delete-account -- someone@example.com
@@ -48,6 +48,18 @@ npm run team:correct-birth-date -- someone@example.com 2001-04-23
 - `team:correct-birth-date` corrects an account's birth year and month, given the whole date of birth the user emailed. It judges that date as sign-up does, 18 to the day in every time zone, and keeps only the year and month. If the user is under 18, it deletes the account the same way instead.
 
 A Styling still running is stopped either way. From outside Vercel the script usually can't reach its Workflow run to cancel it, so it says so and carries on: the run's steps find their Styling gone and save nothing.
+
+### The Demo Account
+
+The judges share one Demo Account. Run this once, against production, after the production database exists:
+
+```bash
+GMAIL_USER=<the team Gmail address> DEMO_ACCOUNT_PASSWORD=<its password> npm run team:create-demo-account
+```
+
+It signs the account up through Better Auth as the app does, already verified, with the username `demo`, born January 2000, at `GMAIL_USER`'s `+demo` plus-address, which is how the app knows it ([src/config/accounts.ts](src/config/accounts.ts)). So `GMAIL_USER` must match production's. Type the password into the shell for that one run: never put it in `.env.local` or any other file. If the account already exists, it changes nothing.
+
+On the Demo Account, Settings shows the password, email and username, account deletion, withdrawing photo consent and "Sign out of all devices" disabled, with a lock and "Managed by the team", and the server refuses them, Better Auth's own endpoints included. Judges can still change its date of birth (18 or over), Style Preference and Country. Its password reset links go to the team's `+demo` inbox, so a reset is how the team changes the password, and `team:delete-account` still deletes it.
 
 ## Landing page samples
 

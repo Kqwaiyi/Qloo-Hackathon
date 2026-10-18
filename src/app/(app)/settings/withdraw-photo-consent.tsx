@@ -20,6 +20,7 @@ export function WithdrawPhotoConsent() {
     setNotice(null);
     const result = await withdrawPhotoConsentAction();
     if (result.ok) setNotice({ text: "Photo consent withdrawn. Every Consultation, photo and Preview is deleted.", problem: false });
+    else if (result.refusal === "managed-by-the-team") setNotice({ text: COPY.managedByTheTeam, problem: true });
   }
 
   return (

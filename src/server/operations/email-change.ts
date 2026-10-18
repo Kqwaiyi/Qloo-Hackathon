@@ -3,6 +3,7 @@ import * as z from "zod";
 import type { EmailChangeStep } from "@/config/accounts";
 import { AUTH_ENDPOINTS } from "@/config/routes";
 import { findPendingEmailChange, type PendingEmailChange } from "@/server/accounts/email-change";
+import { MANAGED_BY_THE_TEAM } from "@/server/auth/demo-account";
 import { AUTH_ERROR_CODES } from "@/server/auth/emails";
 import { postToAuthEndpoint } from "@/server/auth/endpoint";
 import type { AuthRequestContext, OperationContext, Result } from "@/server/operations/context";
@@ -18,7 +19,7 @@ export async function readPendingEmailChange(
 }
 
 export type ChangeEmailRefusal = {
-  refusal: "signed-out" | "invalid-email" | "same-email" | "change-limit" | "emails-paused" | "rate-limited";
+  refusal: "signed-out" | "invalid-email" | "same-email" | "change-limit" | "emails-paused" | "rate-limited" | "managed-by-the-team";
 };
 
 /**
@@ -45,6 +46,8 @@ export async function changeEmail(
       return { ok: false, refusal: "change-limit" };
     case AUTH_ERROR_CODES.emailsPaused:
       return { ok: false, refusal: "emails-paused" };
+    case MANAGED_BY_THE_TEAM:
+      return { ok: false, refusal: "managed-by-the-team" };
   }
   if (answer.status === 401) return { ok: false, refusal: "signed-out" };
   if (answer.status === 429) return { ok: false, refusal: "rate-limited" };

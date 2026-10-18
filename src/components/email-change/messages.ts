@@ -31,6 +31,8 @@ export function changeEmailProblem(refusal: Exclude<ChangeEmailRefusal["refusal"
       return EMAILS_PAUSED;
     case "rate-limited":
       return RATE_LIMITED;
+    case "managed-by-the-team":
+      return COPY.managedByTheTeam;
   }
 }
 

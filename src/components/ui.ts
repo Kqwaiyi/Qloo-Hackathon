@@ -10,7 +10,7 @@ export const dangerButton =
 export const secondaryButton = "rounded-lg border border-stone-300 bg-white px-5 py-2.5 font-medium hover:bg-stone-100";
 
 export const input =
-  "w-full rounded-lg border border-stone-300 bg-white px-3 py-2 outline-none focus:border-stone-900 focus:ring-1 focus:ring-stone-900 aria-[invalid=true]:border-red-600";
+  "w-full rounded-lg border border-stone-300 bg-white px-3 py-2 outline-none focus:border-stone-900 focus:ring-1 focus:ring-stone-900 aria-[invalid=true]:border-red-600 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-600";
 
 export const label = "mb-1 block text-sm font-medium";
 

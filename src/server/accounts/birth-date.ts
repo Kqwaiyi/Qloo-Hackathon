@@ -1,6 +1,7 @@
 import * as z from "zod";
 
 import { MINIMUM_AGE } from "@/config/accounts";
+import type { Auth } from "@/server/auth/create-auth";
 
 /** A day in the calendar, such as a date of birth. Only a birth date's year and month are ever stored. */
 export interface CalendarDate {
@@ -71,4 +72,13 @@ export function parseIsoBirthDate(value: unknown): CalendarDate | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return null;
   return toBirthDate(Number(match[1]), Number(match[2]), Number(match[3]));
+}
+
+/**
+ * Keeps a date of birth's year and month on the account, dropping the day. It writes through Better
+ * Auth's own update, since its update-user endpoint refuses the birth fields.
+ */
+export async function storeBirthYearAndMonth(auth: Auth, userId: string, { year, month }: CalendarDate): Promise<void> {
+  const { internalAdapter } = await auth.$context;
+  await internalAdapter.updateUser(userId, { birthYear: year, birthMonth: month });
 }
