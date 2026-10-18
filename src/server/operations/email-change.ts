@@ -35,8 +35,8 @@ export type ChangeEmailRefusal = {
  * Changes the signed-in user's email. A verified user's old address approves the change before the
  * new address verifies it, so a sign-in alone can't take the account over: the answer says it now
  * awaits that approval. An unverified user's address changes at once and the new one gets a link,
- * so it awaits verification. An address already in use gets the same answer, with nothing changed
- * or sent. A Disposable Address is refused.
+ * so it awaits verification. An address already in use, or reaching the Gmail inbox of another
+ * account, gets the same answer, with nothing changed or sent. A Disposable Address is refused.
  */
 export async function changeEmail(
   ctx: AuthRequestContext,

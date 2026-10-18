@@ -45,9 +45,10 @@ import {
   verificationEmailSender,
 } from "./emails";
 import { type BotCheckOptions, botCheckGuard } from "./bot-check";
-import { demoAccountGuard } from "./demo-account";
+import { demoAccountGuard, emailTaken } from "./demo-account";
 import { refuseDisposableAddress } from "./disposable-address";
 import { emailChangeLinkCheck } from "./email-change";
+import { gmailInboxCheck } from "./gmail-inbox";
 import { passwordResetFinisher } from "./password-reset";
 
 export type HookContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
@@ -87,10 +88,12 @@ export function createAuth({
   botCheck,
 }: AuthOptions) {
   const demoAccountEmail = demoAccountEmailOf(teamEmail);
+  const reachesGmailInboxInUse = gmailInboxCheck({ db, demoAccountEmail });
 
   /**
    * Rechecks 18+ on every email sign-up, ours or a direct call, before anything is read or written,
-   * then the region gate, Disposable Addresses and the app-wide sign-up email cap.
+   * then the region gate, Disposable Addresses and the app-wide sign-up email cap, and last an
+   * address reaching the Gmail inbox of an existing account, which is refused as taken.
    */
   async function beforeSignUp(ctx: HookContext): Promise<void> {
     // A browser already blocked is refused without restarting its 30 days.
@@ -107,20 +110,25 @@ export function createAuth({
     refuseDisposableAddress(ctx.body?.email);
     // Near Gmail's daily limit, new sign-ups stop, keeping the rest for existing users.
     if (await emailSender.refusalFor("verification", null)) throw emailRefusalError("sign-ups-paused");
+    if (await reachesGmailInboxInUse(ctx.body?.email)) throw emailTaken();
   }
 
   /**
    * An email change only to an address that isn't a Disposable Address, and only while its cap
    * allows. Checked before Better Auth acts, which ignores a refused email: it would change an
    * unverified user's address anyway, or answer a verified user as if the approval went. An address
-   * already in use is refused the same, so it stays unseen.
+   * already in use is refused the same, so it stays unseen. So is an address reaching the Gmail
+   * inbox of another account, which then gets Better Auth's answer to an address in use.
    */
-  async function beforeChangeEmail(ctx: HookContext): Promise<void> {
+  async function beforeChangeEmail(ctx: HookContext) {
     const session = await getSessionFromCtx(ctx);
     if (!session) return;
     refuseDisposableAddress(ctx.body?.newEmail);
     const refusal = await emailSender.refusalFor("email-change", session.user.id);
     if (refusal) throw emailRefusalError(refusal);
+    // For an address in use, better-auth 1.7 changes and sends nothing and says it went ahead, as
+    // the tests check.
+    if (await reachesGmailInboxInUse(ctx.body?.newEmail, session.user.id)) return ctx.json({ status: true });
   }
 
   const refuseWhatTheTeamManages = demoAccountGuard(demoAccountEmail);
@@ -128,7 +136,7 @@ export function createAuth({
   // First, so a bot learns nothing from the other checks.
   const refuseBots = botCheckGuard(botCheck, demoAccountEmail);
 
-  const checkEmailChangeLink = emailChangeLinkCheck({ db, clock, emailSender, secret });
+  const checkEmailChangeLink = emailChangeLinkCheck({ db, clock, emailSender, secret, reachesGmailInboxInUse });
 
   /** A verified user's email-change link goes ahead only while it fits their newest change (see `emailChangeLinkCheck`). */
   async function beforeVerifyEmail(ctx: HookContext): Promise<void> {
@@ -267,7 +275,7 @@ export function createAuth({
         await refuseBots(ctx);
         await refuseWhatTheTeamManages(ctx);
         if (ctx.path === AUTH_ENDPOINTS.signUp) await beforeSignUp(ctx);
-        if (ctx.path === AUTH_ENDPOINTS.changeEmail) await beforeChangeEmail(ctx);
+        if (ctx.path === AUTH_ENDPOINTS.changeEmail) return beforeChangeEmail(ctx);
         if (ctx.path === AUTH_ENDPOINTS.verifyEmail) await beforeVerifyEmail(ctx);
         if (ctx.path === AUTH_ENDPOINTS.requestPasswordReset) await beforeRequestPasswordReset();
         if (ctx.path === AUTH_ENDPOINTS.deleteUser) beforeDeleteUser(ctx);

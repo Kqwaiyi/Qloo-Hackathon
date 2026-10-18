@@ -82,7 +82,8 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+$/;
  * so its per-IP rate limit applies, and signs the user in. Better Auth then emails the verification
  * link. Its sign-up hooks run the Bot Check, recheck the date of birth, check the region and refuse
  * Disposable Addresses, so this refuses a missing or rejected Bot Check token, an under-18 date, a
- * request from a country Gemini doesn't serve, or a Disposable Address, too.
+ * request from a country Gemini doesn't serve, or a Disposable Address, too. They refuse an address
+ * reaching the Gmail inbox of an existing account as taken, as they refuse that account's own.
  */
 export async function signUp(ctx: OperationContext, input: SignUpInput): Promise<Result<object, SignUpRefusal>> {
   if (!input.acceptedTerms) return { ok: false, refusal: "terms-not-accepted" };

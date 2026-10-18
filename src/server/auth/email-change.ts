@@ -11,6 +11,7 @@ import { user } from "@/server/db/schema";
 import type { EmailSender } from "@/server/email/send-email";
 
 import { emailRefusalCode } from "./emails";
+import type { GmailInboxCheck } from "./gmail-inbox";
 
 /**
  * The step each of Better Auth's email-change links takes, by the request type its token names.
@@ -32,11 +33,24 @@ const INVALID_LINK = "INVALID_TOKEN";
  * For the `hooks.before` on `/verify-email`: where to send a verified user's email-change link
  * instead of letting it work, or null to let Better Auth go on. A link works only for the user's
  * newest change while its new address is still free, so an older link, or one for an address
- * someone has taken since, changes nothing. An approval link also stops while the new address's
- * link would be refused, since Better Auth would ignore the refusal and say it was sent. Ordinary
- * verification links, and broken or expired ones, are Better Auth's to answer.
+ * someone has taken since, changes nothing. So does one for an address whose Gmail inbox another
+ * account has reached since (`reachesGmailInboxInUse`). An approval link also stops while the new
+ * address's link would be refused, since Better Auth would ignore the refusal and say it was sent.
+ * Ordinary verification links, and broken or expired ones, are Better Auth's to answer.
  */
-export function emailChangeLinkCheck({ db, clock, emailSender, secret }: { db: Database; clock: Clock; emailSender: EmailSender; secret: string }) {
+export function emailChangeLinkCheck({
+  db,
+  clock,
+  emailSender,
+  secret,
+  reachesGmailInboxInUse,
+}: {
+  db: Database;
+  clock: Clock;
+  emailSender: EmailSender;
+  secret: string;
+  reachesGmailInboxInUse: GmailInboxCheck;
+}) {
   return async (token: unknown): Promise<string | null> => {
     if (typeof token !== "string") return null;
     const change = changeTokenSchema.safeParse(await verifyJWT(token, secret));
@@ -51,7 +65,8 @@ export function emailChangeLinkCheck({ db, clock, emailSender, secret }: { db: D
     // Better Auth refuses a link for an address no account has any more.
     if (!changing) return null;
     const pending = await findPendingEmailChange(db, changing, clock.now());
-    if (pending?.newEmail !== updateTo || (await accountIdWithEmail(db, updateTo))) return refused(INVALID_LINK);
+    const taken = (await accountIdWithEmail(db, updateTo)) || (await reachesGmailInboxInUse(updateTo, changing));
+    if (pending?.newEmail !== updateTo || taken) return refused(INVALID_LINK);
 
     if (step === "approval") {
       const refusal = await emailSender.refusalFor("email-change-verification", changing);

@@ -64,7 +64,7 @@ export function signsInToDemoAccount(ctx: HookContext, demoAccountEmail: string)
 }
 
 /** Whether an address sent to Better Auth is the Demo Account's, ignoring case as Better Auth does. */
-function isDemoAccountEmail(email: unknown, demoAccountEmail: string): boolean {
+export function isDemoAccountEmail(email: unknown, demoAccountEmail: string): boolean {
   return typeof email === "string" && email.toLowerCase() === demoAccountEmail;
 }
 
@@ -75,6 +75,6 @@ function changesManagedField(body: unknown, current: Record<string, unknown>): b
 }
 
 /** Better Auth's own answer to a sign-up with an address an account already uses. */
-function emailTaken(): APIError {
+export function emailTaken(): APIError {
   return APIError.from("UNPROCESSABLE_ENTITY", BASE_ERROR_CODES.USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL);
 }

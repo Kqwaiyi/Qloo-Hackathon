@@ -143,12 +143,14 @@ export interface TestHarness {
  * a fake Qloo, Stylings run inline and email captured. Create one per test file. Better Auth's rate
  * limits are off, as in local development, unless `rateLimit` turns them on. The Bot Check is on,
  * through a fake Cloudflare, unless `botCheck` is false, as with no Turnstile secret configured; it
- * may also set the hostnames a token must come from, as on Production.
+ * may also set the hostnames a token must come from, as on Production. The team's address, whose
+ * `+demo` plus-address is the Demo Account's, is team@example.test unless `teamEmail` says otherwise.
  */
 export async function createTestHarness({
   rateLimit = false,
   botCheck = {},
-}: { rateLimit?: boolean; botCheck?: false | Pick<BotCheckOptions, "allowedHostnames"> } = {}): Promise<TestHarness> {
+  teamEmail = "team@example.test",
+}: { rateLimit?: boolean; botCheck?: false | Pick<BotCheckOptions, "allowedHostnames">; teamEmail?: string } = {}): Promise<TestHarness> {
   const db = await openPgliteDatabase();
   const clock = new TestClock(new Date("2026-10-16T12:00:00Z"));
   const ai = new FakeAiProvider({ delayMs: 0 });
@@ -165,7 +167,7 @@ export async function createTestHarness({
     baseURL: BASE_URL,
     secret: "test-secret-that-is-at-least-32-characters-long",
     emailSender,
-    teamEmail: "team@example.test",
+    teamEmail,
     blob,
     stylings,
     rateLimit,
