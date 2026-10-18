@@ -1,5 +1,7 @@
 // Account rules. Every number lives here so it can change without hunting through code.
 
+import { AUTH_ENDPOINTS } from "@/config/routes";
+
 export const STYLE_PREFERENCES = ["menswear", "womenswear", "no_preference"] as const;
 export type StylePreference = (typeof STYLE_PREFERENCES)[number];
 
@@ -35,6 +37,15 @@ export const SIGN_UP_RATE_LIMIT = { window: 60 * 60, max: 3 } as const;
  * as tight as Better Auth's own limit on password changes: 3 tries in 10 seconds.
  */
 export const DELETE_ACCOUNT_RATE_LIMIT = { window: 10, max: 3 } as const;
+
+/**
+ * The Better Auth endpoints the Bot Check (Cloudflare Turnstile) guards, for our forms and direct
+ * posts alike. A call with no request headers, such as a team script's, skips it.
+ */
+export const BOT_CHECK_ENDPOINTS: readonly string[] = [AUTH_ENDPOINTS.signUp];
+
+/** How long the Bot Check waits for Cloudflare before letting the request go on anyway. */
+export const BOT_CHECK_TIMEOUT_MS = 5_000;
 
 /** A verification link works for this long. */
 export const VERIFICATION_LINK_LIFETIME_SECONDS = 24 * 60 * 60;

@@ -1,5 +1,7 @@
 import { FakeAiProvider } from "@/server/ai/fake";
+import { BOT_CHECK_TOKEN_HEADER, type BotCheckOptions } from "@/server/auth/bot-check";
 import { createAuth } from "@/server/auth/create-auth";
+import { FakeTurnstileTransport } from "@/server/auth/fake-turnstile";
 import { MemoryBlobStore } from "@/server/blob/memory";
 import type { Clock } from "@/server/clock";
 import type { Database } from "@/server/db/database";
@@ -14,6 +16,12 @@ import { FakeQlooTransport } from "@/server/qloo/fake";
 import { InlineStylingRunner } from "@/server/stylings/inline-runner";
 
 const BASE_URL = "http://localhost:3000";
+
+/** The Turnstile secret the harness's Bot Check sends Cloudflare. */
+export const TEST_BOT_CHECK_SECRET = "test-turnstile-secret";
+
+/** The token a test browser's Turnstile widget made, shaped like the one Turnstile's test keys make. */
+export const TEST_BOT_CHECK_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 
 /**
  * The consent sheet with both boxes ticked, as "Get my Outfits" sends it. Starting a Consultation
@@ -46,6 +54,12 @@ export class TestBrowser {
    * undefined for no header, as in local development. A test may move the browser.
    */
   ipCountry?: string;
+  /**
+   * The Bot Check token the browser's requests carry, as a direct post must carry it, or undefined
+   * for none. It passes unless the test makes the fake Cloudflare say otherwise. A token our forms
+   * send in their input replaces it.
+   */
+  botCheckToken: string | undefined = TEST_BOT_CHECK_TOKEN;
 
   /** `ip` is the browser's address, which its requests carry as Vercel sets it, and `ipCountry` its country. */
   constructor({ ip, ipCountry }: { ip?: string; ipCountry?: string } = {}) {
@@ -76,6 +90,7 @@ export class TestBrowser {
     const headers = new Headers({ origin: BASE_URL, "user-agent": "vitest" });
     if (this.ip) headers.set("x-forwarded-for", this.ip);
     if (this.ipCountry !== undefined) headers.set("x-vercel-ip-country", this.ipCountry);
+    if (this.botCheckToken !== undefined) headers.set(BOT_CHECK_TOKEN_HEADER, this.botCheckToken);
     const cookieHeader = this.liveCookies()
       .map((cookie) => `${cookie.name}=${encodeURIComponent(cookie.value)}`)
       .join("; ");
@@ -102,6 +117,8 @@ export interface TestHarness {
   blob: MemoryBlobStore;
   /** Qloo: it answers with no one until a test sets `respond`, and records every request. */
   qloo: FakeQlooTransport;
+  /** Cloudflare Turnstile, for the Bot Check: it passes every token until a test sets `answer`, and records every request. */
+  turnstile: FakeTurnstileTransport;
   /** Runs started Stylings when the test calls `runPending()`, through the real Qloo client and cache. */
   stylings: InlineStylingRunner;
   /** The send-email function every email goes through, Better Auth's included. */
@@ -124,9 +141,14 @@ export interface TestHarness {
  * A fresh database with the real migrations, Better Auth running for real against it, a clock the
  * test controls (starting at 2026-10-16 12:00 UTC), the fake AI adapter, an in-memory Blob store,
  * a fake Qloo, Stylings run inline and email captured. Create one per test file. Better Auth's rate
- * limits are off, as in local development, unless `rateLimit` turns them on.
+ * limits are off, as in local development, unless `rateLimit` turns them on. The Bot Check is on,
+ * through a fake Cloudflare, unless `botCheck` is false, as with no Turnstile secret configured; it
+ * may also set the hostnames a token must come from, as on Production.
  */
-export async function createTestHarness({ rateLimit = false }: { rateLimit?: boolean } = {}): Promise<TestHarness> {
+export async function createTestHarness({
+  rateLimit = false,
+  botCheck = {},
+}: { rateLimit?: boolean; botCheck?: false | Pick<BotCheckOptions, "allowedHostnames"> } = {}): Promise<TestHarness> {
   const db = await openPgliteDatabase();
   const clock = new TestClock(new Date("2026-10-16T12:00:00Z"));
   const ai = new FakeAiProvider({ delayMs: 0 });
@@ -136,6 +158,7 @@ export async function createTestHarness({ rateLimit = false }: { rateLimit?: boo
   const stylings = new InlineStylingRunner({ db, clock, qloo: qlooClient, ai, blob });
   const emails = new CapturingEmailTransport();
   const emailSender = createEmailSender({ db, clock, transport: emails });
+  const turnstile = new FakeTurnstileTransport();
   const auth = createAuth({
     db,
     clock,
@@ -146,6 +169,7 @@ export async function createTestHarness({ rateLimit = false }: { rateLimit?: boo
     blob,
     stylings,
     rateLimit,
+    botCheck: botCheck === false ? undefined : { secret: TEST_BOT_CHECK_SECRET, transport: turnstile.send, ...botCheck },
   });
 
   return {
@@ -155,6 +179,7 @@ export async function createTestHarness({ rateLimit = false }: { rateLimit?: boo
     ai,
     blob,
     qloo,
+    turnstile,
     stylings,
     emailSender,
     emails,

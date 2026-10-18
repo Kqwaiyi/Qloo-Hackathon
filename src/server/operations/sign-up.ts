@@ -11,6 +11,7 @@ import {
 } from "@/server/accounts/birth-date";
 import { checkProfile, type ProfileField, profileInputSchema, usernameProblem } from "@/server/accounts/profile";
 import { AUTH_ENDPOINTS } from "@/config/routes";
+import { BOT_CHECK_FAILED } from "@/server/auth/bot-check";
 import { AUTH_ERROR_CODES } from "@/server/auth/emails";
 import { postToAuthEndpoint } from "@/server/auth/endpoint";
 import type { OperationContext, Result } from "@/server/operations/context";
@@ -51,6 +52,8 @@ export const signUpInputSchema = profileInputSchema.extend({
   email: z.string(),
   password: z.string(),
   acceptedTerms: z.boolean(),
+  /** The Bot Check widget's token. The form has none while the Bot Check is off. */
+  botCheckToken: z.string().optional(),
 });
 export type SignUpInput = z.infer<typeof signUpInputSchema>;
 
@@ -65,7 +68,8 @@ export type SignUpRefusal =
         | "username-taken"
         | "email-taken"
         | "sign-ups-paused"
-        | "too-many-sign-ups";
+        | "too-many-sign-ups"
+        | "bot-check-failed";
     }
   | { refusal: "invalid"; field: SignUpField };
 
@@ -74,8 +78,9 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+$/;
 /**
  * Sign-up step 2: creates the account through Better Auth's sign-up endpoint, as any client would,
  * so its per-IP rate limit applies, and signs the user in. Better Auth then emails the verification
- * link. Its sign-up hook rechecks the date of birth and checks the region, so this refuses an
- * under-18 date, or a request from a country Gemini doesn't serve, too.
+ * link. Its sign-up hooks run the Bot Check, recheck the date of birth and check the region, so
+ * this refuses a missing or rejected Bot Check token, an under-18 date, or a request from a country
+ * Gemini doesn't serve, too.
  */
 export async function signUp(ctx: OperationContext, input: SignUpInput): Promise<Result<object, SignUpRefusal>> {
   if (!input.acceptedTerms) return { ok: false, refusal: "terms-not-accepted" };
@@ -94,11 +99,13 @@ export async function signUp(ctx: OperationContext, input: SignUpInput): Promise
     // Not a user field: the sign-up hooks check it and keep only its year and month.
     birthDate: formatBirthDate(birthDate),
   };
-  const answer = await postToAuthEndpoint(ctx, AUTH_ENDPOINTS.signUp, body);
+  const answer = await postToAuthEndpoint(ctx, AUTH_ENDPOINTS.signUp, body, { botCheckToken: input.botCheckToken });
   if (answer.ok) return { ok: true };
   const username = usernameProblem(answer.code);
   if (username) return username === "taken" ? { ok: false, refusal: "username-taken" } : invalid("username");
   switch (answer.code) {
+    case BOT_CHECK_FAILED:
+      return { ok: false, refusal: "bot-check-failed" };
     case "UNDER_18":
       return { ok: false, refusal: "under-18" };
     case "UNSUPPORTED_REGION":

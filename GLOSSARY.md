@@ -14,6 +14,14 @@ _Avoid_: gender, sex
 The country a user gives at sign-up (editable later); their Style Icons and Brands lean towards what is popular with people there, wherever those people or Brands come from.
 _Avoid_: market, region, location, nationality
 
+**Bot Check**:
+The check a visitor passes before signing up, signing in or asking for a password reset, so that scripted bots can't make accounts that use up the app-wide Outfit caps or the team's emails. When the check itself can't be reached, the step goes ahead without it.
+_Avoid_: captcha, human verification, challenge
+
+**Disposable Address**:
+An email address at a throwaway-inbox service. No account may sign up with one or change to one; accounts that already have one keep it.
+_Avoid_: temp mail, burner email, fake email
+
 ### Photos
 
 **Photo Type**:
@@ -81,5 +89,5 @@ How many Outfits a user may have made in any 24 hours. An Outfit counts once it 
 _Avoid_: credits, quota, tokens
 
 **Demo Account**:
-The single shared account the team gives the judges privately and also tests with. No usage limit applies to it, anyone with its login sees every Consultation made on it, and it asks for photo consent before every Consultation instead of once.
+The single shared account the team gives the judges privately and also tests with. No usage limit applies to it, it skips the Bot Check at sign-in, anyone with its login sees every Consultation made on it, and it asks for photo consent before every Consultation instead of once.
 _Avoid_: test account, admin account, judge account

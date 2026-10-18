@@ -43,6 +43,7 @@ import {
   trackApiEndpoints,
   verificationEmailSender,
 } from "./emails";
+import { type BotCheckOptions, botCheckGuard } from "./bot-check";
 import { demoAccountGuard } from "./demo-account";
 import { emailChangeLinkCheck } from "./email-change";
 import { passwordResetFinisher } from "./password-reset";
@@ -66,9 +67,23 @@ export interface AuthOptions {
   stylings: StylingRunner;
   /** Whether Better Auth's rate limits apply. Unset, they do in production only, as Better Auth's default. */
   rateLimit?: boolean;
+  /** Cloudflare Turnstile, for the Bot Check. Unset, the Bot Check is off. */
+  botCheck?: BotCheckOptions;
 }
 
-export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSender, teamEmail, blob, stylings, rateLimit }: AuthOptions) {
+export function createAuth({
+  db,
+  clock,
+  baseURL,
+  trustedOrigins,
+  secret,
+  emailSender,
+  teamEmail,
+  blob,
+  stylings,
+  rateLimit,
+  botCheck,
+}: AuthOptions) {
   const demoAccountEmail = demoAccountEmailOf(teamEmail);
 
   /**
@@ -104,6 +119,9 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
   }
 
   const refuseWhatTheTeamManages = demoAccountGuard(demoAccountEmail);
+
+  // First, so a bot learns nothing from the other checks.
+  const refuseBots = botCheckGuard(botCheck);
 
   const checkEmailChangeLink = emailChangeLinkCheck({ db, clock, emailSender, secret });
 
@@ -239,6 +257,7 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        await refuseBots(ctx);
         await refuseWhatTheTeamManages(ctx);
         if (ctx.path === AUTH_ENDPOINTS.signUp) await beforeSignUp(ctx);
         if (ctx.path === AUTH_ENDPOINTS.changeEmail) await beforeChangeEmail(ctx);

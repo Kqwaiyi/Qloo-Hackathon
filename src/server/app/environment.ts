@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { botCheckFromEnvironment } from "@/server/auth/bot-check";
 import { type Auth, createAuth } from "@/server/auth/create-auth";
 import { LocalBlobStore } from "@/server/blob/local";
 import type { BlobStore } from "@/server/blob/store";
@@ -26,6 +27,8 @@ export interface BaseServices {
   emailSender: EmailSender;
   /** Where users write to the team: for a copy of their data, a correction, or a change they didn't make. */
   teamEmail: string;
+  /** The site key the forms' Bot Check widget needs, or null while the Bot Check is off. */
+  botCheckSiteKey: string | null;
 }
 
 /** The base services as the environment sets them up, with this to run Stylings. */
@@ -35,8 +38,11 @@ export async function createBaseServices(stylings: StylingRunner): Promise<BaseS
   const emailSender = createEmailSender({ db, clock, transport: emailTransport() });
   const teamEmail = teamEmailAddress();
   const blob = blobStore();
-  const auth = createAuth({ db, clock, ...authUrls(), secret: authSecret(), emailSender, teamEmail, blob, stylings });
-  return { db, auth, clock, blob, stylings, emailSender, teamEmail };
+  const urls = authUrls();
+  // On Production, a token must have been made on one of the app's own hostnames.
+  const botCheck = botCheckFromEnvironment([urls.baseURL, ...urls.trustedOrigins].map((url) => new URL(url).hostname));
+  const auth = createAuth({ db, clock, ...urls, secret: authSecret(), emailSender, teamEmail, blob, stylings, botCheck: botCheck?.options });
+  return { db, auth, clock, blob, stylings, emailSender, teamEmail, botCheckSiteKey: botCheck?.siteKey ?? null };
 }
 
 /**

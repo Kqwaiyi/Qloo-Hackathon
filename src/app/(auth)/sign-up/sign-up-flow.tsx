@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, useEffect, useState, useTransition } from "react";
 
 import { BirthDateInputs } from "@/components/birth-date-inputs";
+import { useBotCheck } from "@/components/bot-check";
 import { INVALID_BIRTH_DATE, INVALID_EMAIL, INVALID_PASSWORD, PASSWORD_HINT } from "@/components/messages";
 import { PasswordInput } from "@/components/password-input";
 import { CountryField, StylePreferenceField, UsernameField } from "@/components/profile-fields";
@@ -25,7 +26,14 @@ type Step =
   | { name: "account"; birthDate: BirthDateFields }
   | { name: "closed"; reason: ClosedReason };
 
-export function SignUpFlow({ countries }: { countries: readonly CountryOption[] }) {
+export function SignUpFlow({
+  countries,
+  botCheckSiteKey,
+}: {
+  countries: readonly CountryOption[];
+  /** The Bot Check's site key, or null while the Bot Check is off. */
+  botCheckSiteKey: string | null;
+}) {
   const [step, setStep] = useState<Step>({ name: "date-of-birth" });
   const close = (reason: ClosedReason) => setStep({ name: "closed", reason });
 
@@ -35,6 +43,7 @@ export function SignUpFlow({ countries }: { countries: readonly CountryOption[] 
       <AccountStep
         birthDate={step.birthDate}
         countries={countries}
+        botCheckSiteKey={botCheckSiteKey}
         onBack={() => setStep({ name: "date-of-birth" })}
         onClosed={close}
       />
@@ -90,11 +99,13 @@ type AccountRefusal = Exclude<SignUpRefusal, { refusal: ClosedReason }>;
 function AccountStep({
   birthDate,
   countries,
+  botCheckSiteKey,
   onBack,
   onClosed,
 }: {
   birthDate: BirthDateFields;
   countries: readonly CountryOption[];
+  botCheckSiteKey: string | null;
   onBack: () => void;
   /** The sign-up hook refused the date of birth or the region, which no field can fix. */
   onClosed: (reason: ClosedReason) => void;
@@ -107,15 +118,28 @@ function AccountStep({
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [problem, setProblem] = useState<AccountRefusal | null>(null);
   const [pending, startTransition] = useTransition();
+  const botCheck = useBotCheck(botCheckSiteKey);
   const usernameTaken = useUsernameTaken(username) || problem?.refusal === "username-taken";
 
   function submit(event: FormEvent) {
     event.preventDefault();
     setProblem(null);
     startTransition(async () => {
+      const botCheckToken = await botCheck.token();
       // On success the action redirects into the app.
-      const result = await signUpAction({ birthDate, username, email, password, stylePreference, countryCode, acceptedTerms });
+      const result = await signUpAction({
+        birthDate,
+        username,
+        email,
+        password,
+        stylePreference,
+        countryCode,
+        acceptedTerms,
+        botCheckToken,
+      });
       if (result.ok) return;
+      // Even a refusal for another reason has used the token up.
+      botCheck.reset();
       if (result.refusal === "under-18" || result.refusal === "unsupported-region") onClosed(result.refusal);
       else setProblem(result);
     });
@@ -221,11 +245,18 @@ function AccountStep({
           {COPY.signUpsPaused}
         </p>
       )}
+      {problem?.refusal === "bot-check-failed" && (
+        <p role="alert" className={fieldError}>
+          {COPY.botCheckFailed}
+        </p>
+      )}
       {problem?.refusal === "too-many-sign-ups" && (
         <p role="alert" className={fieldError}>
           Too many accounts were made from your network recently. Please try again later.
         </p>
       )}
+
+      {botCheck.widget}
 
       <div className="flex gap-3 pt-1">
         <button type="button" onClick={onBack} className={secondaryButton}>

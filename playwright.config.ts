@@ -27,6 +27,10 @@ export default defineConfig({
     env: {
       PGLITE_DATA_DIR: "memory://",
       BETTER_AUTH_URL: `http://localhost:${PORT}`,
+      // Turnstile's always-pass test keys, so sign-up goes through the real widget and Cloudflare's
+      // verify call. Both need internet access.
+      TURNSTILE_SITE_KEY: "1x00000000000000000000AA",
+      TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA",
     },
   },
 });

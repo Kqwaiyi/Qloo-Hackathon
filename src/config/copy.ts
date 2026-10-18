@@ -11,6 +11,7 @@ export const COPY = {
   under18: "You need to be 18 or older to use Outfit Recommender.",
   usernameTaken: "That username is taken",
   signUpsPaused: "We can't take new sign-ups right now. Please try again tomorrow.",
+  botCheckFailed: "We couldn't check that you're not a bot. Please try again.",
   signInMismatch: "That username or email and password don't match.",
   photoTooLarge: "This file is over 20 MB.",
   photoUnreadable: "We couldn't open this file. Try a JPEG, PNG or WebP photo.",
