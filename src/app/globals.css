@@ -6,12 +6,29 @@ body {
 }
 
 @theme {
-  /* The landing page's walkthrough picture, as it changes with the step. */
-  --animate-fade-in: fade-in 0.35s ease-out;
+  /* The landing page's design tokens: black, white and two greys, four type sizes, three easings.
+     Their names are new, so the app's own pages don't change. */
+  --color-ink: #080808;
+  --color-paper: #f8f8f8;
+  --color-mute: #6b6b6b;
+  --color-mute-dark: #9a9a9a;
+  --color-card: #efefef;
+  --color-card-dark: #161616;
 
-  @keyframes fade-in {
-    from {
-      opacity: 0;
-    }
-  }
+  --text-display: clamp(2.25rem, 0.5rem + 4.8vw, 6.5rem);
+  --text-display--line-height: 0.92;
+  --text-display--letter-spacing: -0.04em;
+  --text-title: clamp(1.5rem, 1rem + 1.6vw, 2.5rem);
+  --text-title--line-height: 1.08;
+  --text-title--letter-spacing: -0.02em;
+  --text-body: 1rem;
+  --text-body--line-height: 1.4;
+  --text-body--letter-spacing: -0.005em;
+  --text-label: 0.6875rem;
+  --text-label--line-height: 1.2;
+  --text-label--letter-spacing: 0.08em;
+
+  --ease-glide: cubic-bezier(0.25, 0.74, 0.22, 0.99);
+  --ease-sweep: cubic-bezier(0.645, 0.045, 0.355, 1);
+  --ease-curtain: cubic-bezier(0.7, 0, 0.3, 1);
 }

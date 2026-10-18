@@ -21,3 +21,6 @@ next-env.d.ts
 test-results/
 playwright-report/
 /.swc
+
+# Landing page v2 reference captures and planning docs
+landingpagev2/
