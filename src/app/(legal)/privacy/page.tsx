@@ -196,6 +196,12 @@ export default function Page() {
             interest in protecting your account and the app.
           </li>
           <li>
+            <strong>To stop automated sign-ups,</strong> from your IP address and your browser&apos;s details, which Cloudflare
+            reads on the forms for signing up, signing in and asking for a password reset (the Bot Check). Legal basis: our
+            legitimate interest (Article 6(1)(f)) in keeping the app&apos;s overall limits and our emails for real people, not
+            scripts.
+          </li>
+          <li>
             <strong>To delete accounts nobody uses,</strong> from when you last used the app. Legal basis: our legitimate
             interest in keeping no data longer than we need it.
           </li>
@@ -226,21 +232,30 @@ export default function Page() {
             <strong>Gmail:</strong> our emails go out through the team&apos;s Gmail account, so your email address passes
             through Gmail under Google&apos;s own privacy policy.
           </li>
+          <li>
+            <strong>Cloudflare</strong> runs the Bot Check with its Turnstile service. On the forms for signing up, signing in
+            and asking for a password reset, it gets your IP address, your browser&apos;s details (its TLS fingerprint and
+            user agent) and the site&apos;s address, to check that you&apos;re not a bot, even if you don&apos;t send the
+            form. It never gets what you type in it. Cloudflare handles this as our processor, and also as a controller,
+            under its own privacy policy, to improve its bot detection.
+          </li>
         </ul>
         <p className={paragraph}>Nobody else gets your data, unless the law requires it.</p>
       </LegalSection>
 
       <LegalSection {...section("transfers")}>
         <p className={paragraph}>
-          The app, its database and its photo storage run in the eastern United States, and Google may handle what Gemini
-          receives in any country where it has facilities. So if you&apos;re in the European Economic Area, the UK or another
-          country with rules on sending personal data abroad, your data leaves that country.
+          The app, its database and its photo storage run in the eastern United States. Google may handle what Gemini
+          receives in any country where it has facilities, and Cloudflare may handle what it receives for the Bot Check
+          outside your country. So if you&apos;re in the European Economic Area, the UK or another country with rules on
+          sending personal data abroad, your data leaves that country.
         </p>
         <p className={paragraph}>
           Those transfers are protected by each provider&apos;s data processing terms, which use safeguards such as the
           European Commission&apos;s Standard Contractual Clauses and the UK&apos;s addendum to them. Email addresses in Gmail
-          are covered by Google&apos;s own privacy policy and its safeguards. Qloo, also in the United States, receives nothing
-          that identifies you.
+          are covered by Google&apos;s own privacy policy and its safeguards, and Cloudflare&apos;s own privacy policy
+          likewise covers what it uses to improve its bot detection. Qloo, also in the United States, receives nothing that
+          identifies you.
         </p>
       </LegalSection>
 
