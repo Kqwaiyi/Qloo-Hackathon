@@ -10,7 +10,7 @@
 
 - [x] Switch the Gemini adapter on in production.
 - [x] Set `CRON_SECRET` on Vercel for Production, since the daily sweep refuses every call without it (ticket 37). Then confirm the cron is active in production, and that the firewall's Bot Protection challenge doesn't block it (ticket 02).
-- [ ] Run the Demo Account creation script once against the production database.
+- [x] Run the Demo Account creation script once against the production database.
 - [ ] Run the three frozen Consultations on the Demo Account with the photos from ticket 05, and save their text as the landing page's static data using ticket 33's capture procedure.
 - [x] Fill in the team members' names on `/privacy`.
 - [ ] Check the first real Consultations on the Demo Account with phone photos, since the Preview bake-off used only small web images.
@@ -33,3 +33,4 @@
   ```
 
   It should say "Using the database in DATABASE_URL." first. `GMAIL_USER` must be the same address as production's, or the app won't know the account as the Demo Account. Its one verification email lands in this laptop's `.data/inbox`, not Gmail, and counts once in production's email log.
+- **Demo Account created (2026-10-18):** the team ran the script against production's database. It answered "Created the Demo Account: username demo", at the team Gmail's `+demo` address, already verified. The password came from `openssl rand -base64 18`, after a guessable first choice was dropped: the Demo Account has no usage limits, so a guessed password means unlimited Gemini spend up to Google's cap. `GMAIL_USER` came from `.env.local`, which matches production's, rather than being typed.
