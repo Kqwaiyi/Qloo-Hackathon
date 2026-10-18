@@ -2,6 +2,7 @@ import "server-only";
 
 import { FatalError, getStepMetadata, RetryableError } from "workflow";
 
+import { UnretryableAiError } from "@/server/ai/provider";
 import { getServices } from "@/server/app/services";
 import { QlooError, QlooRateLimitedError } from "@/server/qloo/client";
 
@@ -29,5 +30,7 @@ function asWorkflowError(error: unknown): unknown {
   }
   // Qloo refusing the request itself won't change on a retry either.
   if (error instanceof QlooError && error.status >= 400 && error.status < 500) return new FatalError(error.message);
+  // Nor will an AI call that failed for good, such as a request Gemini rejects.
+  if (error instanceof UnretryableAiError) return new FatalError(error.message);
   return error;
 }

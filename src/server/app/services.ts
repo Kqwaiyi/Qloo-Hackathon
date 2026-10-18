@@ -1,6 +1,6 @@
 import "server-only";
 
-import { fakeAiFromEnvironment } from "@/server/ai/fake";
+import { aiFromEnvironment } from "@/server/ai/environment";
 import type { AiProvider } from "@/server/ai/provider";
 import { type BaseServices, createBaseServices } from "@/server/app/environment";
 import { type QlooClient, qlooClientFromEnvironment } from "@/server/qloo/client";
@@ -26,8 +26,8 @@ export function getServices(): Promise<Services> {
 
 async function createServices(): Promise<Services> {
   const base = await createBaseServices(workflowStylingRunner);
-  // The fake adapter until the Gemini adapter (ticket 34) can be switched on.
-  const ai = fakeAiFromEnvironment();
+  // The fake adapter unless AI_PROVIDER switches Gemini on.
+  const ai = aiFromEnvironment();
   const qloo = qlooClientFromEnvironment(base);
   return { ...base, ai, qloo };
 }

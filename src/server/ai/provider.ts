@@ -122,13 +122,25 @@ export interface PreviewInput {
 /** The image the model drew, in whatever format it sent, or its refusal and why. */
 export type PreviewResult = { refused: false; image: Uint8Array } | { refused: true; reason: PreviewRefusalReason };
 
+/**
+ * An AI call that failed in a way asking again can't change, such as a request the provider
+ * rejects or an API key it refuses. Every other error a provider throws is worth retrying.
+ */
+export class UnretryableAiError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnretryableAiError";
+  }
+}
+
 export interface AiProvider {
   /** Checks a photo and reads its Photo Style. Throws if the check still errors after the AI SDK's own retries. */
   checkPhoto(input: PhotoCheckInput): Promise<PhotoCheckResult>;
   /**
    * Tailors one Outfit's Pieces to the photo, returning the model's reply as it came: meant to match
    * `tailoredPiecesSchema`, but unchecked. A reply that doesn't match still comes back rather than
-   * throwing, since our code checks it and asks again. Throws only on errors worth retrying.
+   * throwing, since our code checks it and asks again. Throws only on errors worth retrying, or an
+   * `UnretryableAiError` for one that isn't.
    *
    * The model is told the rules: items are generic, never product or model names; never a price;
    * only an item the Brand plausibly makes; and the Top is one garment, the main visible upper layer.
