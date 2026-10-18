@@ -4,7 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { aiFromEnvironment } from "./environment";
 import { FakeAiProvider } from "./fake";
 import { GeminiAiProvider } from "./gemini";
-import { type Photo, type PhotoCheckInput, type PhotoCheckReport, type TailoredPieces, type TailoringInput, UnretryableAiError } from "./provider";
+import {
+  type Photo,
+  type PhotoCheckInput,
+  type PhotoCheckReport,
+  type PreviewInput,
+  type TailoredPieces,
+  type TailoringInput,
+  UnretryableAiError,
+} from "./provider";
 
 // The Gemini adapter against a fake Gemini API: no test calls Gemini. The fake answers each
 // request with a small hand-written response shaped like Gemini's, and records what was sent.
@@ -19,9 +27,10 @@ interface RecordedGeminiRequest {
 interface GeminiRequestBody {
   contents: { role: string; parts: GeminiPart[] }[];
   systemInstruction?: { parts: GeminiPart[] };
+  generationConfig?: Record<string, unknown>;
 }
 
-type GeminiPart = { text?: string; inlineData?: { mimeType: string; data: string }; fileData?: unknown };
+type GeminiPart = { text?: string; inlineData?: { mimeType: string; data: string }; fileData?: unknown; thought?: boolean };
 
 /** Gemini in tests: it answers every request with `respond`, and records each one. */
 class FakeGemini {
@@ -55,6 +64,28 @@ function geminiPromptBlocked(blockReason: string): Response {
 /** Google stopping the reply part-way for safety. Whatever was written comes back with it. */
 function geminiReplyBlocked(finishReason: string, writtenSoFar: string): Response {
   return Response.json({ candidates: [{ content: { role: "model", parts: [{ text: writtenSoFar }] }, finishReason }] });
+}
+
+/** Gemini's reply carrying the image it drew. */
+function geminiImage(image: Uint8Array): Response {
+  return geminiImageParts([{ inlineData: { mimeType: "image/png", data: base64(image) } }]);
+}
+
+/** Gemini's reply carrying an image it drew while thinking, then the one it finished with. */
+function geminiImageAfterThinking(drawnWhileThinking: Uint8Array, finished: Uint8Array): Response {
+  return geminiImageParts([
+    { inlineData: { mimeType: "image/png", data: base64(drawnWhileThinking) }, thought: true },
+    { inlineData: { mimeType: "image/png", data: base64(finished) } },
+  ]);
+}
+
+function geminiImageParts(parts: GeminiPart[]): Response {
+  return Response.json({ candidates: [{ content: { role: "model", parts }, finishReason: "STOP" }] });
+}
+
+/** Google stopping an image it drew, which isn't returned: only the finish reason and its message. */
+function geminiImageStopped(finishReason: string): Response {
+  return Response.json({ candidates: [{ content: {}, finishReason, finishMessage: "The image was stopped." }] });
 }
 
 /** One of Gemini's errors, with no wait before the AI SDK retries it. */
@@ -136,6 +167,16 @@ const TAILORED: TailoredPieces = {
     },
   ],
 };
+
+/** The Full-Body Photo's Outfit above, as its Preview is asked for: each Piece by its details. */
+const PREVIEW: PreviewInput = {
+  photo: PHOTO,
+  photoType: "full_body",
+  pieces: TAILORED.pieces.map(({ category, details }) => ({ category, details })),
+};
+
+/** The bytes stand in for the image Gemini drew. */
+const DRAWN = new TextEncoder().encode("the bytes of the photo with the Outfit drawn on");
 
 let gemini: FakeGemini;
 let ai: GeminiAiProvider;
@@ -286,6 +327,115 @@ describe("tailoring", () => {
     for (const sent of ["womenswear", "Mira Vale", "edgy and chic", "Northbound", "Field Denim", "Stride Works"]) {
       expect(text).toContain(sent);
     }
+  });
+});
+
+describe("Previews", () => {
+  it("returns the image Gemini drew", async () => {
+    gemini.respond = () => geminiImage(DRAWN);
+
+    const result = await ai.renderPreview(PREVIEW);
+
+    expect(result).toEqual({ refused: false, image: DRAWN });
+  });
+
+  it("asks gemini-nano-banana-2.1 for an image alone, with minimal thinking and the photo's own aspect ratio", async () => {
+    gemini.respond = () => geminiImage(DRAWN);
+
+    await ai.renderPreview(PREVIEW);
+
+    expect(gemini.requests.map(({ url }) => url.pathname)).toEqual(["/v1beta/models/gemini-nano-banana-2.1:generateContent"]);
+    expect(gemini.requests[0]!.body.generationConfig).toEqual({ responseModalities: ["IMAGE"], thinkingConfig: { thinkingLevel: "minimal" } });
+  });
+
+  it("sends the photo inline, with each Piece's details", async () => {
+    gemini.respond = () => geminiImage(DRAWN);
+
+    await ai.renderPreview(PREVIEW);
+
+    const [request] = gemini.requests;
+    expect(photoPartsOf(request!)).toEqual([{ inlineData: { mimeType: "image/jpeg", data: base64(PHOTO.bytes) } }]);
+    const text = textOf(request!);
+    for (const { details } of TAILORED.pieces) expect(text).toContain(details);
+  });
+
+  it("comes back refused as blocked when Google blocks the request, without asking again", async () => {
+    gemini.respond = () => geminiPromptBlocked("PROHIBITED_CONTENT");
+
+    const result = await ai.renderPreview(PREVIEW);
+
+    expect(result).toEqual({ refused: true, reason: "blocked" });
+    expect(gemini.requests).toHaveLength(1);
+  });
+
+  it.each(["IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "SAFETY", "PROHIBITED_CONTENT"])(
+    "comes back refused for image safety when Google stops the image with %s, without asking again",
+    async (finishReason) => {
+      gemini.respond = () => geminiImageStopped(finishReason);
+
+      const result = await ai.renderPreview(PREVIEW);
+
+      expect(result).toEqual({ refused: true, reason: "image_safety" });
+      expect(gemini.requests).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    ["answers in text", () => geminiText("I can't edit this photo of a person.")],
+    ["says it drew no image", () => geminiImageStopped("NO_IMAGE")],
+    ["stops the image for another reason", () => geminiImageStopped("IMAGE_OTHER")],
+  ])("comes back refused for no image when Gemini %s, without asking again", async (_reply, noImageResponse) => {
+    gemini.respond = noImageResponse;
+
+    const result = await ai.renderPreview(PREVIEW);
+
+    expect(result).toEqual({ refused: true, reason: "no_image" });
+    expect(gemini.requests).toHaveLength(1);
+  });
+
+  it.each([
+    ["stops for no reason it gives", () => geminiImageStopped("OTHER")],
+    ["finishes with nothing in its reply", () => Response.json({ candidates: [{ content: {}, finishReason: "STOP" }] })],
+    ["sends no candidates and no block reason", () => Response.json({})],
+  ])("throws when Gemini %s, as an error worth retrying, since it isn't a refusal", async (_reply, emptyResponse) => {
+    gemini.respond = emptyResponse;
+
+    const error = await ai.renderPreview(PREVIEW).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(UnretryableAiError);
+  });
+
+  it.each([429, 500, 503])(
+    "throws Gemini's %d after one try, as an error worth retrying that carries nothing of the photo",
+    async (status) => {
+      gemini.respond = () => geminiError(status);
+
+      const error = await ai.renderPreview(PREVIEW).catch((thrown: unknown) => thrown);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(UnretryableAiError);
+      expect(inspect(error, { depth: Infinity })).not.toContain(base64(PHOTO.bytes));
+      expect(gemini.requests).toHaveLength(1);
+    },
+  );
+
+  it("throws an error Gemini refuses the request with as one not worth retrying", async () => {
+    gemini.respond = () => geminiError(400);
+
+    const error = await ai.renderPreview(PREVIEW).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(UnretryableAiError);
+    expect(gemini.requests).toHaveLength(1);
+  });
+
+  it("returns the image Gemini finished with, never one it drew while thinking", async () => {
+    const draft = new TextEncoder().encode("the bytes of a draft drawn while thinking");
+    gemini.respond = () => geminiImageAfterThinking(draft, DRAWN);
+
+    const result = await ai.renderPreview(PREVIEW);
+
+    expect(result).toEqual({ refused: false, image: DRAWN });
   });
 });
 

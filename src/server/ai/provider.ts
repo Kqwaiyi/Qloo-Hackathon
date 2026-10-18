@@ -153,7 +153,8 @@ export interface AiProvider {
   tailorPieces(input: TailoringInput): Promise<unknown>;
   /**
    * Renders one Preview: the photo with only the Pieces changed. A refusal comes back, and is final:
-   * nothing asks again. Throws only on errors worth retrying, and there's no quality check.
+   * nothing asks again. Throws only on errors worth retrying, or an `UnretryableAiError` for one
+   * that isn't. There's no quality check.
    */
   renderPreview(input: PreviewInput): Promise<PreviewResult>;
 }

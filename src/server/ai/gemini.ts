@@ -1,4 +1,4 @@
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGoogleGenerativeAI, type GoogleLanguageModelOptions, type GoogleProviderMetadata } from "@ai-sdk/google";
 import {
   APICallError,
   type FilePart,
@@ -11,12 +11,13 @@ import {
 } from "ai";
 import * as z from "zod";
 
-import { GEMINI_PHOTO_CHECK_MODEL, GEMINI_TAILORING_MODEL } from "@/config/ai";
+import { GEMINI_PHOTO_CHECK_MODEL, GEMINI_PREVIEW_MODEL, GEMINI_TAILORING_MODEL } from "@/config/ai";
 import {
   AGE_GROUP_LABELS,
   CATEGORY_LABELS,
   PHOTO_STYLES,
   PHOTO_TYPE_LABELS,
+  type PieceCategory,
   type PhotoStyle,
   type PhotoStyleWords,
   photoStyleText,
@@ -48,16 +49,19 @@ export interface GeminiAiOptions {
 
 /**
  * The AI provider on real Gemini, which costs money: it runs only when AI_PROVIDER switches it on.
- * Each call relies on the AI SDK's own retries, 2 by default.
+ * The photo check and tailoring rely on the AI SDK's own retries, 2 by default. A Preview has none:
+ * its Workflow step retries it.
  */
 export class GeminiAiProvider implements AiProvider {
   private readonly photoCheckModel: LanguageModel;
   private readonly tailoringModel: LanguageModel;
+  private readonly previewModel: LanguageModel;
 
   constructor({ apiKey, fetch }: GeminiAiOptions) {
     const google = createGoogleGenerativeAI({ apiKey, fetch });
     this.photoCheckModel = google(GEMINI_PHOTO_CHECK_MODEL);
     this.tailoringModel = google(GEMINI_TAILORING_MODEL);
+    this.previewModel = google(GEMINI_PREVIEW_MODEL);
   }
 
   // The model isn't told which Photo Type was chosen, so it can't lean towards it: it reports what
@@ -101,10 +105,31 @@ export class GeminiAiProvider implements AiProvider {
     }
   }
 
-  // Ticket 35 builds Gemini's Previews. Until then each one fails, and its Outfit shows the
-  // placeholder: never a fake Preview where Gemini runs.
-  async renderPreview(_input: PreviewInput): Promise<PreviewResult> {
-    throw new Error("The Gemini adapter doesn't render Previews yet.");
+  // A refusal is final: asking again is billed, and would likely be refused again. Anything else
+  // that brings no image throws, for the Workflow step to retry, so the AI SDK doesn't retry too.
+  async renderPreview(input: PreviewInput): Promise<PreviewResult> {
+    try {
+      const reply = await generateText({
+        model: this.previewModel,
+        // The instruction goes before the photo in one message, with no system instruction, as
+        // the Preview bake-off sent it.
+        messages: [{ role: "user", content: [{ type: "text", text: previewInstruction(input) }, photoPart(input.photo)] }],
+        providerOptions: { google: PREVIEW_OPTIONS },
+        maxRetries: 0,
+      });
+      // The image it finished with. Any it drew while thinking isn't among the reply's files.
+      const image = reply.files.findLast(({ mediaType }) => mediaType.startsWith("image/"));
+      if (image) return { refused: false, image: image.uint8Array };
+      const googleMetadata = reply.finalStep.providerMetadata?.google as GoogleProviderMetadata | undefined;
+      if (googleMetadata?.promptFeedback?.blockReason) return { refused: true, reason: "blocked" };
+      const finishReason = reply.rawFinishReason ?? "none";
+      if (FILTERED_FINISH_REASONS.has(finishReason)) return { refused: true, reason: "image_safety" };
+      // The model answered in text, or Google says it drew no image.
+      if (reply.text || NO_IMAGE_FINISH_REASONS.has(finishReason)) return { refused: true, reason: "no_image" };
+      throw new Error(`Gemini sent no image and no refusal, finishing with ${finishReason}.`);
+    } catch (error) {
+      throw withoutRequest("The Preview", error);
+    }
   }
 }
 
@@ -125,6 +150,33 @@ function withoutRequest(call: string, error: unknown): Error {
   const last = RetryError.isInstance(error) ? error.lastError : error;
   return APICallError.isInstance(last) && !last.isRetryable ? new UnretryableAiError(message) : new Error(message);
 }
+
+/**
+ * How each Preview is asked for, as the Preview bake-off asked: an image alone, with thinking
+ * minimal, set explicitly. No imageConfig, so the image keeps the photo's aspect ratio, at about 1K.
+ */
+const PREVIEW_OPTIONS = {
+  responseModalities: ["IMAGE"],
+  thinkingConfig: { thinkingLevel: "minimal" },
+} satisfies GoogleLanguageModelOptions;
+
+// The finish reasons Google stops an image with, which it then doesn't return. No Preview was
+// refused in the bake-off, so these come from Google's API reference.
+
+/** Google's filters caught the image: a refusal for image safety. */
+const FILTERED_FINISH_REASONS: ReadonlySet<string> = new Set([
+  "IMAGE_SAFETY",
+  "IMAGE_PROHIBITED_CONTENT",
+  "IMAGE_RECITATION",
+  "SAFETY",
+  "PROHIBITED_CONTENT",
+  "BLOCKLIST",
+  "SPII",
+  "RECITATION",
+]);
+
+/** The model drew no image, or stopped it for another reason: a refusal with no image. */
+const NO_IMAGE_FINISH_REASONS: ReadonlySet<string> = new Set(["NO_IMAGE", "IMAGE_OTHER"]);
 
 /** The photo as the request's own bytes, which the AI SDK sends inline. */
 function photoPart({ bytes, mediaType }: Photo): FilePart {
@@ -186,7 +238,7 @@ const TAILORING_PROMPT = `You are the stylist in a styling app. For the person i
 Reply with one Piece per category you're given, in the order given, each with:
 - category: the Piece's category, as given.
 - item: a label of about 6 words, colour included, such as "Washed-black relaxed cargo trousers". For the Hairstyle, the cut.
-- details: one sentence on the colour, fabric, fit and cut, used to picture the person wearing it.
+- details: one sentence on the colour, fabric, fit and cut, used to picture the person wearing it. It describes the item alone: it never names the Style Icon or anyone else.
 - why: one line of about 20 words, in English, speaking to the person as "you", on why it suits them.
 - unknownCut: for the Hairstyle only. See below.
 
@@ -232,4 +284,44 @@ function brandRequest({ name, categoryTags, priceRangeUsd }: TailoringBrand): st
   const makes = categoryTags.length > 0 ? `, which makes ${categoryTags.map((tag) => tag.replaceAll("_", " ")).join(", ")}` : "";
   const price = priceRangeUsd ? ` Its prices run from ${priceRangeUsd.min} to ${priceRangeUsd.max} US dollars.` : "";
   return `from ${name}${makes}.${price}`;
+}
+
+/** What the Preview instruction calls each Piece. */
+const PREVIEW_PIECE_LABELS: Record<PieceCategory, string> = {
+  ...CATEGORY_LABELS,
+  one_piece: `${CATEGORY_LABELS.one_piece}, in place of both the top and the bottom`,
+};
+
+/**
+ * The instruction for one Preview: change only the Pieces, each by its details, and keep
+ * everything else. It never names the Style Icon, which the Preview isn't told.
+ */
+function previewInstruction({ photoType, pieces }: PreviewInput): string {
+  const changesHair = pieces.some(({ category }) => category === "hairstyle");
+  const kept = [
+    "the person's face and identity",
+    "their body shape and size: never slim, reshape or beautify them",
+    "their skin tone",
+    "their pose, the background and the lighting",
+    "the framing and aspect ratio of the photo",
+    "any glasses, jewellery and bags",
+    "any head covering: never remove or change it",
+    // A Face Photo changes only the hair, even when the photo shows what they're wearing.
+    ...(photoType === "face" ? ["everything they're wearing"] : []),
+    // Covered hair, or a Body-Only Photo, has no Hairstyle Piece.
+    ...(changesHair ? [] : ["their hair, and anything covering it"]),
+  ];
+  return [
+    photoType === "face"
+      ? "Edit this photo of a person. Change only their hair, to this:"
+      : "Edit this photo so the person is wearing the outfit below. Change only these items:",
+    ...pieces.map(({ category, details }) => `- ${PREVIEW_PIECE_LABELS[category]}: ${details}`),
+    "",
+    "Keep everything else exactly as it is:",
+    ...kept.map((keep) => `- ${keep}`),
+    ...(changesHair ? ["", "Keep their own hair colour."] : []),
+    ...(photoType === "body_only"
+      ? ["", "If any part of their face is visible, leave it exactly as it is. Never add a face or a head that isn't in the photo."]
+      : []),
+  ].join("\n");
 }
