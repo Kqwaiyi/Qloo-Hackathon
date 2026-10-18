@@ -1,6 +1,11 @@
-// The denylists the team curates. Each entry matches by Qloo entity ID, so a namesake isn't caught
-// and a misspelt Qloo name is; the name is only there to read.
+// The denylists the team curates: Qloo entities, then throwaway-inbox domains.
 
+import { SEEDED_DISPOSABLE_ADDRESS_DOMAINS } from "./disposable-address-domains";
+
+/**
+ * A Qloo entity on a denylist. It matches by Qloo entity ID, so a namesake isn't caught and a
+ * misspelt Qloo name is; the name is only there to read.
+ */
 export interface DenylistEntry {
   entityId: string;
   name: string;
@@ -65,4 +70,14 @@ export const OFF_CATEGORY_DENYLIST: readonly DenylistEntry[] = [
   { entityId: "69B3A4F0-019F-442F-A722-88118A19FEBF", name: "Muse by Berta" },
   // Flip-flops.
   { entityId: "433AF5FB-C10A-42B6-AEDC-257B43D4EA19", name: "Havaianas" },
+];
+
+/**
+ * The domains of throwaway-inbox services. An address at one of them, or at a subdomain of one, is
+ * a Disposable Address, which no account may sign up with or change to. Most come from the seeded
+ * list, whose file says where it comes from and how to refresh it.
+ */
+export const DISPOSABLE_ADDRESS_DOMAINS: readonly string[] = [
+  ...SEEDED_DISPOSABLE_ADDRESS_DOMAINS,
+  // Domains the seeded list misses go here, so a refresh keeps them.
 ];

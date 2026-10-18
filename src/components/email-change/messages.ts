@@ -25,6 +25,8 @@ export function changeEmailProblem(refusal: Exclude<ChangeEmailRefusal["refusal"
       return INVALID_EMAIL;
     case "same-email":
       return "That's already your email.";
+    case "disposable-address":
+      return COPY.disposableAddress;
     case "change-limit":
       return `You can change your email ${PER_ACCOUNT_EMAIL_CAPS["email-change"]} times a day. Try again tomorrow.`;
     case "emails-paused":

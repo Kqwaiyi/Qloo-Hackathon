@@ -12,6 +12,7 @@ import {
 import { checkProfile, type ProfileField, profileInputSchema, usernameProblem } from "@/server/accounts/profile";
 import { AUTH_ENDPOINTS } from "@/config/routes";
 import { BOT_CHECK_FAILED } from "@/server/auth/bot-check";
+import { DISPOSABLE_ADDRESS } from "@/server/auth/disposable-address";
 import { AUTH_ERROR_CODES } from "@/server/auth/emails";
 import { postToAuthEndpoint } from "@/server/auth/endpoint";
 import type { OperationContext, Result } from "@/server/operations/context";
@@ -69,7 +70,8 @@ export type SignUpRefusal =
         | "email-taken"
         | "sign-ups-paused"
         | "too-many-sign-ups"
-        | "bot-check-failed";
+        | "bot-check-failed"
+        | "disposable-address";
     }
   | { refusal: "invalid"; field: SignUpField };
 
@@ -78,9 +80,9 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+$/;
 /**
  * Sign-up step 2: creates the account through Better Auth's sign-up endpoint, as any client would,
  * so its per-IP rate limit applies, and signs the user in. Better Auth then emails the verification
- * link. Its sign-up hooks run the Bot Check, recheck the date of birth and check the region, so
- * this refuses a missing or rejected Bot Check token, an under-18 date, or a request from a country
- * Gemini doesn't serve, too.
+ * link. Its sign-up hooks run the Bot Check, recheck the date of birth, check the region and refuse
+ * Disposable Addresses, so this refuses a missing or rejected Bot Check token, an under-18 date, a
+ * request from a country Gemini doesn't serve, or a Disposable Address, too.
  */
 export async function signUp(ctx: OperationContext, input: SignUpInput): Promise<Result<object, SignUpRefusal>> {
   if (!input.acceptedTerms) return { ok: false, refusal: "terms-not-accepted" };
@@ -110,6 +112,8 @@ export async function signUp(ctx: OperationContext, input: SignUpInput): Promise
       return { ok: false, refusal: "under-18" };
     case "UNSUPPORTED_REGION":
       return { ok: false, refusal: "unsupported-region" };
+    case DISPOSABLE_ADDRESS:
+      return { ok: false, refusal: "disposable-address" };
     case AUTH_ERROR_CODES.signUpsPaused:
       return { ok: false, refusal: "sign-ups-paused" };
     case "USER_ALREADY_EXISTS":

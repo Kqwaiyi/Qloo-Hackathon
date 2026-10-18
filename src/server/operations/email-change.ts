@@ -4,6 +4,7 @@ import type { EmailChangeStep } from "@/config/accounts";
 import { AUTH_ENDPOINTS } from "@/config/routes";
 import { findPendingEmailChange, type PendingEmailChange } from "@/server/accounts/email-change";
 import { MANAGED_BY_THE_TEAM } from "@/server/auth/demo-account";
+import { DISPOSABLE_ADDRESS } from "@/server/auth/disposable-address";
 import { AUTH_ERROR_CODES } from "@/server/auth/emails";
 import { postToAuthEndpoint } from "@/server/auth/endpoint";
 import type { AuthRequestContext, OperationContext, Result } from "@/server/operations/context";
@@ -19,7 +20,15 @@ export async function readPendingEmailChange(
 }
 
 export type ChangeEmailRefusal = {
-  refusal: "signed-out" | "invalid-email" | "same-email" | "change-limit" | "emails-paused" | "rate-limited" | "managed-by-the-team";
+  refusal:
+    | "signed-out"
+    | "invalid-email"
+    | "same-email"
+    | "disposable-address"
+    | "change-limit"
+    | "emails-paused"
+    | "rate-limited"
+    | "managed-by-the-team";
 };
 
 /**
@@ -27,7 +36,7 @@ export type ChangeEmailRefusal = {
  * new address verifies it, so a sign-in alone can't take the account over: the answer says it now
  * awaits that approval. An unverified user's address changes at once and the new one gets a link,
  * so it awaits verification. An address already in use gets the same answer, with nothing changed
- * or sent.
+ * or sent. A Disposable Address is refused.
  */
 export async function changeEmail(
   ctx: AuthRequestContext,
@@ -42,6 +51,8 @@ export async function changeEmail(
   const answer = await postToAuthEndpoint(ctx, AUTH_ENDPOINTS.changeEmail, { newEmail: email });
   if (answer.ok) return { ok: true, awaiting: user.emailVerified ? "approval" : "verification" };
   switch (answer.code) {
+    case DISPOSABLE_ADDRESS:
+      return { ok: false, refusal: "disposable-address" };
     case AUTH_ERROR_CODES.emailLimitReached:
       return { ok: false, refusal: "change-limit" };
     case AUTH_ERROR_CODES.emailsPaused:

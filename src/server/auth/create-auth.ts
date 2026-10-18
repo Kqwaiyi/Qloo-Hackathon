@@ -46,6 +46,7 @@ import {
 } from "./emails";
 import { type BotCheckOptions, botCheckGuard } from "./bot-check";
 import { demoAccountGuard } from "./demo-account";
+import { refuseDisposableAddress } from "./disposable-address";
 import { emailChangeLinkCheck } from "./email-change";
 import { passwordResetFinisher } from "./password-reset";
 
@@ -89,7 +90,7 @@ export function createAuth({
 
   /**
    * Rechecks 18+ on every email sign-up, ours or a direct call, before anything is read or written,
-   * then the region gate and the app-wide sign-up email cap.
+   * then the region gate, Disposable Addresses and the app-wide sign-up email cap.
    */
   async function beforeSignUp(ctx: HookContext): Promise<void> {
     // A browser already blocked is refused without restarting its 30 days.
@@ -103,18 +104,21 @@ export function createAuth({
     }
     // A server call without a request's headers, such as a team script's, has no country to judge.
     if (ctx.headers && !isFromSupportedRegion(ctx.headers)) throw unsupportedRegion();
+    refuseDisposableAddress(ctx.body?.email);
     // Near Gmail's daily limit, new sign-ups stop, keeping the rest for existing users.
     if (await emailSender.refusalFor("verification", null)) throw emailRefusalError("sign-ups-paused");
   }
 
   /**
-   * An email change only while its cap allows. Checked before Better Auth acts, which ignores a
-   * refused email: it would change an unverified user's address anyway, or answer a verified user
-   * as if the approval went. An address already in use is refused the same, so it stays unseen.
+   * An email change only to an address that isn't a Disposable Address, and only while its cap
+   * allows. Checked before Better Auth acts, which ignores a refused email: it would change an
+   * unverified user's address anyway, or answer a verified user as if the approval went. An address
+   * already in use is refused the same, so it stays unseen.
    */
   async function beforeChangeEmail(ctx: HookContext): Promise<void> {
     const session = await getSessionFromCtx(ctx);
     if (!session) return;
+    refuseDisposableAddress(ctx.body?.newEmail);
     const refusal = await emailSender.refusalFor("email-change", session.user.id);
     if (refusal) throw emailRefusalError(refusal);
   }

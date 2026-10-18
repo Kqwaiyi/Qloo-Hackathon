@@ -136,6 +136,8 @@ function AccountStep({
   }
 
   const invalidField = problem?.refusal === "invalid" ? problem.field : null;
+  // A refusal of the address itself, which editing it clears.
+  const emailRefused = problem?.refusal === "email-taken" || problem?.refusal === "disposable-address";
 
   return (
     <form onSubmit={submit} className="mt-6 space-y-5">
@@ -161,9 +163,9 @@ function AccountStep({
           value={email}
           onChange={(event) => {
             setEmail(event.target.value);
-            if (problem?.refusal === "email-taken") setProblem(null);
+            if (emailRefused) setProblem(null);
           }}
-          aria-invalid={problem?.refusal === "email-taken" || invalidField === "email"}
+          aria-invalid={emailRefused || invalidField === "email"}
           className={input}
         />
         {problem?.refusal === "email-taken" && (
@@ -177,6 +179,11 @@ function AccountStep({
               reset your password
             </Link>
             .
+          </p>
+        )}
+        {problem?.refusal === "disposable-address" && (
+          <p role="alert" className={fieldError}>
+            {COPY.disposableAddress}
           </p>
         )}
         {invalidField === "email" && <p className={fieldError}>{FIELD_MESSAGES.email}</p>}

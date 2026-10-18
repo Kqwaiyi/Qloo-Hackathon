@@ -12,6 +12,8 @@ export const COPY = {
   usernameTaken: "That username is taken",
   signUpsPaused: "We can't take new sign-ups right now. Please try again tomorrow.",
   botCheckFailed: "We couldn't check that you're not a bot. Please try again.",
+  /** At sign-up and at an email change alike. */
+  disposableAddress: "This email provider isn't accepted. Please use a different address.",
   signInMismatch: "That username or email and password don't match.",
   tooManySignIns: "Too many tries to sign in from your network. Please wait a little and try again.",
   photoTooLarge: "This file is over 20 MB.",
