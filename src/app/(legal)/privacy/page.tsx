@@ -81,9 +81,7 @@ export default function Page() {
 
       <LegalSection {...section("who-we-are")}>
         <p className={paragraph}>
-          Outfit Recommender is run by the Outfit Recommender team:{" "}
-          {/* Ticket 39 fills in the team members' names. */}
-          <mark className="rounded bg-amber-100 px-1 font-medium text-amber-900">[Team members&apos; names to be added]</mark>.
+          Outfit Recommender is run by the Outfit Recommender team: Kqwaiyi, AlexanderBudi and alisakujou0711.
           We&apos;re the controller of your personal data: we decide what&apos;s collected and why.
         </p>
         <p className={paragraph}>
