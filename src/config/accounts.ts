@@ -33,6 +33,12 @@ export const AGE_GATE_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 export const SIGN_UP_RATE_LIMIT = { window: 60 * 60, max: 3 } as const;
 
 /**
+ * Better Auth's rate limit on sign-ins, per IP address, counted apart for sign-in by email and by
+ * username. It's Better Auth's own default for sign-in: 3 tries in 10 seconds.
+ */
+export const SIGN_IN_RATE_LIMIT = { window: 10, max: 3 } as const;
+
+/**
  * Better Auth's rate limit on account deletions, per IP address. Each try checks a password, so it's
  * as tight as Better Auth's own limit on password changes: 3 tries in 10 seconds.
  */

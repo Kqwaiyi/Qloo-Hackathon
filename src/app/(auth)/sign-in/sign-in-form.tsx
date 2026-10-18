@@ -8,7 +8,7 @@ import { COPY } from "@/config/copy";
 
 import { signInAction, type SignInState } from "./actions";
 
-const initialState: SignInState = { identifier: "", failed: false };
+const initialState: SignInState = { identifier: "" };
 
 export function SignInForm() {
   const [state, formAction, pending] = useActionState(signInAction, initialState);
@@ -34,9 +34,9 @@ export function SignInForm() {
         </label>
         <PasswordInput id="password" name="password" required autoComplete="current-password" />
       </div>
-      {state.failed && (
+      {state.refusal && (
         <p role="alert" className="text-sm text-red-700">
-          {COPY.signInMismatch}
+          {state.refusal === "too-many-sign-ins" ? COPY.tooManySignIns : COPY.signInMismatch}
         </p>
       )}
       <button type="submit" disabled={pending} className={`${primaryButton} w-full`}>

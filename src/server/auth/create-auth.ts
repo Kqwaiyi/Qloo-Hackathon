@@ -12,6 +12,7 @@ import {
   PASSWORD_RESET_LINK_LIFETIME_SECONDS,
   SESSION_EXPIRES_IN_SECONDS,
   SESSION_UPDATE_AGE_SECONDS,
+  SIGN_IN_RATE_LIMIT,
   SIGN_UP_RATE_LIMIT,
   STYLE_PREFERENCES,
   USERNAME_MAX_LENGTH,
@@ -217,6 +218,8 @@ export function createAuth({
       storage: "database",
       customRules: {
         [AUTH_ENDPOINTS.signUp]: { ...SIGN_UP_RATE_LIMIT },
+        [AUTH_ENDPOINTS.signInEmail]: { ...SIGN_IN_RATE_LIMIT },
+        [AUTH_ENDPOINTS.signInUsername]: { ...SIGN_IN_RATE_LIMIT },
         [AUTH_ENDPOINTS.deleteUser]: { ...DELETE_ACCOUNT_RATE_LIMIT },
       },
     },

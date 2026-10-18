@@ -1,5 +1,6 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { SIGN_IN_RATE_LIMIT } from "@/config/accounts";
 import { readSignedInUser } from "@/server/operations/session";
 import { signIn, signOut } from "@/server/operations/sign-in";
 import { signUp } from "@/server/operations/sign-up";
@@ -70,6 +71,53 @@ describe("sign-in", () => {
 
     expect(result).toEqual({ ok: true });
   });
+});
+
+describe("the sign-in rate limit", () => {
+  let limited: TestHarness;
+
+  beforeAll(async () => {
+    limited = await createTestHarness({ rateLimit: true });
+    await signUp(limited.context(new TestBrowser({ ip: "192.0.2.1" })), {
+      birthDate: { day: "9", month: "3", year: "1999" },
+      username: "Noor.Ali",
+      email: "noor@example.com",
+      password: "a long enough password",
+      stylePreference: "no_preference",
+      countryCode: "AE",
+      acceptedTerms: true,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Better Auth times its rate limits with the real clock, so these tests move Date itself.
+  it.each([
+    { by: "email", identifier: "noor@example.com", ip: "203.0.113.7" },
+    { by: "username", identifier: "Noor.Ali", ip: "203.0.113.8" },
+  ])(
+    `lets an IP address sign in by $by ${SIGN_IN_RATE_LIMIT.max} times in ${SIGN_IN_RATE_LIMIT.window} seconds, and refuses more until they're up`,
+    async ({ identifier, ip }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const rightPassword = { identifier, password: "a long enough password" };
+      for (let attempt = 0; attempt < SIGN_IN_RATE_LIMIT.max - 1; attempt++) {
+        await signIn(limited.context(new TestBrowser({ ip })), { identifier, password: "a guess" });
+      }
+      expect(await signIn(limited.context(new TestBrowser({ ip })), rightPassword)).toEqual({ ok: true });
+
+      const browser = new TestBrowser({ ip });
+      const refused = await signIn(limited.context(browser), rightPassword);
+
+      expect(refused).toEqual({ ok: false, refusal: "too-many-sign-ins" });
+      expect(browser.hasSessionCookie()).toBe(false);
+      const elsewhere = await signIn(limited.context(new TestBrowser({ ip: "198.51.100.4" })), rightPassword);
+      expect(elsewhere).toEqual({ ok: true });
+      vi.setSystemTime(Date.now() + SIGN_IN_RATE_LIMIT.window * 1000);
+      expect(await signIn(limited.context(new TestBrowser({ ip })), rightPassword)).toEqual({ ok: true });
+    },
+  );
 });
 
 describe("sign-out", () => {

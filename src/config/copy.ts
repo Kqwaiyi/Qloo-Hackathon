@@ -13,6 +13,7 @@ export const COPY = {
   signUpsPaused: "We can't take new sign-ups right now. Please try again tomorrow.",
   botCheckFailed: "We couldn't check that you're not a bot. Please try again.",
   signInMismatch: "That username or email and password don't match.",
+  tooManySignIns: "Too many tries to sign in from your network. Please wait a little and try again.",
   photoTooLarge: "This file is over 20 MB.",
   photoUnreadable: "We couldn't open this file. Try a JPEG, PNG or WebP photo.",
   photoUnusable: "Something went wrong with this photo. Try another.",

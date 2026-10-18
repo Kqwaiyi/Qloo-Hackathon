@@ -33,6 +33,8 @@ export const AUTH_API_PATH = "/api/auth";
 /** The Better Auth endpoints our code names, under AUTH_API_PATH. */
 export const AUTH_ENDPOINTS = {
   signUp: "/sign-up/email",
+  signInEmail: "/sign-in/email",
+  signInUsername: "/sign-in/username",
   sendVerificationEmail: "/send-verification-email",
   changeEmail: "/change-email",
   verifyEmail: "/verify-email",
