@@ -21,6 +21,7 @@ import {
 import { COPY } from "@/config/copy";
 import { findCountry } from "@/config/countries";
 import { AUTH_API_PATH, AUTH_ENDPOINTS } from "@/config/routes";
+import { recordActivity } from "@/server/accounts/activity";
 import { AGE_GATE_COOKIE, isBlockedByAgeGate } from "@/server/accounts/age-gate";
 import { judgeAge, parseIsoBirthDate } from "@/server/accounts/birth-date";
 import { afterAccountDeletion, beforeAccountDeletion } from "@/server/accounts/deletion";
@@ -259,6 +260,16 @@ export function createAuth({ db, clock, baseURL, trustedOrigins, secret, emailSe
             const birthDate = parseIsoBirthDate(ctx?.body?.birthDate);
             if (!birthDate) throw birthDateRequired();
             return { data: { birthYear: birthDate.year, birthMonth: birthDate.month, createdAt: clock.now() } };
+          },
+        },
+      },
+      // Every session created or refreshed marks its user active, for the daily sweep.
+      session: {
+        create: { after: (created) => recordActivity({ db, clock }, created.userId) },
+        update: {
+          after: async (updated) => {
+            // Better Auth hands over nothing if the session went in the meantime.
+            if (updated?.userId) await recordActivity({ db, clock }, updated.userId);
           },
         },
       },

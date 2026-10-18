@@ -13,6 +13,8 @@ export class InlineStylingRunner implements StylingRunner {
   readonly cancelled: string[] = [];
   /** Makes `cancel` throw, as it does when the Workflow can't be reached. */
   cancelFails = false;
+  /** When set, runs while each run is being cancelled, as something else happening meanwhile would. */
+  duringCancel?: (runId: string) => Promise<void>;
   private readonly stylingOfRun = new Map<string, string>();
   private runCount = 0;
 
@@ -32,6 +34,7 @@ export class InlineStylingRunner implements StylingRunner {
    */
   async cancel(runId: string): Promise<void> {
     if (this.cancelFails) throw new Error("The Workflow couldn't be reached.");
+    await this.duringCancel?.(runId);
     this.cancelled.push(runId);
     const index = this.pending.indexOf(this.stylingOfRun.get(runId) ?? "");
     if (index !== -1) this.pending.splice(index, 1);

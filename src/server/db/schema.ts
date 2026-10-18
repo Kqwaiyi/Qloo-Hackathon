@@ -63,6 +63,11 @@ export const user = pgTable(
     // consent clears both.
     acceptedPhotoNoticeVersion: integer("accepted_photo_notice_version"),
     photoNoticeAcceptedAt: timestamp("photo_notice_accepted_at", { withTimezone: true }),
+    // When a session of theirs was last created or refreshed, which the daily sweep's inactivity
+    // rules count from. Better Auth doesn't know these two fields: our session hooks keep them.
+    lastActiveAt: timestamp("last_active_at", { withTimezone: true }).notNull().defaultNow(),
+    // When the daily sweep's inactivity warning actually went out. Any activity since clears it.
+    inactivityWarningSentAt: timestamp("inactivity_warning_sent_at", { withTimezone: true }),
   },
   (table) => [
     check(

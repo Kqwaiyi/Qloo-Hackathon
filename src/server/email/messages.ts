@@ -1,4 +1,6 @@
 import {
+  INACTIVE_ACCOUNT_LIFETIME_MONTHS,
+  INACTIVITY_WARNING_NOTICE_DAYS,
   PASSWORD_RESET_LINK_LIFETIME_SECONDS,
   UNVERIFIED_ACCOUNT_LIFETIME_DAYS,
   VERIFICATION_LINK_LIFETIME_SECONDS,
@@ -83,6 +85,23 @@ export function emailChangeVerificationEmail({ link }: { link: string }): EmailC
       link,
       `The link works for ${hours} hours.`,
       "Didn't ask for this? Ignore this email and nothing changes.",
+    ].join("\n\n"),
+  };
+}
+
+/**
+ * The daily sweep's warning to an account nearly 12 months without activity: it's deleted on
+ * `deletionDate`, 30 days after this email, unless the user signs in first.
+ */
+export function inactivityWarningEmail({ deletionDate, signInLink }: { deletionDate: Date; signInLink: string }): EmailContent {
+  const date = deletionDateText(deletionDate);
+  return {
+    subject: `Your Outfit Recommender account will be deleted on ${date}`,
+    text: [
+      `You haven't used your Outfit Recommender account in a while. Accounts are deleted after ${INACTIVE_ACCOUNT_LIFETIME_MONTHS} months without activity, so yours will be deleted on ${date}, ${INACTIVITY_WARNING_NOTICE_DAYS} days from now, together with its Consultations and their photos and Previews.`,
+      "To keep it, sign in before then:",
+      signInLink,
+      "If you don't need it any more, you don't have to do anything.",
     ].join("\n\n"),
   };
 }

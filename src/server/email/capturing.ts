@@ -5,9 +5,15 @@ export class CapturingEmailTransport implements EmailTransport {
   readonly messages: EmailMessage[] = [];
   /** When set, every send fails with this error, as an SMTP server refusing it would. */
   failWith?: Error;
+  /** Sends to these addresses (lowercased) fail, as an SMTP server refusing the recipient would. */
+  readonly refusedRecipients = new Set<string>();
+  /** When set, runs while each message is on its way, as something else happening meanwhile would. */
+  duringSend?: (message: EmailMessage) => Promise<void>;
 
   async send(message: EmailMessage): Promise<void> {
     if (this.failWith) throw this.failWith;
+    if (this.refusedRecipients.has(message.to.toLowerCase())) throw new Error("The recipient was refused.");
+    await this.duringSend?.(message);
     this.messages.push(message);
   }
 

@@ -9,7 +9,7 @@
 **Spec:** [spec.md](../spec.md) sections "Setup and operations" (Vercel, Demo Account, Landing page images, First real Consultations) and "Further Notes" (Hobby Blob limits; Untested).
 
 - [ ] Switch the Gemini adapter on in production.
-- [ ] Confirm the daily sweep cron is active in production.
+- [ ] Set `CRON_SECRET` on Vercel for Production, since the daily sweep refuses every call without it (ticket 37). Then confirm the cron is active in production, and that the firewall's Bot Protection challenge doesn't block it (ticket 02).
 - [ ] Run the Demo Account creation script once against the production database.
 - [ ] Run the three frozen Consultations on the Demo Account with the photos from ticket 05, and save their text as the landing page's static data using ticket 33's capture procedure.
 - [ ] Fill in the team members' names on `/privacy`.

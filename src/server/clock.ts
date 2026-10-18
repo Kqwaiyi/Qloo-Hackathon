@@ -10,6 +10,11 @@ export function startOfUtcMonth(at: Date): Date {
   return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
 }
 
+/** Midnight UTC at the end of `at`'s UTC day. */
+export function startOfNextUtcDay(at: Date): Date {
+  return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate() + 1));
+}
+
 /** Midnight UTC on the first day of the UTC calendar month after `at`'s. */
 export function startOfNextUtcMonth(at: Date): Date {
   return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 1));

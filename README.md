@@ -35,6 +35,23 @@ bash scripts/setup-team-gmail.sh
 
 The wizard walks through the account, 2-Step Verification and the app password, and writes `GMAIL_USER` and `GMAIL_APP_PASSWORD` to `.env.local`. Next it sends a test email to the account's `+demo` address, which the Demo Account uses, then has you add both variables to Vercel for Production. Finally it installs [scripts/gmail-purge](scripts/gmail-purge/), an Apps Script in the account that permanently deletes sent mail older than a day, every day. That covers everything in Sent, the team's own replies included.
 
+## Daily sweep
+
+Once a day at 12:00 UTC, Vercel Cron calls `/api/daily-sweep` ([vercel.json](vercel.json)), which keeps the Privacy Policy's retention promises:
+
+- It deletes accounts still unverified 7 days after sign-up, on the date the verification email and banner give.
+- It emails a warning to accounts with no activity for 12 months minus 30 days: the account and its Consultations go on a date 30 days away unless the user signs in. Activity means a session created or refreshed: signing up or in, opening a verification link, or using the app, which refreshes the session at most once a day. At most 50 warnings go out a day, the longest inactive first, and the rest wait for the next day.
+- It deletes an account on the date its warning gave, 30 days after the warning actually went, unless the user has been active since.
+- It purges usage records and email-log rows older than 35 days, and Qloo cache entries older than 30 days.
+
+It never sweeps the Demo Account, and it deletes an account the same way as the user's own deletion. The emails give UTC dates, and the sweep deletes at whatever time of that UTC day it runs. Midday UTC keeps that on the date the reader sees in almost every time zone. The numbers are in [src/config](src/config/), which the Privacy Policy reads too.
+
+The route refuses any request without the `CRON_SECRET` bearer token, so the sweep doesn't run until `CRON_SECRET` is set on Vercel for Production. Vercel Cron then sends it with each call. An account the sweep can't delete or warn is logged without its address, and the run answers 500 so it shows as failed in the runtime logs. The account is still due, so the next day's sweep tries it again. To run the sweep by hand in local development, set `CRON_SECRET` in `.env.local` and, with `npm run dev` running:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/daily-sweep
+```
+
 ## Team scripts
 
 Two scripts handle what users ask the team for by email, and a third creates the Demo Account. Each runs the same operation the app would, against the database and Blob store the environment names: with production's `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN` set, production; without them, local development's (stop `npm run dev` first, since PGlite allows one process at a time). Each says which database it's using.

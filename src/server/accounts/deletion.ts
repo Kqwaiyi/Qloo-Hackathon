@@ -27,8 +27,9 @@ export async function afterAccountDeletion(ctx: Pick<OperationContext, "db">, us
 }
 
 /**
- * Deletes an account for good with no password, for the team's scripts: Better Auth's own deletion
- * with the same hooks around it. Deleting the user deletes their sessions and sign-in too.
+ * Deletes an account for good with no password, for the team's scripts and the daily sweep:
+ * Better Auth's own deletion with the same hooks around it. Deleting the user deletes their
+ * sessions and sign-in too.
  */
 export async function deleteAccountOf(ctx: AccountDeletionContext & Pick<OperationContext, "auth">, userId: string): Promise<void> {
   await beforeAccountDeletion(ctx, userId);
