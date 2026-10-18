@@ -19,7 +19,7 @@ export function TryAgain({
 }: {
   consultationId: string;
   stylingStart: UsageSummary["stylingStart"];
-  outfitsLeft: number;
+  outfitsLeft: UsageSummary["outfitsLeft"];
 }) {
   const { sending, failed, send } = useStylingRequest();
 

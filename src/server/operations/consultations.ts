@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as z from "zod";
 
+import { PHOTO_NOTICE_VERSION } from "@/config/accounts";
 import {
   BUDGET_TIERS,
   type BudgetTier,
@@ -83,14 +84,21 @@ export async function startConsultation(
   // The region gate comes before consent, so nothing is recorded from where the app isn't
   // available. The shared start check below runs it again for every other start, at no cost.
   if (!isFromSupportedRegion(ctx.requestHeaders)) return { ok: false, refusal: "unsupported-region" };
-  // Both of the consent sheet's ticks record the user's agreement to the current photo notice, which
-  // otherwise they must already have given.
-  if (input.consent?.storeAndProcess && input.consent.sendToGemini) await recordPhotoConsent(ctx.db, user.id, ctx.clock.now());
-  else if (needsPhotoConsent(user)) return { ok: false, refusal: "photo-consent-needed" };
+  // Both of the consent sheet's ticks are the user's agreement to the current photo notice, which
+  // otherwise they must already have given. They're recorded on the user, except on the Demo
+  // Account, where each judge agrees before every Consultation, which keeps it instead.
+  const consentedAt = ctx.clock.now();
+  const ticked = input.consent?.storeAndProcess === true && input.consent.sendToGemini;
+  if (!ticked && needsPhotoConsent(user)) return { ok: false, refusal: "photo-consent-needed" };
+  if (ticked && !user.isDemoAccount) await recordPhotoConsent(ctx.db, user.id, consentedAt);
   const stylingStart = await checkStylingStart(ctx, user);
   if (!stylingStart.ok) return stylingStart;
-  const photoChecks = await readUsageLeft(ctx.db, { kind: "photo_check", userId: user.id, at: ctx.clock.now() });
-  if (photoChecks.usedUp) return { ok: false, refusal: "photo-check-limit", moreFrom: photoChecks.moreFrom };
+  // The Demo Account has no photo-check limit, as it has no other, so none of its usage is recorded.
+  const countsUsage = !user.isDemoAccount;
+  if (countsUsage) {
+    const photoChecks = await readUsageLeft(ctx.db, { kind: "photo_check", userId: user.id, at: ctx.clock.now() });
+    if (photoChecks.usedUp) return { ok: false, refusal: "photo-check-limit", moreFrom: photoChecks.moreFrom };
+  }
 
   // Only requests that skipped the browser's redraw fail here, so it isn't a photo check.
   const photo = await readPhotoFile(input.photo);
@@ -106,7 +114,7 @@ export async function startConsultation(
     return { ok: false, refusal: "check-errored" };
   }
   // Counted whether the photo is accepted or rejected.
-  await recordUsage(ctx.db, { kind: "photo_check", userId: user.id, at: ctx.clock.now() });
+  if (countsUsage) await recordUsage(ctx.db, { kind: "photo_check", userId: user.id, at: ctx.clock.now() });
   const verdict = judgePhotoCheck(photoCheck, input.photoType);
   if (!verdict.accepted) return { ok: false, refusal: "photo-rejected", rejection: verdict.rejection };
   const { report } = verdict;
@@ -117,8 +125,9 @@ export async function startConsultation(
   let stylingId: string | null;
   try {
     stylingId = await ctx.db.transaction(async (tx) => {
-      // Consent withdrawn in another tab while the photo was checked leaves nothing behind.
-      if (!(await photoConsentStands(tx, user.id))) return null;
+      // Consent withdrawn in another tab while the photo was checked leaves nothing behind. The Demo
+      // Account's came with this request, and nobody can withdraw it.
+      if (!user.isDemoAccount && !(await photoConsentStands(tx, user.id))) return null;
       const now = ctx.clock.now();
       const budgetTier = hasBudgetTier(input.photoType) ? (input.budgetTier ?? DEFAULT_BUDGET_TIER) : null;
       await tx.insert(consultation).values({
@@ -139,10 +148,13 @@ export async function startConsultation(
         countryCode: user.countryCode,
         ageGroup: ageGroupAt(user.birthYear, user.birthMonth, now),
         state: "styling",
+        // The Demo Account's judge agreed to the photo notice for this Consultation alone.
+        ...(user.isDemoAccount ? { acceptedPhotoNoticeVersion: PHOTO_NOTICE_VERSION, photoNoticeAcceptedAt: consentedAt } : {}),
       });
       return createStyling(tx, now, {
         consultationId: id,
         userId: user.id,
+        onDemoAccount: user.isDemoAccount,
         kind: "first",
         budgetTier,
         photoStyle: report.photoStyle,

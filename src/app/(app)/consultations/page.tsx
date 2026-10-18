@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { LocalDate } from "@/components/local-date";
+import { SharedDemoAccountNote } from "@/components/shared-demo-account-note";
 import { textLink } from "@/components/ui";
 import { BUDGET_TIER_LABELS, PHOTO_TYPE_LABELS } from "@/config/consultations";
 import { consultationRoute, ROUTES } from "@/config/routes";
@@ -14,12 +15,15 @@ import { DeleteConsultation } from "./delete-consultation";
 export const metadata: Metadata = { title: "My Consultations" };
 
 export default async function Page() {
-  await requireSignedInUser();
+  const user = await requireSignedInUser();
   const consultations = await getMyConsultations();
   return (
     <>
       <h1 className="text-2xl font-semibold tracking-tight">My Consultations</h1>
-      <p className="mt-1 text-stone-600">Every photo you&apos;ve submitted and the Outfits it got.</p>
+      <p className="mt-1 text-stone-600">
+        Every photo {user.isDemoAccount ? "submitted on this account" : <>you&apos;ve submitted</>} and the Outfits it got.
+      </p>
+      {user.isDemoAccount && <SharedDemoAccountNote className="mt-4" />}
       {consultations.length === 0 ? (
         <p className="mt-8 rounded-xl border-2 border-dashed border-stone-200 p-10 text-center text-stone-600">
           No Consultations yet.{" "}

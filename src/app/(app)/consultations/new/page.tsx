@@ -33,6 +33,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
           outfitsWanted={stylingStart.outfitsWanted}
           outfitsLeft={usage.outfitsLeft}
           photoConsentNeeded={needsPhotoConsent(user)}
+          isDemoAccount={user.isDemoAccount}
         />
       ) : stylingStart.refusal === "unverified" ? (
         <VerifyFirst email={user.email} />

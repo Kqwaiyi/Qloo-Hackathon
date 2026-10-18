@@ -9,9 +9,12 @@ import { readUsageLeft } from "@/server/usage/records";
  * Stylings.
  */
 export interface UsageSummary {
-  /** The Outfits left in the user's Outfit Allowance: "Uses <n> of your <left> Outfits left today". */
-  outfitsLeft: number;
-  /** When more Outfits become available, or null while none count against the allowance. */
+  /**
+   * The Outfits left in the user's Outfit Allowance: "Uses <n> of your <left> Outfits left today".
+   * Null on the Demo Account, which has no Outfit Allowance, so no allowance line.
+   */
+  outfitsLeft: number | null;
+  /** When more Outfits become available, or null while none count against the allowance, or there's none. */
   moreOutfitsFrom: Date | null;
   /**
    * Whether a Styling can start now, and how many Outfits it would make, or why it can't, such as
@@ -26,10 +29,11 @@ export async function readUsageSummary(
 ): Promise<UsageSummary | null> {
   const user = await readSignedInUser(ctx);
   if (!user) return null;
+  // First, so the Outfits of any stuck Styling it finishes count in what's left.
+  const stylingStart: UsageSummary["stylingStart"] = user.emailVerified
+    ? await checkStylingStart(ctx, user)
+    : { ok: false, refusal: "unverified" };
+  if (user.isDemoAccount) return { outfitsLeft: null, moreOutfitsFrom: null, stylingStart };
   const outfits = await readUsageLeft(ctx.db, { kind: "outfit", userId: user.id, at: ctx.clock.now() });
-  return {
-    outfitsLeft: outfits.left,
-    moreOutfitsFrom: outfits.moreFrom,
-    stylingStart: user.emailVerified ? await checkStylingStart(ctx, user) : { ok: false, refusal: "unverified" },
-  };
+  return { outfitsLeft: outfits.left, moreOutfitsFrom: outfits.moreFrom, stylingStart };
 }

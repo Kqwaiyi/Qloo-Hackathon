@@ -176,6 +176,7 @@ async function startStylingOn<R extends { refusal: string }>(
         ...stylingPlan,
         consultationId,
         userId: user.id,
+        onDemoAccount: user.isDemoAccount,
         outfitsWanted: stylingStart.outfitsWanted,
       });
       return { ok: true, stylingId };

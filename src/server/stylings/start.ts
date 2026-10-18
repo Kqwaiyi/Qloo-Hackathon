@@ -50,6 +50,10 @@ export type StylingStart = Result<{ outfitsWanted: number }, StylingStartRefusal
  * that lifts last, so a user is never told to come back while another still holds. The 24-hour
  * cap's wording gives no time, but it lifts as the Outfit Allowance does, once the Outfit holding it
  * has counted for 24 hours. On a tie, the app-wide limits come first: they're not the user's doing.
+ *
+ * The Demo Account, which the judges share, has neither the user's Styling lock nor any limit, so
+ * each of its Stylings makes OUTFITS_PER_STYLING. Only the region gate and the lock on each
+ * Consultation hold for it.
  */
 export async function checkStylingStart(
   ctx: Pick<OperationContext, "db" | "clock" | "stylings" | "requestHeaders">,
@@ -58,6 +62,7 @@ export async function checkStylingStart(
   if (!isFromSupportedRegion(ctx.requestHeaders)) return { ok: false, refusal: "unsupported-region" };
   // A stuck Styling holds no lock, and what it made counts before the limits are read.
   await finishStuckStylings(ctx, { userId: user.id });
+  if (user.isDemoAccount) return { ok: true, outfitsWanted: OUTFITS_PER_STYLING };
   const [running] = await ctx.db
     .select({ id: styling.id })
     .from(styling)
@@ -99,6 +104,8 @@ function qlooBackstopLiftsAt(state: QlooLimitState | null, now: Date): Date | nu
 export interface NewStyling {
   consultationId: string;
   userId: string;
+  /** Whether the user is the Demo Account, which holds no user's Styling lock and whose Outfits count against no limit. */
+  onDemoAccount: boolean;
   kind: StylingKind;
   /** What it builds for. */
   budgetTier: BudgetTier | null;
@@ -135,7 +142,8 @@ export class AlreadyStylingError extends Error {
 /**
  * Creates a running Styling in the caller's transaction, with any Style Icon list it copies, and
  * shows its Consultation as Styling. Once the transaction commits, `launchStyling` sets it going.
- * Throws `AlreadyStylingError` if one is already running on the Consultation, or for the user.
+ * Throws `AlreadyStylingError` if one is already running on the Consultation, or for the user
+ * unless it's the Demo Account.
  */
 export async function createStyling(tx: Transaction, now: Date, { copiesStyleIconList, ...newStyling }: NewStyling): Promise<string> {
   const id = randomUUID();

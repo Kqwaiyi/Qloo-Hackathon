@@ -97,6 +97,7 @@ describe("a new Consultation's first Styling", () => {
         id: harness.stylings.pending[0],
         consultationId,
         userId: (await readSignedInUser(harness.context(browser)))!.id,
+        onDemoAccount: false,
         kind: "first",
         budgetTier: "no_budget",
         photoStyle: ["casual"],

@@ -388,8 +388,9 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
           .where(and(eq(outfit.consultationId, running.consultationId), eq(outfit.current, true)));
       }
       await tx.update(outfit).set({ current: true }).where(eq(outfit.stylingId, stylingId));
-      // Each counts against the Outfit Allowance from now, Preview or not, even if later replaced or deleted.
-      await recordUsage(tx, { kind: "outfit", userId: running.userId, at: finishedAt }, made.length);
+      // Each counts against the Outfit Allowance and the app-wide caps from now, Preview or not, even
+      // if later replaced or deleted. The Demo Account's count against nothing.
+      if (!running.onDemoAccount) await recordUsage(tx, { kind: "outfit", userId: running.userId, at: finishedAt }, made.length);
       await tx.update(styling).set({ status: "succeeded", outfitsMade: made.length, finishedAt }).where(eq(styling.id, stylingId));
       // What it built for becomes the Consultation's, together with its Outfits.
       await tx
@@ -506,6 +507,7 @@ async function lockRunningStyling(tx: Transaction, stylingId: string) {
     .select({
       consultationId: styling.consultationId,
       userId: styling.userId,
+      onDemoAccount: styling.onDemoAccount,
       kind: styling.kind,
       budgetTier: styling.budgetTier,
       photoStyle: styling.photoStyle,

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
+import { SharedDemoAccountNote } from "@/components/shared-demo-account-note";
 import { primaryButton, secondaryButton, textLink } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import { ROUTES } from "@/config/routes";
@@ -13,11 +14,23 @@ const AGREED = "agreed";
 /**
  * The consent sheet: what happens to the user's photos, in plain English, then the two separate
  * agreements "Get my Outfits" needs, both unticked each time it opens. Its wording is the photo
- * notice: raise PHOTO_NOTICE_VERSION whenever it changes, so every user sees it again.
+ * notice, the Demo Account's lines included: raise PHOTO_NOTICE_VERSION whenever it changes, so
+ * every user sees it again.
+ *
+ * `isDemoAccount` says it's the Demo Account's, which every judge sees before each Consultation: it
+ * says plainly that anyone with the login can see the Consultations made there.
  *
  * `onClose` says whether the user agreed to both, or closed it (with "Not now" or Escape) without.
  */
-export function ConsentSheet({ open, onClose }: { open: boolean; onClose: (agreed: boolean) => void }) {
+export function ConsentSheet({
+  open,
+  isDemoAccount,
+  onClose,
+}: {
+  open: boolean;
+  isDemoAccount: boolean;
+  onClose: (agreed: boolean) => void;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const titleId = useId();
@@ -47,12 +60,15 @@ export function ConsentSheet({ open, onClose }: { open: boolean; onClose: (agree
           <h2 ref={heading} id={titleId} tabIndex={-1} className="text-lg font-semibold outline-none">
             Before we use your photos
           </h2>
+          {isDemoAccount && <SharedDemoAccountNote className="mt-3" />}
           <p className="mt-2 text-sm text-stone-600">Here&apos;s what happens to each photo you send.</p>
           <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-stone-700">
             <li>
-              We keep it privately, with the Outfits and Previews made from it, until you delete that Consultation, withdraw
-              this consent or your account is deleted. Only you can open them, through private links that stop working after
-              an hour.
+              We keep it privately, with the Outfits and Previews made from it, until{" "}
+              {isDemoAccount
+                ? "that Consultation or this account is deleted. Anyone signed in to this account can open them"
+                : "you delete that Consultation, withdraw this consent or your account is deleted. Only you can open them"}
+              , through private links that stop working after an hour.
             </li>
             <li>
               AI looks at your face and body to check the photo, read its style, tailor each Outfit to you and draw Previews of

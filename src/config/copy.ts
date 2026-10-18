@@ -101,6 +101,8 @@ export const COPY = {
   signOutEverywhere: "Sign out of all devices",
   /** Beside each Settings item the Demo Account can't change, with a lock icon. */
   managedByTheTeam: "Managed by the team",
+  /** On the Demo Account's consent sheet, as part of its photo notice, and on its My Consultations. */
+  sharedDemoAccount: "Shared demo account: anyone with this login can see Consultations made here. Delete yours when you're done.",
   emailUsForData: "Email us for a copy of your data",
   didNotSignUp: (date: string) => `Didn't sign up? Ignore this email. The account is removed on ${date}.`,
 } as const;

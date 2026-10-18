@@ -71,6 +71,9 @@ describe("starting a Consultation", () => {
         countryCode: "GB",
         ageGroup: "35_44",
         state: "styling",
+        // Only the Demo Account's Consultations keep the photo notice agreed to: this user's is theirs.
+        acceptedPhotoNoticeVersion: null,
+        photoNoticeAcceptedAt: null,
       },
     ]);
     expect([...harness.blob.objects.keys()]).toEqual([stored[0]!.photoPathname]);

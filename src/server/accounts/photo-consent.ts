@@ -9,10 +9,11 @@ import type { SignedInUser } from "@/server/operations/session";
 
 /**
  * Whether the consent sheet must come before the user's next Consultation: they've never agreed to
- * the photo notice, have withdrawn photo consent, or agreed to an older photo notice.
+ * the photo notice, have withdrawn photo consent, or agreed to an older photo notice. On the Demo
+ * Account it always comes, so each judge's agreement is their own, kept on the Consultation it's for.
  */
-export function needsPhotoConsent(signedIn: Pick<SignedInUser, "photoConsent">): boolean {
-  return signedIn.photoConsent?.noticeVersion !== PHOTO_NOTICE_VERSION;
+export function needsPhotoConsent(signedIn: Pick<SignedInUser, "photoConsent" | "isDemoAccount">): boolean {
+  return signedIn.isDemoAccount || signedIn.photoConsent?.noticeVersion !== PHOTO_NOTICE_VERSION;
 }
 
 /** Records the user's agreement to the current photo notice, made at `at`. */

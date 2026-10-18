@@ -229,11 +229,19 @@ export const consultation = pgTable(
     countryCode: text("country_code").notNull(),
     ageGroup: ageGroupEnum("age_group").notNull(),
     state: consultationStateEnum("state").notNull(),
+    // On the Demo Account, the photo notice the judge agreed to on the consent sheet for this
+    // Consultation, and when. Everyone else's agreement is kept on the user, and these stay null.
+    acceptedPhotoNoticeVersion: integer("accepted_photo_notice_version"),
+    photoNoticeAcceptedAt: timestamp("photo_notice_accepted_at", { withTimezone: true }),
   },
   (table) => [
     index("consultation_user_id_created_at_idx").on(table.userId, table.createdAt),
     check("consultation_photo_style_words", sql`cardinality(${table.photoStyle}) between 1 and 2`),
     check("consultation_budget_tier_for_body_photos", sql`(${table.photoType} = 'face') = (${table.budgetTier} is null)`),
+    check(
+      "consultation_photo_notice_accepted_together",
+      sql`(${table.acceptedPhotoNoticeVersion} is null) = (${table.photoNoticeAcceptedAt} is null)`,
+    ),
   ],
 );
 
@@ -260,6 +268,9 @@ export const styling = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    // Whether it's the Demo Account's, whose Outfits no limit counts, so it writes no usage records,
+    // and which holds no user's Styling lock.
+    onDemoAccount: boolean("on_demo_account").notNull().default(false),
     kind: stylingKindEnum("kind").notNull(),
     // What it builds for. They become the Consultation's own once it succeeds.
     budgetTier: budgetTierEnum("budget_tier"),
@@ -281,10 +292,13 @@ export const styling = pgTable(
   },
   (table) => [
     index("styling_consultation_id_idx").on(table.consultationId),
-    // The Styling locks: one running Styling per Consultation, and one per user, so of two requests
-    // at once only one can start one.
+    // The Styling locks, so of two requests at once only one can start a Styling: one running per
+    // Consultation, and one per user. The Demo Account has no lock of its own, so its judges can
+    // style their own Consultations side by side.
     uniqueIndex("styling_running_per_consultation_unique").on(table.consultationId).where(sql`${table.status} = 'running'`),
-    uniqueIndex("styling_running_per_user_unique").on(table.userId).where(sql`${table.status} = 'running'`),
+    uniqueIndex("styling_running_per_user_unique")
+      .on(table.userId)
+      .where(sql`${table.status} = 'running' and not ${table.onDemoAccount}`),
     check("styling_photo_style_words", sql`cardinality(${table.photoStyle}) between 1 and 2`),
     check("styling_finished_unless_running", sql`(${table.status} = 'running') = (${table.finishedAt} is null)`),
     check("styling_failure_reason_when_failed", sql`(${table.status} = 'failed') = (${table.failureReason} is not null)`),

@@ -35,7 +35,7 @@ export function MoreOutfits({
   /** The run-out line suggests another Budget Tier as well as a Photo Style: a Face Photo has none. */
   suggestBudgetTier: boolean;
   stylingStart: UsageSummary["stylingStart"];
-  outfitsLeft: number;
+  outfitsLeft: UsageSummary["outfitsLeft"];
 }) {
   const { sending, failed, send } = useStylingRequest();
   const area = useRef<HTMLElement>(null);

@@ -46,18 +46,22 @@ interface ChosenPhoto {
 }
 
 /**
- * `outfitsWanted` is how many of the `outfitsLeft` in the user's Outfit Allowance the Styling will
- * make. `photoConsentNeeded` says the consent sheet comes first: the user hasn't agreed to the
- * current photo notice.
+ * `outfitsWanted` is how many Outfits the Styling will make, of the `outfitsLeft` in the user's
+ * Outfit Allowance, which is null on the Demo Account: it has none. `photoConsentNeeded` says the
+ * consent sheet comes first: the user hasn't agreed to the current photo notice.
+ * `isDemoAccount` says it's the Demo Account, which the judges share: the consent sheet comes before
+ * each of its Consultations, and says the account is shared.
  */
 export function NewConsultation({
   outfitsWanted,
   outfitsLeft,
   photoConsentNeeded,
+  isDemoAccount,
 }: {
   outfitsWanted: number;
-  outfitsLeft: number;
+  outfitsLeft: number | null;
   photoConsentNeeded: boolean;
+  isDemoAccount: boolean;
 }) {
   const [step, setStep] = useState<"photo-type" | "photo">("photo-type");
   const [photoType, setPhotoType] = useState<PhotoType>(DEFAULT_PHOTO_TYPE);
@@ -75,7 +79,7 @@ export function NewConsultation({
     <PhotoTypeStep photoType={photoType} onChange={setPhotoType} onContinue={() => setStep("photo")} />
   ) : (
     <PhotoStep
-      allowanceLine={COPY.outfitsItUses(outfitsWanted, outfitsLeft)}
+      allowanceLine={outfitsLeft === null ? null : COPY.outfitsItUses(outfitsWanted, outfitsLeft)}
       photoType={photoType}
       onPhotoTypeChange={setPhotoType}
       photo={photo}
@@ -84,6 +88,7 @@ export function NewConsultation({
       onBudgetTierChange={setBudgetTier}
       consentNeeded={consentNeeded}
       onConsentNeededChange={setConsentNeeded}
+      isDemoAccount={isDemoAccount}
       onBack={() => setStep("photo-type")}
     />
   );
@@ -187,10 +192,11 @@ function PhotoStep({
   onBudgetTierChange,
   consentNeeded,
   onConsentNeededChange,
+  isDemoAccount,
   onBack,
 }: {
-  /** Beside "Get my Outfits": how many Outfits it will use, of how many are left. */
-  allowanceLine: string;
+  /** Beside "Get my Outfits": how many Outfits it will use, of how many are left, if there's an Outfit Allowance. */
+  allowanceLine: string | null;
   photoType: PhotoType;
   onPhotoTypeChange: (photoType: PhotoType) => void;
   photo: ChosenPhoto | null;
@@ -201,6 +207,8 @@ function PhotoStep({
   /** "Get my Outfits" opens the consent sheet first. */
   consentNeeded: boolean;
   onConsentNeededChange: (consentNeeded: boolean) => void;
+  /** The Demo Account, which keeps no agreement on record, and whose consent sheet says it's shared. */
+  isDemoAccount: boolean;
   onBack: () => void;
 }) {
   const router = useRouter();
@@ -286,7 +294,9 @@ function PhotoStep({
     setProblem(null);
     setConsentDeclined(false);
     if (consentNeeded) setConsentSheetFor(type);
-    else send(type, false);
+    // The Demo Account keeps no agreement on record, so the judge's, given on this page, goes with
+    // each photo sent from it, until one becomes a Consultation and the page moves on.
+    else send(type, isDemoAccount);
   }
 
   /** The consent sheet has closed: the photo goes with both ticks if the user agreed, and otherwise nothing is sent. */
@@ -321,7 +331,8 @@ function PhotoStep({
       }
       // The server now has the ticks on record, so the one-tap Photo Type switch after a rejection
       // needs no second sheet. The refusals that come before the consent check (signed out,
-      // unverified, the region gate) leave this step anyway, and a withdrawal meanwhile asks again below.
+      // unverified, the region gate) leave this step anyway, and a withdrawal meanwhile asks again
+      // below.
       if (consented) onConsentNeededChange(false);
       if (result.ok) {
         setAccepted(true);
@@ -481,7 +492,7 @@ function PhotoStep({
           </div>
         </div>
       </section>
-      <ConsentSheet open={consentSheetFor !== null} onClose={closeConsentSheet} />
+      <ConsentSheet open={consentSheetFor !== null} isDemoAccount={isDemoAccount} onClose={closeConsentSheet} />
     </>
   );
 }

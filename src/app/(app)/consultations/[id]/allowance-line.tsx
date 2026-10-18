@@ -5,7 +5,8 @@ import type { UsageSummary } from "@/server/operations/usage";
 /**
  * The allowance line beside the results actions that start a Styling, or, while none can start,
  * why not. An unverified user has the banner above saying why, and only a verified user can have a
- * Consultation, so that's never shown here.
+ * Consultation, so that's never shown here. The Demo Account has no Outfit Allowance, so no
+ * allowance line.
  */
 export function AllowanceLine({
   id,
@@ -16,13 +17,13 @@ export function AllowanceLine({
   /** What the actions it's beside are described by. */
   id: string;
   stylingStart: UsageSummary["stylingStart"];
-  outfitsLeft: number;
+  outfitsLeft: UsageSummary["outfitsLeft"];
   className?: string;
 }) {
   return (
     <p id={id} className={className}>
       {stylingStart.ok
-        ? COPY.outfitsItUses(stylingStart.outfitsWanted, outfitsLeft)
+        ? outfitsLeft !== null && COPY.outfitsItUses(stylingStart.outfitsWanted, outfitsLeft)
         : stylingStart.refusal !== "unverified" && <LimitMessage refusal={stylingStart} />}
     </p>
   );
