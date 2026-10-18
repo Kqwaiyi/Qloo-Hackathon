@@ -18,6 +18,12 @@ export const BOT_CHECK_TOKEN_HEADER = "x-captcha-response";
 /** Cloudflare's endpoint that judges a token. */
 export const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
+/** The longest token Turnstile makes, as Cloudflare documents it. */
+const TOKEN_MAX_LENGTH = 2048;
+
+/** Cloudflare's error codes for a missing or wrong secret: our mistake, not the visitor's. */
+const SECRET_ERROR_CODES = ["missing-input-secret", "invalid-input-secret"];
+
 /** The one way the Bot Check talks to Cloudflare: `fetch` in the app, a fake in tests. */
 export type TurnstileTransport = (request: Request) => Promise<Response>;
 
@@ -72,11 +78,20 @@ export function botCheckGuard(options: BotCheckOptions | undefined, demoAccountE
     // rate limit still guards the Demo Account's password.
     if (signsInToDemoAccount(ctx, demoAccountEmail)) return;
     const token = ctx.headers.get(BOT_CHECK_TOKEN_HEADER)?.trim();
-    if (!token) throw botCheckFailed();
-    const outcome = await verify(options, token, getIP(ctx.headers, ctx.context.options));
+    // Nothing Cloudflare made, so it's never sent: a huge token can't make the call fail like an outage.
+    if (!token || token.length > TOKEN_MAX_LENGTH) throw botCheckFailed();
+    const outcome = await verify(options, token, visitorIp(ctx.headers, ctx.context.options));
     if (outcome.verdict === "rejected") throw botCheckFailed();
     if (outcome.verdict === "unreachable") console.warn(`The Bot Check let a request to ${ctx.path} through: ${outcome.reason}.`);
   };
+}
+
+/**
+ * The visitor's IP address, read as Better Auth reads it from x-forwarded-for, but whole: for its rate
+ * limits Better Auth keeps only an IPv6 address's /64 network, which isn't the visitor's address.
+ */
+function visitorIp(headers: Headers, options: HookContext["context"]["options"]): string | null {
+  return getIP(headers, { ...options, advanced: { ...options.advanced, ipAddress: { ...options.advanced?.ipAddress, ipv6Subnet: 128 } } });
 }
 
 /** Asks Cloudflare about the token, waiting at most BOT_CHECK_TIMEOUT_MS. */
@@ -110,7 +125,10 @@ async function ask(options: BotCheckOptions, request: Request): Promise<Verdict>
   if (response.status >= 500) return { verdict: "unreachable", reason: `Cloudflare answered ${response.status}` };
   // Anything else Cloudflare says counts against the token: a bot can't make that look like an outage.
   const answer: unknown = await response.json().catch(() => undefined);
-  const { success, hostname } = (answer ?? {}) as { success?: unknown; hostname?: unknown };
+  const { success, hostname, "error-codes": errorCodes } = (answer ?? {}) as { success?: unknown; hostname?: unknown; "error-codes"?: unknown };
+  const secretError = Array.isArray(errorCodes) ? errorCodes.find((code: unknown) => SECRET_ERROR_CODES.includes(String(code))) : undefined;
+  // Still refused, but every visitor is until the team fixes the secret, so the runtime log says so.
+  if (secretError) console.error(`Cloudflare refused the Bot Check's secret (${secretError}): check TURNSTILE_SECRET_KEY.`);
   if (!response.ok || success !== true) return { verdict: "rejected" };
   if (options.allowedHostnames && !options.allowedHostnames.includes(String(hostname))) return { verdict: "rejected" };
   return { verdict: "pass" };

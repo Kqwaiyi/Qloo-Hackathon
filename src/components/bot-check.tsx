@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useCallback, useEffect, useRef } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 /** Cloudflare Turnstile's script, which renders its widget only when told to. */
 const TURNSTILE_SCRIPT_URL = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
@@ -62,6 +62,8 @@ export function useBotCheck(siteKey: string | null): BotCheck {
   // The newest token, "" while there's none, and whether the widget has given up.
   const current = useRef({ token: "", failed: false });
   const waiting = useRef<((token: string) => void)[]>([]);
+  // Bumped to load Turnstile's script again after it didn't load.
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   const settle = useCallback((token: string, failed: boolean) => {
     current.current = { token, failed };
@@ -93,7 +95,7 @@ export function useBotCheck(siteKey: string | null): BotCheck {
       if (widgetId.current !== undefined) window.turnstile?.remove(widgetId.current);
       widgetId.current = undefined;
     };
-  }, [siteKey, settle]);
+  }, [siteKey, settle, loadAttempt]);
 
   const token = useCallback(async () => {
     if (!siteKey) return undefined;
@@ -103,8 +105,11 @@ export function useBotCheck(siteKey: string | null): BotCheck {
   }, [siteKey]);
 
   const reset = useCallback(() => {
+    const { failed } = current.current;
     current.current = { token: "", failed: false };
     if (widgetId.current !== undefined) window.turnstile?.reset(widgetId.current);
+    // No widget to make the next token, so the next try would wait forever: load the script again.
+    else if (failed) setLoadAttempt((attempt) => attempt + 1);
   }, []);
 
   const send = useCallback(

@@ -672,6 +672,35 @@ describe("the Bot Check's other rules", () => {
     expect(ours).toEqual({ ok: true });
   });
 
+  it("sends Cloudflare an IPv6 visitor's whole address, not the /64 network Better Auth rate-limits by", async () => {
+    const browser = new TestBrowser({ ip: "2001:db8::1:2:3:4" });
+
+    await signUp(harness.context(browser), signUpInput());
+
+    expect(harness.turnstile.requests.map((request) => request.ip)).toEqual(["2001:0db8:0000:0000:0001:0002:0003:0004"]);
+  });
+
+  it("refuses a token longer than Cloudflare ever makes, without asking Cloudflare, so it can't stand in for an outage", async () => {
+    harness.turnstile.answer = "unreachable";
+
+    const result = await signUp(harness.context(new TestBrowser()), signUpInput({ email: "long@example.com", botCheckToken: "x".repeat(2049) }));
+
+    expect(result).toEqual({ ok: false, refusal: "bot-check-failed" });
+    expect(await accountExists("long@example.com")).toBe(false);
+    expect(harness.turnstile.requests).toEqual([]);
+  });
+
+  it("logs it when Cloudflare refuses the secret, which refuses every visitor until the team fixes it", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    harness.turnstile.answer = { reject: "invalid-input-secret" };
+
+    const result = await signUp(harness.context(new TestBrowser()), signUpInput());
+
+    expect(result).toEqual({ ok: false, refusal: "bot-check-failed" });
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0]!.join(" ")).toMatch(/Cloudflare refused the Bot Check's secret \(invalid-input-secret\)/);
+  });
+
   it("is off with no secret configured: no token is needed and Cloudflare is never asked", async () => {
     const unconfigured = await createTestHarness({ botCheck: false });
     const browser = new TestBrowser();
