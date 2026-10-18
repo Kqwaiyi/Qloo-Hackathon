@@ -7,7 +7,7 @@ import { VercelBlobStore } from "@/server/blob/vercel";
 import { type Clock, systemClock } from "@/server/clock";
 import { connectDatabase } from "@/server/db/connect";
 import type { Database } from "@/server/db/database";
-import { gmailTransportFromEnvironment, teamGmailAddress } from "@/server/email/gmail";
+import { gmailTransportFromEnvironment, teamEmailAddress } from "@/server/email/gmail";
 import { InboxTransport, LOCAL_INBOX_FOLDER } from "@/server/email/inbox";
 import { createEmailSender, type EmailSender, type EmailTransport } from "@/server/email/send-email";
 import type { StylingRunner } from "@/server/stylings/runner";
@@ -28,15 +28,12 @@ export interface BaseServices {
   teamEmail: string;
 }
 
-/** The team's address where GMAIL_USER isn't set (previews, and local development without .env.local). It goes nowhere. */
-const UNSET_TEAM_EMAIL = "team@outfit-recommender.invalid";
-
 /** The base services as the environment sets them up, with this to run Stylings. */
 export async function createBaseServices(stylings: StylingRunner): Promise<BaseServices> {
   const db = await connectDatabase();
   const clock = systemClock;
   const emailSender = createEmailSender({ db, clock, transport: emailTransport() });
-  const teamEmail = teamGmailAddress() ?? UNSET_TEAM_EMAIL;
+  const teamEmail = teamEmailAddress();
   const blob = blobStore();
   const auth = createAuth({ db, clock, ...authUrls(), secret: authSecret(), emailSender, teamEmail, blob, stylings });
   return { db, auth, clock, blob, stylings, emailSender, teamEmail };

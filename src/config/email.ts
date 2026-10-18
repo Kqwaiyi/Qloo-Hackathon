@@ -25,6 +25,9 @@ export type EmailKind = (typeof EMAIL_KINDS)[number];
 /** The caps count the emails sent in the last this many hours. */
 export const EMAIL_CAP_WINDOW_HOURS = 24;
 
+/** The email log's rows are purged once they're this many days old. The Privacy Policy promises it. */
+export const EMAIL_LOG_LIFETIME_DAYS = 35;
+
 /** No email of any kind goes out once this many went out in the window. */
 export const ALL_EMAILS_CAP = 450;
 

@@ -11,7 +11,7 @@ npm run dev
 
 Without `DATABASE_URL`, local development uses an on-disk PGlite database in `.data/pglite`, migrated on start-up. Without `BLOB_READ_WRITE_TOKEN`, photos and Previews are kept in `.data/blob`. Local development never sends real email, even with the Gmail variables set: each email is written as a JSON file to `.data/inbox`, where you can open its link, such as the verification link a new account needs before its first Consultation. The AI is a fake adapter that passes every photo after about a second and draws each Preview as your own photo with a "Fake Preview" banner, with `FAKE_AI_SCENARIO` and `FAKE_AI_DELAY_MS` to change what it does. Qloo is real, through the same 30-day cache in the database, so it needs `QLOO_API_URL` and `QLOO_API_KEY`. See [.env.example](.env.example) for the environment variables.
 
-Stylings run as a Vercel Workflow. In local development that is Workflow's Local World, which keeps its runs in `.workflow-data`; `npx workflow web` shows them. Delete `.data` and `.workflow-data` to start over.
+Stylings run as a Vercel Workflow. In local development that is Workflow's Local World, which keeps its runs in `.workflow-data`; `npx workflow web` shows them. Each run's data, its steps' inputs and outputs, is deleted as soon as it finishes, as the Privacy Policy promises, so a finished run shows its steps and timings but not what they returned. Delete `.data` and `.workflow-data` to start over.
 
 ## Tests
 

@@ -25,13 +25,15 @@ export const COPY = {
   /** Part of the photo notice too, on the consent sheet: raise PHOTO_NOTICE_VERSION when it changes. */
   contentRules: "Only use photos of yourself that you have the rights to, with no nudity or intimate images.",
   photoHairNotVisible: "We need to see your hair to suggest a Hairstyle.",
+  /** In the Terms, and for the landing page's footer. */
+  notAffiliated: "Style Icons and Brands aren't affiliated with Outfit Recommender.",
   /** The region gate. It mentions neither the Country setting nor VPNs. */
   unsupportedRegion: "Outfit Recommender isn't available where you are right now.",
   /** The quiet line after the consent sheet is closed without agreeing. */
   agreeToBothBoxes: "To get Outfits, agree to both boxes on the consent sheet.",
   /**
    * On the consent sheet, as part of the photo notice (raise PHOTO_NOTICE_VERSION when it changes),
-   * and on `/privacy` once ticket 32 writes it.
+   * and in the Privacy Policy's Photos section.
    */
   deletionPromise:
     "Your photos and Previews are deleted immediately. Leftover records in our providers' systems are gone within a day, and Google's abuse-monitoring copy within 55 days.",

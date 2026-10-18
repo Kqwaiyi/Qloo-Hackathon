@@ -2,12 +2,20 @@ import { createTransport } from "nodemailer";
 
 import type { EmailMessage, EmailTransport } from "./send-email";
 
-/**
- * The team Gmail account's address, from GMAIL_USER, or undefined where it isn't set. It sends
- * every email, and it's where users write to the team.
- */
+/** The team Gmail account's address, from GMAIL_USER, or undefined where it isn't set. It sends every email. */
 export function teamGmailAddress(): string | undefined {
   return process.env.GMAIL_USER?.trim() || undefined;
+}
+
+/** The team's address where GMAIL_USER isn't set (previews, and local development without .env.local). It goes nowhere. */
+const UNSET_TEAM_EMAIL = "team@outfit-recommender.invalid";
+
+/**
+ * Where users write to the team: for a copy of their data, a correction, a complaint, or a change
+ * they didn't make. The team Gmail account's address, or one that goes nowhere where it isn't set.
+ */
+export function teamEmailAddress(): string {
+  return teamGmailAddress() ?? UNSET_TEAM_EMAIL;
 }
 
 /**

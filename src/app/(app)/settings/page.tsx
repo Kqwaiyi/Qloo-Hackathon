@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { pendingEmailChangeText } from "@/components/email-change/messages";
+import { mailto } from "@/components/mailto";
 import { secondaryButton, successNotice, textLink } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import { COUNTRY_OPTIONS } from "@/config/countries";
@@ -23,7 +24,8 @@ export const metadata: Metadata = { title: "Settings" };
 /** Profile, Sign-in, Privacy and Danger. */
 export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await requireSignedInUser();
-  const [teamEmail, pendingEmailChange, params] = await Promise.all([getTeamEmail(), getPendingEmailChange(), searchParams]);
+  const teamEmail = getTeamEmail();
+  const [pendingEmailChange, params] = await Promise.all([getPendingEmailChange(), searchParams]);
   return (
     <>
       {params[EMAIL_CHANGED_PARAM] !== undefined && (
@@ -98,11 +100,6 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
       </Section>
     </>
   );
-}
-
-/** A link that opens an email to this address with this subject. */
-function mailto(address: string, subject: string): string {
-  return `mailto:${address}?subject=${encodeURIComponent(subject)}`;
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

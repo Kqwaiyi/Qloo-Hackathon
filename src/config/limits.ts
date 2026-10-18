@@ -16,6 +16,12 @@ export const PHOTO_CHECK_LIMIT = 20;
 /** How many of each kind of usage a user may have in the window. */
 export const USAGE_LIMITS: Record<UsageKind, number> = { outfit: OUTFIT_ALLOWANCE, photo_check: PHOTO_CHECK_LIMIT };
 
+/**
+ * Usage records are purged once they're this many days old: older than the longest calendar month,
+ * so the monthly cap still counts them. The Privacy Policy promises it.
+ */
+export const USAGE_RECORD_LIFETIME_DAYS = 35;
+
 // The app-wide caps, so the public demo can't run up costs whatever individual users do. They count
 // every user's Outfits together, from the same usage records.
 

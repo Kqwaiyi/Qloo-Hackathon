@@ -1,12 +1,12 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { NavLink } from "@/components/nav-link";
 import { APP_HOME, ROUTES } from "@/config/routes";
 import { deletionDateText } from "@/server/accounts/verification";
 import { getEmailVerification, requireSignedInUser } from "@/server/data/session";
 
 import { signOutAction } from "./actions";
-import { NavLink } from "./nav-link";
 import { VerifyEmailBanner } from "./verify-email-banner";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {

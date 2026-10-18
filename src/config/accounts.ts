@@ -59,6 +59,13 @@ export const PASSWORD_RESET_LINK_LIFETIME_SECONDS = 60 * 60;
 /** An account still unverified this many days after sign-up is deleted. */
 export const UNVERIFIED_ACCOUNT_LIFETIME_DAYS = 7;
 
+/**
+ * An account with no activity for this many months is deleted with everything in it, once a
+ * warning email has given this many days' notice. The Privacy Policy promises both.
+ */
+export const INACTIVE_ACCOUNT_LIFETIME_MONTHS = 12;
+export const INACTIVITY_WARNING_NOTICE_DAYS = 30;
+
 /** Sessions last 30 days and roll forward, refreshed at most once a day. */
 export const SESSION_EXPIRES_IN_SECONDS = 30 * 24 * 60 * 60;
 export const SESSION_UPDATE_AGE_SECONDS = 24 * 60 * 60;
