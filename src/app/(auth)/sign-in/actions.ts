@@ -4,16 +4,10 @@ import { redirect } from "next/navigation";
 
 import { APP_HOME } from "@/config/routes";
 import { getOperationContext } from "@/server/app/context";
-import { signIn, type SignInRefusal } from "@/server/operations/sign-in";
+import { signIn, type SignInInput, signInInputSchema } from "@/server/operations/sign-in";
 
-export interface SignInState {
-  identifier: string;
-  refusal?: SignInRefusal["refusal"];
-}
-
-export async function signInAction(_previous: SignInState, formData: FormData): Promise<SignInState> {
-  const identifier = String(formData.get("identifier") ?? "");
-  const result = await signIn(await getOperationContext(), { identifier, password: String(formData.get("password") ?? "") });
+export async function signInAction(input: SignInInput) {
+  const result = await signIn(await getOperationContext(), signInInputSchema.parse(input));
   if (result.ok) redirect(APP_HOME);
-  return { identifier, refusal: result.refusal };
+  return result;
 }

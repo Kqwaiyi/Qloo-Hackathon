@@ -5,8 +5,9 @@ import { redirect } from "next/navigation";
 import { textLink } from "@/components/ui";
 import { COUNTRY_OPTIONS } from "@/config/countries";
 import { APP_HOME, ROUTES } from "@/config/routes";
+import { getBotCheckSiteKey } from "@/server/data/bot-check";
 import { getSignedInUser } from "@/server/data/session";
-import { getBotCheckSiteKey, getSignUpGate } from "@/server/data/sign-up";
+import { getSignUpGate } from "@/server/data/sign-up";
 
 import { SignUpClosed } from "./sign-up-closed";
 import { SignUpFlow } from "./sign-up-flow";

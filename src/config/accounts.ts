@@ -46,9 +46,10 @@ export const DELETE_ACCOUNT_RATE_LIMIT = { window: 10, max: 3 } as const;
 
 /**
  * The Better Auth endpoints the Bot Check (Cloudflare Turnstile) guards, for our forms and direct
- * posts alike. A call with no request headers, such as a team script's, skips it.
+ * posts alike. A call with no request headers, such as a team script's, skips it, and so, for now,
+ * does signing in to the Demo Account.
  */
-export const BOT_CHECK_ENDPOINTS: readonly string[] = [AUTH_ENDPOINTS.signUp];
+export const BOT_CHECK_ENDPOINTS: readonly string[] = [AUTH_ENDPOINTS.signUp, AUTH_ENDPOINTS.signInEmail, AUTH_ENDPOINTS.signInUsername];
 
 /** How long the Bot Check waits for Cloudflare before letting the request go on anyway. */
 export const BOT_CHECK_TIMEOUT_MS = 5_000;

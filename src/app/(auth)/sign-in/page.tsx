@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { successNotice, textLink } from "@/components/ui";
 import { APP_HOME, PASSWORD_RESET_PARAM, ROUTES, SIGNED_OUT_EVERYWHERE_PARAM } from "@/config/routes";
+import { getBotCheckSiteKey } from "@/server/data/bot-check";
 import { getSignedInUser } from "@/server/data/session";
 
 import { SignInForm } from "./sign-in-form";
@@ -12,7 +13,7 @@ export const metadata: Metadata = { title: "Sign in" };
 
 export default async function SignInPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   if (await getSignedInUser()) redirect(APP_HOME);
-  const params = await searchParams;
+  const [params, botCheckSiteKey] = await Promise.all([searchParams, getBotCheckSiteKey()]);
   return (
     <>
       {params[PASSWORD_RESET_PARAM] !== undefined && (
@@ -26,7 +27,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
         </p>
       )}
       <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
-      <SignInForm />
+      <SignInForm botCheckSiteKey={botCheckSiteKey} />
       <p className="mt-4 text-sm">
         <Link href={ROUTES.forgotPassword} className={textLink}>
           Forgot your password?

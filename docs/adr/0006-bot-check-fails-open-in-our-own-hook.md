@@ -16,3 +16,4 @@ The provider is Cloudflare Turnstile: free with no usage cap, usually invisible,
 
 - Sign-in goes through `postToAuthEndpoint` like sign-up, instead of `auth.api`, so the hook (and Better Auth's per-IP rate limit) sees it.
 - During a provider outage, only the per-IP rate limits, the email caps and the app-wide Outfit caps stand between a bot and new accounts.
+- One more exception to "always refused", for now: signing in to the Demo Account, by its email or the username `demo`, skips the Bot Check, so nothing gets between the judges and the demo. Only the per-IP sign-in rate limit guards its password, which matters because it's the one account with no usage limit. Revisit before the app reaches anyone beyond the judges.

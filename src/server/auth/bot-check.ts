@@ -4,6 +4,7 @@ import { BOT_CHECK_ENDPOINTS, BOT_CHECK_TIMEOUT_MS } from "@/config/accounts";
 import { COPY } from "@/config/copy";
 
 import type { HookContext } from "./create-auth";
+import { signsInToDemoAccount } from "./demo-account";
 
 // The Bot Check: Cloudflare Turnstile, checked in our own `hooks.before` so that it fails open when
 // Cloudflare can't be reached (ADR-0006). A missing or rejected token is always refused.
@@ -59,13 +60,17 @@ type Verdict = { verdict: "pass" } | { verdict: "rejected" } | { verdict: "unrea
 /**
  * For the `hooks.before` on every endpoint: on the Bot Check's endpoints, refuses a request whose
  * token is missing or that Cloudflare rejects. When Cloudflare can't be reached the request goes
- * on, and the runtime log says so. Without options the Bot Check is off.
+ * on, and the runtime log says so. Without options the Bot Check is off. Signing in to the Demo
+ * Account, whose address is `demoAccountEmail`, skips it.
  */
-export function botCheckGuard(options: BotCheckOptions | undefined) {
+export function botCheckGuard(options: BotCheckOptions | undefined, demoAccountEmail: string) {
   return async function botCheck(ctx: HookContext): Promise<void> {
     if (!options || !BOT_CHECK_ENDPOINTS.includes(ctx.path)) return;
     // A server call without a request's headers, such as a team script's, comes from no browser.
     if (!ctx.headers) return;
+    // For now the judges skip it, so nothing gets between them and the demo. The per-IP sign-in
+    // rate limit still guards the Demo Account's password.
+    if (signsInToDemoAccount(ctx, demoAccountEmail)) return;
     const token = ctx.headers.get(BOT_CHECK_TOKEN_HEADER)?.trim();
     if (!token) throw botCheckFailed();
     const outcome = await verify(options, token, getIP(ctx.headers, ctx.context.options));

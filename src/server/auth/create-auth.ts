@@ -122,7 +122,7 @@ export function createAuth({
   const refuseWhatTheTeamManages = demoAccountGuard(demoAccountEmail);
 
   // First, so a bot learns nothing from the other checks.
-  const refuseBots = botCheckGuard(botCheck);
+  const refuseBots = botCheckGuard(botCheck, demoAccountEmail);
 
   const checkEmailChangeLink = emailChangeLinkCheck({ db, clock, emailSender, secret });
 

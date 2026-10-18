@@ -1,6 +1,7 @@
 import { BASE_ERROR_CODES } from "better-auth";
 import { APIError, getSessionFromCtx } from "better-auth/api";
 
+import { DEMO_ACCOUNT_PROFILE } from "@/config/accounts";
 import { COPY } from "@/config/copy";
 import { AUTH_ENDPOINTS } from "@/config/routes";
 import type { ProfileBody } from "@/server/accounts/profile";
@@ -40,8 +41,7 @@ const EDITABLE_PROFILE_FIELDS: ReadonlySet<string> = new Set(["stylePreference",
 export function demoAccountGuard(demoAccountEmail: string) {
   return async (ctx: HookContext): Promise<void> => {
     if (ctx.path === AUTH_ENDPOINTS.signUp) {
-      const email: unknown = ctx.body?.email;
-      if (ctx.headers && typeof email === "string" && email.toLowerCase() === demoAccountEmail) throw emailTaken();
+      if (ctx.headers && isDemoAccountEmail(ctx.body?.email, demoAccountEmail)) throw emailTaken();
       return;
     }
     if (!MANAGED_ENDPOINTS.has(ctx.path) && ctx.path !== AUTH_ENDPOINTS.updateUser) return;
@@ -50,6 +50,22 @@ export function demoAccountGuard(demoAccountEmail: string) {
     if (ctx.path === AUTH_ENDPOINTS.updateUser && !changesManagedField(ctx.body, session.user)) return;
     throw new APIError("FORBIDDEN", { code: MANAGED_BY_THE_TEAM, message: COPY.managedByTheTeam });
   };
+}
+
+/**
+ * Whether the request signs in to the Demo Account, by its email or its username, compared as Better
+ * Auth compares them: ignoring case.
+ */
+export function signsInToDemoAccount(ctx: HookContext, demoAccountEmail: string): boolean {
+  if (ctx.path === AUTH_ENDPOINTS.signInEmail) return isDemoAccountEmail(ctx.body?.email, demoAccountEmail);
+  if (ctx.path !== AUTH_ENDPOINTS.signInUsername) return false;
+  const username: unknown = ctx.body?.username;
+  return typeof username === "string" && username.toLowerCase() === DEMO_ACCOUNT_PROFILE.username;
+}
+
+/** Whether an address sent to Better Auth is the Demo Account's, ignoring case as Better Auth does. */
+function isDemoAccountEmail(email: unknown, demoAccountEmail: string): boolean {
+  return typeof email === "string" && email.toLowerCase() === demoAccountEmail;
 }
 
 /** Whether an update-user body would change a field outside the Demo Account's editable ones. */
