@@ -2,21 +2,14 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
 import { LocalDate } from "@/components/local-date";
-import { textLink } from "@/components/ui";
-import {
-  BUDGET_TIER_LABELS,
-  CATEGORY_LABELS,
-  hasBudgetTier,
-  PHOTO_TYPE_LABELS,
-  photoStyleText,
-  type PriceRangeUsd,
-} from "@/config/consultations";
+import { AiGeneratedBadge, OutfitCard, previewFrame } from "@/components/outfit-card";
+import { BUDGET_TIER_LABELS, hasBudgetTier, PHOTO_TYPE_LABELS, photoStyleText } from "@/config/consultations";
 import { COPY } from "@/config/copy";
 import { ROUTES } from "@/config/routes";
 import { addsToCurrentOutfits } from "@/config/stylings";
 import { getConsultation, getStylingStatus } from "@/server/data/consultations";
 import { getUsageSummary } from "@/server/data/usage";
-import type { ConsultationView, FailedStyling, OutfitView, PieceView, PreviewView } from "@/server/operations/consultations";
+import type { ConsultationView, FailedStyling, PreviewView } from "@/server/operations/consultations";
 
 import { Stepper } from "../stepper";
 import { AllowanceLine } from "./allowance-line";
@@ -113,7 +106,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           <ol aria-label="Outfits" className="mt-8 space-y-5">
             {consultation.outfits.map((outfit) => (
               <li key={outfit.id}>
-                <OutfitCard outfit={outfit} />
+                <OutfitCard outfit={outfit} preview={<OutfitPreview preview={outfit.preview} styleIconName={outfit.styleIconName} />} />
               </li>
             ))}
           </ol>
@@ -152,86 +145,24 @@ function failedStylingLine(failedStyling: FailedStyling, { budgetTier, photoStyl
   }
 }
 
-/** One Outfit, its Preview beside it. Its Style Icon is shown by name only, never with Qloo's image of them. */
-function OutfitCard({ outfit }: { outfit: OutfitView }) {
-  return (
-    <article className="overflow-hidden rounded-xl border border-stone-200 bg-white md:flex">
-      <OutfitPreview preview={outfit.preview} styleIconName={outfit.styleIconName} />
-      <div className="flex-1 p-5">
-        <h2 className="text-lg font-semibold">
-          Outfit {outfit.position} · Inspired by {outfit.styleIconName}
-        </h2>
-        {outfit.priceRange && <p className="text-sm text-stone-600">Whole Outfit about {usdRange(outfit.priceRange)}</p>}
-        {outfit.pieces.length > 0 && (
-          <ul aria-label="Pieces" className="mt-3">
-            {outfit.pieces.map((piece) => (
-              <li key={piece.category}>
-                <PieceRow piece={piece} styleIconName={outfit.styleIconName} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </article>
-  );
-}
-
 /** The Preview, always badged as AI-generated, or a placeholder saying why there's none. */
 function OutfitPreview({ preview, styleIconName }: { preview: PreviewView; styleIconName: string }) {
   if (preview.state !== "ready") {
     return (
-      <p className="flex min-h-32 items-center justify-center bg-stone-100 p-6 text-center text-sm text-stone-600 md:aspect-[3/4] md:w-64 md:shrink-0 md:self-start">
+      <p className="flex min-h-32 items-center justify-center bg-stone-100 p-6 text-center text-sm text-stone-600 @2xl:aspect-[3/4] @2xl:w-64 @2xl:shrink-0 @2xl:self-start">
         {preview.state === "refused" ? COPY.previewRefused : COPY.previewFailed}
       </p>
     );
   }
   return (
-    <div className="relative aspect-[3/4] bg-stone-100 md:w-64 md:shrink-0 md:self-start">
+    <div className={previewFrame}>
       {/* A signed link, valid for 1 hour from when this page rendered. */}
       <img
         src={preview.url}
         alt={`Preview of you in the Outfit inspired by ${styleIconName}`}
         className="absolute inset-0 h-full w-full object-cover"
       />
-      <span className="absolute top-2 left-2 rounded bg-black/55 px-1.5 py-0.5 text-xs font-semibold text-white">{COPY.aiGenerated}</span>
+      <AiGeneratedBadge />
     </div>
   );
-}
-
-/**
- * A Piece's row. A Brand Piece names its Brand, with the Brand's price range and a "Visit <Brand>"
- * link when it has them. The Hairstyle names its Style Icon instead, with no price or link: it
- * isn't something to buy.
- */
-function PieceRow({ piece, styleIconName }: { piece: PieceView; styleIconName: string }) {
-  const { brand } = piece;
-  return (
-    <div className="grid grid-cols-[80px_1fr] gap-x-3 gap-y-1 border-t border-stone-100 py-3 sm:grid-cols-[80px_1fr_auto]">
-      <div className="text-xs font-semibold tracking-wide text-stone-500 uppercase">{CATEGORY_LABELS[piece.category]}</div>
-      <div>
-        <div className="font-medium">{piece.item}</div>
-        <div className="text-sm text-stone-600">{brand ? brand.name : `Style Icon: ${styleIconName}`}</div>
-        <p className="mt-1 text-sm text-stone-600 italic">{piece.why}</p>
-      </div>
-      {brand && (brand.priceRange || brand.visitUrl) && (
-        <div className="col-start-2 text-sm sm:col-start-auto sm:text-right">
-          {brand.priceRange && <div className="font-medium">{usdRange(brand.priceRange)}</div>}
-          {brand.visitUrl && (
-            <a href={brand.visitUrl} target="_blank" rel="noopener noreferrer" className={textLink}>
-              Visit {brand.name}
-              {/* U+FE0E keeps the arrow a plain glyph, not an emoji. */}
-              <span aria-hidden="true"> {"↗︎"}</span>
-              <span className="sr-only"> (opens in a new tab)</span>
-            </a>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** A price range in whole US dollars, such as "$20–$120". */
-function usdRange({ min, max }: PriceRangeUsd): string {
-  const usd = (amount: number) => `$${Math.round(amount).toLocaleString("en-US")}`;
-  return min === max ? usd(min) : `${usd(min)}–${usd(max)}`;
 }

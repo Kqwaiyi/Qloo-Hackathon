@@ -49,6 +49,25 @@ npm run team:correct-birth-date -- someone@example.com 2001-04-23
 
 A Styling still running is stopped either way. From outside Vercel the script usually can't reach its Workflow run to cancel it, so it says so and carries on: the run's steps find their Styling gone and save nothing.
 
+## Landing page samples
+
+The landing page walks visitors through three frozen Consultations, one of each Photo Type: a Full-Body Photo for the walkthrough, then a Face Photo and a Body-Only Photo. Their text ships with the page in [src/server/landing-samples.ts](src/server/landing-samples.ts). Their images stay in the private Blob store, never in the repo, and the page links them for 1 hour each time it renders, so it never calls Qloo or the AI. Until they're captured, the samples are placeholders shown with plain figures. Local development shows those figures too, even after the real samples ship, since its Blob folder doesn't hold their images.
+
+To capture a sample, with the Pixabay photos from ticket 05:
+
+1. Sign in to the Demo Account in production and run a Consultation with the photo. Between them, the Face Photo and Body-Only Photo should cover the Style Preference the Full-Body Photo's doesn't, so change the Demo Account's Style Preference in Settings as you go.
+2. Check that its first Outfit has a Preview that looks right: the page shows that Outfit. For the Full-Body Photo, pick one whose first Outfit has a separate Top and Bottom, since the walkthrough lists the Brands Qloo picked from its Pieces, and a One-Piece leaves out the Bottom Brand. Copy the Consultation's ID from the end of its page's address, `/consultations/<id>`.
+3. With production's `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN` set, as for the team scripts above, run:
+
+   ```bash
+   npm run team:export-landing-sample -- <the Demo Account's email> <id>
+   ```
+
+   It refuses a Consultation that isn't the named account's, so a mistyped ID can't put another user's photo on the page: name the Demo Account. It copies the photo and the first Outfit's Preview to `landing/<id>/` in the Blob store, apart from the Consultation, which the Demo Account can then delete. It writes the Photo Style, the top ranked Style Icons (as many as `LANDING_STYLE_ICONS` in [src/config/landing.ts](src/config/landing.ts)), and the first Outfit's Brands and Pieces into `src/server/landing-samples.ts`, in the place for the Photo Type.
+4. Check the diff, then commit and deploy it.
+
+A replaced sample's old copies stay under `landing/<its id>/`: delete them in the Vercel dashboard's Blob browser once the new sample is live.
+
 ## Database changes
 
 Edit `src/server/db/schema.ts`, then run `npm run db:generate` to write a migration into `drizzle/`. `npm run build` applies migrations to `DATABASE_URL` before building, so each Vercel deploy migrates its own database.

@@ -18,7 +18,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "check:photo-style-tags": "tsx --env-file=.env.local scripts/check-photo-style-tags.ts",
     "team:delete-account": "tsx scripts/delete-account.ts",
-    "team:correct-birth-date": "tsx scripts/correct-birth-date.ts"
+    "team:correct-birth-date": "tsx scripts/correct-birth-date.ts",
+    "team:export-landing-sample": "tsx scripts/export-landing-sample.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.10",

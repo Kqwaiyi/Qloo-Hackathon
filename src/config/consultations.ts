@@ -120,6 +120,16 @@ export function hasBudgetTier(photoType: PhotoType): boolean {
 export const AGE_GROUPS = ["18_24", "25_29", "30_34", "35_44", "45_54", "55_64", "65_plus"] as const;
 export type AgeGroup = (typeof AGE_GROUPS)[number];
 
+export const AGE_GROUP_LABELS: Record<AgeGroup, string> = {
+  "18_24": "18–24",
+  "25_29": "25–29",
+  "30_34": "30–34",
+  "35_44": "35–44",
+  "45_54": "45–54",
+  "55_64": "55–64",
+  "65_plus": "65+",
+};
+
 /** The youngest age in each group. */
 export const AGE_GROUP_FLOORS: Record<AgeGroup, number> = {
   "18_24": 18,

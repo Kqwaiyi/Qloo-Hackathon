@@ -31,6 +31,37 @@ export function qlooPerson(entityId: string, name: string, affinity: number) {
   return { entity_id: entityId, name, type: "urn:entity", subtype: "urn:entity:person", properties: {}, query: { affinity } };
 }
 
+/** A Qloo Brand entity, as Qloo sends it, for everyone unless `targetGender` says otherwise. */
+export function qlooBrand(
+  entityId: string,
+  name: string,
+  {
+    categories,
+    affinity,
+    price,
+    officialSite = null,
+    targetGender = ["Male", "Female"],
+  }: { categories: string[]; affinity: number; price?: [number, number]; officialSite?: string | null; targetGender?: string[] },
+) {
+  return {
+    entity_id: entityId,
+    name,
+    type: "urn:entity",
+    subtype: "urn:entity:brand",
+    properties: {
+      target_gender: targetGender,
+      price_range_usd_min: price?.[0] ?? null,
+      price_range_usd_max: price?.[1] ?? null,
+      official_site: officialSite,
+    },
+    tags: [
+      { id: "urn:tag:genre:brand:fashion", type: "urn:tag:genre:brand" },
+      ...categories.map((category) => ({ id: `urn:tag:product_category:qloo:${category}`, type: "urn:tag:product_category:qloo" })),
+    ],
+    query: { affinity },
+  };
+}
+
 /** A successful Insights response holding `entities`, as Qloo sends it, with any `headers`. */
 export function qlooResponse(entities: readonly object[], headers?: HeadersInit): Response {
   return Response.json({ success: true, results: { entities } }, { headers });

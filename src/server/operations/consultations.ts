@@ -220,6 +220,9 @@ export interface OutfitView {
   pieces: PieceView[];
 }
 
+/** What an Outfit's card shows beside its Preview. */
+export type OutfitCardContent = Pick<OutfitView, "position" | "styleIconName" | "priceRange" | "pieces">;
+
 /** The Outfit's Preview: a signed link to it, valid for 1 hour from now, or why there's none. */
 export type PreviewView = { state: "ready"; url: string } | { state: "refused" | "failed" };
 
@@ -239,6 +242,46 @@ export interface BrandView {
   priceRange: PriceRangeUsd | null;
   /** Where "Visit <Brand>" goes: its official site when that's an https URL, or null for no link. */
   visitUrl: string | null;
+}
+
+/** The columns of a Piece that its row shows. */
+export const pieceViewColumns = {
+  category: piece.category,
+  item: piece.item,
+  why: piece.why,
+  brandName: piece.brandName,
+  brandOfficialSite: piece.brandOfficialSite,
+  brandPriceUsdMin: piece.brandPriceUsdMin,
+  brandPriceUsdMax: piece.brandPriceUsdMax,
+};
+
+/** A Piece's row, from its `pieceViewColumns`. */
+export function pieceView({
+  category,
+  item,
+  why,
+  brandName,
+  brandOfficialSite,
+  brandPriceUsdMin,
+  brandPriceUsdMax,
+}: {
+  category: PieceCategory;
+  item: string;
+  why: string;
+  brandName: string | null;
+  brandOfficialSite: string | null;
+  brandPriceUsdMin: number | null;
+  brandPriceUsdMax: number | null;
+}): PieceView {
+  return {
+    category,
+    item,
+    why,
+    brand:
+      brandName === null
+        ? null
+        : { name: brandName, priceRange: brandPriceRange(brandPriceUsdMin, brandPriceUsdMax), visitUrl: visitUrl(brandOfficialSite) },
+  };
 }
 
 /** One of the signed-in user's own Consultations, or null for anyone else's or one that doesn't exist. */
@@ -270,16 +313,7 @@ export async function readConsultation(
     outfitRows.length === 0
       ? []
       : await ctx.db
-          .select({
-            outfitId: piece.outfitId,
-            category: piece.category,
-            item: piece.item,
-            why: piece.why,
-            brandName: piece.brandName,
-            brandOfficialSite: piece.brandOfficialSite,
-            brandPriceUsdMin: piece.brandPriceUsdMin,
-            brandPriceUsdMax: piece.brandPriceUsdMax,
-          })
+          .select({ outfitId: piece.outfitId, ...pieceViewColumns })
           .from(piece)
           .where(
             inArray(
@@ -292,15 +326,7 @@ export async function readConsultation(
       const pieces = pieceRows
         .filter((pieceRow) => pieceRow.outfitId === id)
         .toSorted(byCategoryOrder)
-        .map(({ category, item, why, brandName, brandOfficialSite, brandPriceUsdMin, brandPriceUsdMax }) => ({
-          category,
-          item,
-          why,
-          brand:
-            brandName === null
-              ? null
-              : { name: brandName, priceRange: brandPriceRange(brandPriceUsdMin, brandPriceUsdMax), visitUrl: visitUrl(brandOfficialSite) },
-        }));
+        .map(pieceView);
       return {
         id,
         position,
@@ -403,7 +429,7 @@ export async function deleteConsultation(
 }
 
 /** When a signed link made now stops working. */
-function signedLinkValidUntil(clock: Clock): Date {
+export function signedLinkValidUntil(clock: Clock): Date {
   return new Date(clock.now().getTime() + SIGNED_LINK_LIFETIME_SECONDS * 1000);
 }
 

@@ -22,7 +22,7 @@ import {
 } from "@/server/operations/stylings";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { readUsageSummary } from "@/server/operations/usage";
-import { qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
+import { qlooBrand, qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
 import { recordUsage } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
@@ -2351,37 +2351,6 @@ it("starts no Styling for a rejected photo", async () => {
     expect.objectContaining({ userId: (await readSignedInUser(harness.context(browser)))!.id }),
   );
 });
-
-/** A Qloo Brand entity, as Qloo sends it, for everyone unless `targetGender` says otherwise. */
-function qlooBrand(
-  entityId: string,
-  name: string,
-  {
-    categories,
-    affinity,
-    price,
-    officialSite = null,
-    targetGender = ["Male", "Female"],
-  }: { categories: string[]; affinity: number; price?: [number, number]; officialSite?: string | null; targetGender?: string[] },
-) {
-  return {
-    entity_id: entityId,
-    name,
-    type: "urn:entity",
-    subtype: "urn:entity:brand",
-    properties: {
-      target_gender: targetGender,
-      price_range_usd_min: price?.[0] ?? null,
-      price_range_usd_max: price?.[1] ?? null,
-      official_site: officialSite,
-    },
-    tags: [
-      { id: "urn:tag:genre:brand:fashion", type: "urn:tag:genre:brand" },
-      ...categories.map((category) => ({ id: `urn:tag:product_category:qloo:${category}`, type: "urn:tag:product_category:qloo" })),
-    ],
-    query: { affinity },
-  };
-}
 
 /**
  * Answers each person call with the people for its `filter.gender`, or no one, and each Brand call

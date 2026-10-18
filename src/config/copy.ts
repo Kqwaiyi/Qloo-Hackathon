@@ -55,6 +55,9 @@ export const COPY = {
   faceGuide: "keep your face above this line",
   takingLonger: "This is taking longer than usual.",
   aiGenerated: "AI-generated",
+  /** Beside every sample person's photo on the landing page, with `aiGeneratedPersonAlt` as its alt text. */
+  aiGeneratedPerson: "AI-generated person: not a real person.",
+  aiGeneratedPersonAlt: "AI-generated photo of a fictional person",
   previewRefused: "No Preview for this Outfit: the image model declined to make one",
   previewFailed: "No Preview for this Outfit: the image model couldn't make one",
   everyPreviewRefused: "The image model declined this photo. A different photo may work better.",
