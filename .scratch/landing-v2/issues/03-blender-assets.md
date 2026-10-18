@@ -8,7 +8,7 @@
 
 **Spec:** `landingpagev2/docs/landingv2plan.md` section 4.
 
-- [ ] The Figure: faceless mannequin, ceramic and graphite; anchor empties for Hairstyle, Top, Bottom and Shoes.
-- [ ] The Drape: a procedural satin ribbon whose loop is seamless by construction, light and dark.
-- [ ] Review stills approved by the team before the final renders.
-- [ ] Final renders: 48-frame turntable (and 24 for phones), `anchors.json`, the dark Figure loop and both Drape loops as MP4 and WebM, posters; `public/landing/` within 12 MB.
+- [x] The Figure: faceless mannequin, ceramic and graphite; anchor empties for Hairstyle, Top, Bottom and Shoes.
+- [x] The Drape: a procedural satin ribbon whose loop is seamless by construction, light and dark.
+- [x] Review stills approved by the team before the final renders (approved as is, 2026-10-18).
+- [x] Final renders: 48-frame turntable (and 24 for phones), `anchors.json`, the dark Figure loop and both Drape loops as MP4 and WebM, posters; `public/landing/` within 12 MB.
