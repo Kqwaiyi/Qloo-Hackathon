@@ -125,21 +125,11 @@ function AccountStep({
     event.preventDefault();
     setProblem(null);
     startTransition(async () => {
-      const botCheckToken = await botCheck.token();
       // On success the action redirects into the app.
-      const result = await signUpAction({
-        birthDate,
-        username,
-        email,
-        password,
-        stylePreference,
-        countryCode,
-        acceptedTerms,
-        botCheckToken,
-      });
+      const result = await botCheck.send((botCheckToken) =>
+        signUpAction({ birthDate, username, email, password, stylePreference, countryCode, acceptedTerms, botCheckToken }),
+      );
       if (result.ok) return;
-      // Even a refusal for another reason has used the token up.
-      botCheck.reset();
       if (result.refusal === "under-18" || result.refusal === "unsupported-region") onClosed(result.refusal);
       else setProblem(result);
     });

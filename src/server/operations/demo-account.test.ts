@@ -101,7 +101,7 @@ describe("the team creating the Demo Account", () => {
     const fresh = await createTestHarness();
     await createDemoAccount(teamContext(fresh), { password: DEMO_PASSWORD });
 
-    await requestPasswordReset(fresh.context(new TestBrowser()), DEMO_EMAIL);
+    await requestPasswordReset(fresh.context(new TestBrowser()), { email: DEMO_EMAIL });
     const token = new URL(fresh.linkEmailedTo(DEMO_EMAIL)).pathname.split("/").at(-1)!;
     expect(await resetPassword(fresh.context(new TestBrowser()), { token, newPassword: "the team's new password" })).toEqual({ ok: true });
 

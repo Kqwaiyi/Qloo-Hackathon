@@ -101,7 +101,7 @@ describe("deleting the account in Settings", () => {
 
   it("deletes the password reset links still waiting, so one sent before can't be used", async () => {
     const browser = await signedInUser({ email: "bo@example.com" });
-    await requestPasswordReset(harness.context(new TestBrowser()), "bo@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "bo@example.com" });
     const token = new URL(harness.linkEmailedTo("bo@example.com")).pathname.split("/").at(-1)!;
 
     await deleteAccount(harness.context(browser), { password: PASSWORD });

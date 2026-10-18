@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 import { BOT_CHECK_TIMEOUT_MS, SIGN_IN_RATE_LIMIT } from "@/config/accounts";
 import { user } from "@/server/db/schema";
+import { requestPasswordReset } from "@/server/operations/password-reset";
 import { readSignedInUser } from "@/server/operations/session";
 import { signIn } from "@/server/operations/sign-in";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
@@ -111,7 +112,7 @@ describe("the Bot Check on sign-up by our form", () => {
     const pending = signUp(harness.context(new TestBrowser()), signUpInput({ email: "slow@example.com" })).finally(() => {
       settled = true;
     });
-    await vi.waitFor(() => expect(harness.turnstile.requests).toHaveLength(1));
+    await untilCloudflareIsAsked();
     await vi.advanceTimersByTimeAsync(BOT_CHECK_TIMEOUT_MS - 1);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
@@ -171,7 +172,7 @@ describe("the Bot Check on Better Auth's sign-up endpoint, called directly", () 
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
     const pending = harness.postToAuth("/sign-up/email", signUpBody({ email: "timeout@example.com" }), new TestBrowser());
-    await vi.waitFor(() => expect(harness.turnstile.requests).toHaveLength(1));
+    await untilCloudflareIsAsked();
     await vi.advanceTimersByTimeAsync(BOT_CHECK_TIMEOUT_MS);
 
     expect((await pending).status).toBe(200);
@@ -277,7 +278,7 @@ describe("the Bot Check on sign-in by our form", () => {
     const pending = signIn(harness.context(browser), { identifier, password: MINA.password }).finally(() => {
       settled = true;
     });
-    await vi.waitFor(() => expect(harness.turnstile.requests).toHaveLength(1));
+    await untilCloudflareIsAsked();
     await vi.advanceTimersByTimeAsync(BOT_CHECK_TIMEOUT_MS - 1);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
@@ -344,7 +345,7 @@ describe("the Bot Check on Better Auth's sign-in endpoints, called directly", ()
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
     const pending = harness.postToAuth(path, body, new TestBrowser());
-    await vi.waitFor(() => expect(harness.turnstile.requests).toHaveLength(1));
+    await untilCloudflareIsAsked();
     await vi.advanceTimersByTimeAsync(BOT_CHECK_TIMEOUT_MS);
 
     expect((await pending).status).toBe(200);
@@ -412,6 +413,16 @@ describe("the Demo Account at sign-in", () => {
     ]);
   });
 
+  it("skips it at sign-in only: asking for a reset link to its address still needs a token", async () => {
+    const browser = new TestBrowser();
+    browser.botCheckToken = undefined;
+
+    const result = await requestPasswordReset(demo.context(browser), { email: DEMO_ACCOUNT.email });
+
+    expect(result).toEqual({ ok: false, refusal: "bot-check-failed" });
+    expect(resetEmailsTo(DEMO_ACCOUNT.email, demo)).toEqual([]);
+  });
+
   describe("with Better Auth's rate limits on", () => {
     let limited: TestHarness;
 
@@ -447,6 +458,197 @@ describe("the Demo Account at sign-in", () => {
   });
 });
 
+describe("the Bot Check on asking for a password reset by our form", () => {
+  it("emails the reset link with the form's good token, sending Cloudflare that token and the visitor's IP address", async () => {
+    const email = await newAccount();
+    const browser = new TestBrowser({ ip: "203.0.113.52" });
+    browser.botCheckToken = undefined;
+
+    const result = await requestPasswordReset(harness.context(browser), { email, botCheckToken: "form-token" });
+
+    expect(result).toEqual({ ok: true });
+    expect(resetEmailsTo(email)).toHaveLength(1);
+    expect(harness.turnstile.requests).toEqual([{ secret: TEST_BOT_CHECK_SECRET, token: "form-token", ip: "203.0.113.52" }]);
+  });
+
+  it("refuses a token Cloudflare rejects, sending no email", async () => {
+    const email = await newAccount();
+    harness.turnstile.answer = { reject: "timeout-or-duplicate" };
+
+    const result = await requestPasswordReset(harness.context(new TestBrowser()), { email });
+
+    expect(result).toEqual({ ok: false, refusal: "bot-check-failed" });
+    expect(resetEmailsTo(email)).toEqual([]);
+  });
+
+  it("refuses a form sent without a token, without asking Cloudflare or sending an email", async () => {
+    const email = await newAccount();
+    const browser = new TestBrowser();
+    browser.botCheckToken = undefined;
+
+    const none = await requestPasswordReset(harness.context(browser), { email });
+    const empty = await requestPasswordReset(harness.context(browser), { email, botCheckToken: "" });
+
+    expect([none, empty]).toEqual([
+      { ok: false, refusal: "bot-check-failed" },
+      { ok: false, refusal: "bot-check-failed" },
+    ]);
+    expect(resetEmailsTo(email)).toEqual([]);
+    expect(harness.turnstile.requests).toEqual([]);
+  });
+
+  it("gives an address with an account and one without the same answer, with a good token", async () => {
+    const email = await newAccount();
+
+    const known = await requestPasswordReset(harness.context(new TestBrowser()), { email });
+    const unknown = await requestPasswordReset(harness.context(new TestBrowser()), { email: "no.account@example.com" });
+
+    expect(known).toEqual({ ok: true });
+    expect(unknown).toEqual(known);
+    expect(resetEmailsTo(email)).toHaveLength(1);
+    expect(harness.emails.to("no.account@example.com")).toEqual([]);
+  });
+
+  it.each([
+    { token: "rejected", botCheckToken: "junk" },
+    { token: "missing", botCheckToken: "" },
+  ])("gives an address with an account and one without the same refusal, with a $token token", async ({ botCheckToken }) => {
+    const email = await newAccount();
+    harness.turnstile.answer = { reject: "invalid-input-response" };
+
+    const known = await requestPasswordReset(harness.context(new TestBrowser()), { email, botCheckToken });
+    const unknown = await requestPasswordReset(harness.context(new TestBrowser()), { email: "no.account@example.com", botCheckToken });
+
+    expect(known).toEqual({ ok: false, refusal: "bot-check-failed" });
+    expect(unknown).toEqual(known);
+  });
+
+  it("emails the link when Cloudflare can't be reached, and logs it", async () => {
+    const log = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const email = await newAccount();
+    harness.turnstile.answer = "unreachable";
+
+    const result = await requestPasswordReset(harness.context(new TestBrowser()), { email });
+
+    expect(result).toEqual({ ok: true });
+    expect(resetEmailsTo(email)).toHaveLength(1);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0]!.join(" ")).toContain("Bot Check let a request to /request-password-reset through: network error");
+  });
+
+  it("emails the link when Cloudflare answers with a server error, and logs it", async () => {
+    const log = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const email = await newAccount();
+    harness.turnstile.answer = "server-error";
+
+    const result = await requestPasswordReset(harness.context(new TestBrowser()), { email });
+
+    expect(result).toEqual({ ok: true });
+    expect(resetEmailsTo(email)).toHaveLength(1);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0]!.join(" ")).toContain("Bot Check let a request to /request-password-reset through: Cloudflare answered 500");
+  });
+
+  it("waits up to 5 seconds for Cloudflare, then emails the link and logs it", async () => {
+    const log = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const email = await newAccount();
+    harness.turnstile.answer = "slow";
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let settled = false;
+
+    const pending = requestPasswordReset(harness.context(new TestBrowser()), { email }).finally(() => {
+      settled = true;
+    });
+    await untilCloudflareIsAsked();
+    await vi.advanceTimersByTimeAsync(BOT_CHECK_TIMEOUT_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(await pending).toEqual({ ok: true });
+    expect(resetEmailsTo(email)).toHaveLength(1);
+    expect(log.mock.calls[0]!.join(" ")).toContain("Bot Check let a request to /request-password-reset through: no answer within 5 seconds");
+  });
+});
+
+describe("the Bot Check on Better Auth's request-password-reset endpoint, called directly", () => {
+  it("emails the link to a script with a good token, sending Cloudflare its token and IP address", async () => {
+    const email = await newAccount();
+    const browser = new TestBrowser({ ip: "198.51.100.72" });
+    browser.botCheckToken = "direct-token";
+
+    const response = await harness.postToAuth("/request-password-reset", { email }, browser);
+
+    expect(response.status).toBe(200);
+    expect(resetEmailsTo(email)).toHaveLength(1);
+    expect(harness.turnstile.requests).toEqual([{ secret: TEST_BOT_CHECK_SECRET, token: "direct-token", ip: "198.51.100.72" }]);
+  });
+
+  it("refuses a post without a token, without asking Cloudflare or sending an email", async () => {
+    const email = await newAccount();
+    const browser = new TestBrowser();
+    browser.botCheckToken = undefined;
+
+    const response = await harness.postToAuth("/request-password-reset", { email }, browser);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: "BOT_CHECK_FAILED" });
+    expect(resetEmailsTo(email)).toEqual([]);
+    expect(harness.turnstile.requests).toEqual([]);
+  });
+
+  it("refuses a post with a token Cloudflare rejects, sending no email", async () => {
+    const email = await newAccount();
+    harness.turnstile.answer = { reject: "invalid-input-response" };
+
+    const response = await harness.postToAuth("/request-password-reset", { email }, new TestBrowser());
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: "BOT_CHECK_FAILED" });
+    expect(resetEmailsTo(email)).toEqual([]);
+  });
+
+  it.each([
+    { token: "good", answer: "pass" as const },
+    { token: "rejected", answer: { reject: "invalid-input-response" } as const },
+  ])("answers an address with an account and one without the same, with a $token token", async ({ answer }) => {
+    const email = await newAccount();
+    harness.turnstile.answer = answer;
+
+    const known = await harness.postToAuth("/request-password-reset", { email }, new TestBrowser());
+    const unknown = await harness.postToAuth("/request-password-reset", { email: "no.account@example.com" }, new TestBrowser());
+
+    expect(unknown.status).toBe(known.status);
+    expect(await unknown.json()).toEqual(await known.json());
+  });
+
+  it("lets the post through when Cloudflare can't be reached, and logs it", async () => {
+    const log = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const email = await newAccount();
+    harness.turnstile.answer = "unreachable";
+
+    const response = await harness.postToAuth("/request-password-reset", { email }, new TestBrowser());
+
+    expect(response.status).toBe(200);
+    expect(resetEmailsTo(email)).toHaveLength(1);
+    expect(log.mock.calls[0]!.join(" ")).toContain("Bot Check let a request to /request-password-reset through: network error");
+  });
+
+  it("lets the post through when Cloudflare hasn't answered within 5 seconds, and logs it", async () => {
+    const log = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const email = await newAccount();
+    harness.turnstile.answer = "slow";
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+    const pending = harness.postToAuth("/request-password-reset", { email }, new TestBrowser());
+    await untilCloudflareIsAsked();
+    await vi.advanceTimersByTimeAsync(BOT_CHECK_TIMEOUT_MS);
+
+    expect((await pending).status).toBe(200);
+    expect(resetEmailsTo(email)).toHaveLength(1);
+    expect(log.mock.calls[0]!.join(" ")).toContain("Bot Check let a request to /request-password-reset through: no answer within 5 seconds");
+  });
+});
+
 describe("the Bot Check's other rules", () => {
   it("skips a team script's call, which has no request headers", async () => {
     const fresh = await createTestHarness();
@@ -477,12 +679,42 @@ describe("the Bot Check's other rules", () => {
 
     const ours = await signUp(unconfigured.context(browser), signUpInput({ email: "off@example.com" }));
     const direct = await unconfigured.postToAuth("/sign-up/email", signUpBody({ email: "off.direct@example.com" }), browser);
+    const reset = await requestPasswordReset(unconfigured.context(browser), { email: "off@example.com" });
+    const directReset = await unconfigured.postToAuth("/request-password-reset", { email: "off.direct@example.com" }, browser);
 
     expect(ours).toEqual({ ok: true });
     expect(direct.status).toBe(200);
+    expect(reset).toEqual({ ok: true });
+    expect(directReset.status).toBe(200);
+    expect(resetEmailsTo("off@example.com", unconfigured)).toHaveLength(1);
+    expect(resetEmailsTo("off.direct@example.com", unconfigured)).toHaveLength(1);
     expect(unconfigured.turnstile.requests).toEqual([]);
   });
 });
+
+/**
+ * Waits until the Bot Check has asked Cloudflare. Under fake timers, `vi.waitFor` moves time on by its
+ * interval at every check, which would count towards the Bot Check's 5 seconds, so this one doesn't.
+ */
+async function untilCloudflareIsAsked(): Promise<void> {
+  await vi.waitFor(() => expect(harness.turnstile.requests).toHaveLength(1), { interval: 0 });
+}
+
+/**
+ * Signs someone up through our form, as a visitor would, and gives their address. The sign-up's own
+ * Bot Check is forgotten, so a test sees only what it asks Cloudflare.
+ */
+async function newAccount(): Promise<string> {
+  const input = signUpInput();
+  expect(await signUp(harness.context(new TestBrowser()), input)).toEqual({ ok: true });
+  harness.turnstile.requests.length = 0;
+  return input.email;
+}
+
+/** The reset emails sent to this address, oldest first. */
+function resetEmailsTo(address: string, sentBy: TestHarness = harness) {
+  return sentBy.emails.to(address).filter((email) => email.subject === "Reset your Outfit Recommender password");
+}
 
 async function accountExists(email: string): Promise<boolean> {
   return (await harness.db.select({ id: user.id }).from(user).where(eq(user.email, email))).length > 0;

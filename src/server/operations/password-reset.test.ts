@@ -27,8 +27,8 @@ describe("asking for a reset link", () => {
   it("gives the same reply whether or not an account uses the address, emailing only the account", async () => {
     await signUp(harness.context(new TestBrowser()), signUpInput({ email: "ava@example.com" }));
 
-    const known = await requestPasswordReset(harness.context(new TestBrowser()), "ava@example.com");
-    const unknown = await requestPasswordReset(harness.context(new TestBrowser()), "nobody@example.com");
+    const known = await requestPasswordReset(harness.context(new TestBrowser()), { email: "ava@example.com" });
+    const unknown = await requestPasswordReset(harness.context(new TestBrowser()), { email: "nobody@example.com" });
 
     expect(known).toEqual({ ok: true });
     expect(unknown).toEqual(known);
@@ -39,7 +39,7 @@ describe("asking for a reset link", () => {
   it("emails a link to the reset page that lasts 1 hour, saying nothing changes if the user didn't ask", async () => {
     await signUp(harness.context(new TestBrowser()), signUpInput({ email: "ben@example.com" }));
 
-    await requestPasswordReset(harness.context(new TestBrowser()), "ben@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "ben@example.com" });
 
     const [reset] = resetEmailsTo("ben@example.com");
     expect(reset!.text).toContain("The link works for 1 hour.");
@@ -53,12 +53,12 @@ describe("asking for a reset link", () => {
     await signUp(harness.context(new TestBrowser()), signUpInput({ email: "jo@example.com" }));
 
     for (let request = 0; request < 4; request += 1) {
-      expect(await requestPasswordReset(harness.context(new TestBrowser()), "jo@example.com")).toEqual({ ok: true });
+      expect(await requestPasswordReset(harness.context(new TestBrowser()), { email: "jo@example.com" })).toEqual({ ok: true });
     }
 
     expect(resetEmailsTo("jo@example.com")).toHaveLength(3);
     harness.clock.set("2026-10-17T12:00:01Z");
-    await requestPasswordReset(harness.context(new TestBrowser()), "jo@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "jo@example.com" });
     expect(resetEmailsTo("jo@example.com")).toHaveLength(4);
   });
 
@@ -69,8 +69,8 @@ describe("asking for a reset link", () => {
       await harness.emailSender.send({ kind: "password-changed", userId: null, to: `x${index}@example.com`, subject: "S", text: "T" });
     }
 
-    const known = await requestPasswordReset(harness.context(new TestBrowser()), "kai@example.com");
-    const unknown = await requestPasswordReset(harness.context(new TestBrowser()), "nobody@example.com");
+    const known = await requestPasswordReset(harness.context(new TestBrowser()), { email: "kai@example.com" });
+    const unknown = await requestPasswordReset(harness.context(new TestBrowser()), { email: "nobody@example.com" });
 
     expect(known).toEqual({ ok: false, refusal: "emails-paused" });
     expect(unknown).toEqual(known);
@@ -78,17 +78,17 @@ describe("asking for a reset link", () => {
   });
 
   it("refuses a malformed address", async () => {
-    expect(await requestPasswordReset(harness.context(new TestBrowser()), "not an address")).toEqual({ ok: false, refusal: "invalid-email" });
+    expect(await requestPasswordReset(harness.context(new TestBrowser()), { email: "not an address" })).toEqual({ ok: false, refusal: "invalid-email" });
   });
 
   it("asks a browser sending too many requests to wait, whatever the address", async () => {
     const limited = await createTestHarness({ rateLimit: true });
     const browser = new TestBrowser({ ip: "203.0.113.9" });
     for (let request = 0; request < 3; request += 1) {
-      expect(await requestPasswordReset(limited.context(browser), `someone${request}@example.com`)).toEqual({ ok: true });
+      expect(await requestPasswordReset(limited.context(browser), { email: `someone${request}@example.com` })).toEqual({ ok: true });
     }
 
-    const fourth = await requestPasswordReset(limited.context(browser), "someone3@example.com");
+    const fourth = await requestPasswordReset(limited.context(browser), { email: "someone3@example.com" });
 
     expect(fourth).toEqual({ ok: false, refusal: "rate-limited" });
   });
@@ -99,7 +99,7 @@ describe("the reset link", () => {
   it("still works just before 1 hour is up", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     await signUp(harness.context(new TestBrowser()), signUpInput({ email: "hal@example.com" }));
-    await requestPasswordReset(harness.context(new TestBrowser()), "hal@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "hal@example.com" });
     vi.setSystemTime(Date.now() + HOUR_MS - 60_000);
 
     const result = await resetPassword(harness.context(new TestBrowser()), {
@@ -113,7 +113,7 @@ describe("the reset link", () => {
   it("has expired after 1 hour: it lands on the reset page with an error, and can't reset", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     await signUp(harness.context(new TestBrowser()), signUpInput({ username: "Ivy.Cole", email: "ivy@example.com" }));
-    await requestPasswordReset(harness.context(new TestBrowser()), "ivy@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "ivy@example.com" });
     const token = new URL(harness.linkEmailedTo("ivy@example.com")).pathname.split("/").at(-1)!;
     vi.setSystemTime(Date.now() + HOUR_MS + 60_000);
 
@@ -129,7 +129,7 @@ describe("the reset link", () => {
 describe("completing a reset", () => {
   it("sets the new password, so the user signs in with it and no longer with the old one", async () => {
     await signUp(harness.context(new TestBrowser()), signUpInput({ username: "Cleo.Ray", email: "cleo@example.com" }));
-    await requestPasswordReset(harness.context(new TestBrowser()), "cleo@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "cleo@example.com" });
     const token = await openResetLink("cleo@example.com");
 
     const result = await resetPassword(harness.context(new TestBrowser()), { token, newPassword: "the new password" });
@@ -143,7 +143,7 @@ describe("completing a reset", () => {
 
   it("takes a new password of 8 to 128 characters, keeping the link for another try after one that isn't", async () => {
     await signUp(harness.context(new TestBrowser()), signUpInput({ username: "Lee.Park", email: "lee@example.com" }));
-    await requestPasswordReset(harness.context(new TestBrowser()), "lee@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "lee@example.com" });
     const token = await openResetLink("lee@example.com");
 
     const tooShort = await resetPassword(harness.context(new TestBrowser()), { token, newPassword: "7 chars" });
@@ -161,7 +161,7 @@ describe("completing a reset", () => {
     const phone = new TestBrowser();
     await signUp(harness.context(laptop), signUpInput({ username: "Dev.Shah", email: "dev@example.com" }));
     await signIn(harness.context(phone), { identifier: "Dev.Shah", password: "the old password" });
-    await requestPasswordReset(harness.context(phone), "dev@example.com");
+    await requestPasswordReset(harness.context(phone), { email: "dev@example.com" });
     const token = await openResetLink("dev@example.com");
 
     await resetPassword(harness.context(phone), { token, newPassword: "the new password" });
@@ -172,7 +172,7 @@ describe("completing a reset", () => {
 
   it("marks an unverified user's email verified, since the link proved they get its mail", async () => {
     await signUp(harness.context(new TestBrowser()), signUpInput({ username: "Eve.Lin", email: "eve@example.com" }));
-    await requestPasswordReset(harness.context(new TestBrowser()), "eve@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "eve@example.com" });
     const token = await openResetLink("eve@example.com");
 
     await resetPassword(harness.context(new TestBrowser()), { token, newPassword: "the new password" });
@@ -185,10 +185,10 @@ describe("completing a reset", () => {
   it("cancels the user's other reset links, and the one used, leaving other users' links working", async () => {
     await signUp(harness.context(new TestBrowser()), signUpInput({ username: "Fay.Moss", email: "fay@example.com" }));
     await signUp(harness.context(new TestBrowser()), signUpInput({ email: "gus@example.com" }));
-    await requestPasswordReset(harness.context(new TestBrowser()), "gus@example.com");
-    await requestPasswordReset(harness.context(new TestBrowser()), "fay@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "gus@example.com" });
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "fay@example.com" });
     const older = await openResetLink("fay@example.com");
-    await requestPasswordReset(harness.context(new TestBrowser()), "fay@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "fay@example.com" });
     const newer = await openResetLink("fay@example.com");
 
     await resetPassword(harness.context(new TestBrowser()), { token: newer, newPassword: "the new password" });
@@ -218,16 +218,16 @@ describe("Better Auth's endpoints, called directly", () => {
     await signUp(harness.context(new TestBrowser()), signUpInput({ email: "ned@example.com" }));
     for (let request = 0; request < 3; request += 1) await harness.auth.api.requestPasswordReset({ body: { email: "ned@example.com" } });
 
-    await requestPasswordReset(harness.context(new TestBrowser()), "ned@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "ned@example.com" });
 
     expect(resetEmailsTo("ned@example.com")).toHaveLength(3);
   });
 
   it("have a reset's side effects too: the email verified and the other links cancelled", async () => {
     await signUp(harness.context(new TestBrowser()), signUpInput({ username: "Olive.Ng", email: "olive@example.com" }));
-    await requestPasswordReset(harness.context(new TestBrowser()), "olive@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "olive@example.com" });
     const older = await openResetLink("olive@example.com");
-    await requestPasswordReset(harness.context(new TestBrowser()), "olive@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "olive@example.com" });
     const newer = await openResetLink("olive@example.com");
 
     const direct = await harness.postToAuth("/reset-password", { token: newer, newPassword: "the new password" }, new TestBrowser());

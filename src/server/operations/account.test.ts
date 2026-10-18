@@ -181,7 +181,7 @@ describe("changing the password", () => {
 
   it("sends no notice for a password reset, which isn't a change made in Settings", async () => {
     await signedInUser({ username: "Pia.Holt", email: "pia@example.com" });
-    await requestPasswordReset(harness.context(new TestBrowser()), "pia@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "pia@example.com" });
     const token = new URL(harness.linkEmailedTo("pia@example.com")).pathname.split("/").at(-1)!;
 
     expect(await resetPassword(harness.context(new TestBrowser()), { token, newPassword: "the new password" })).toEqual({ ok: true });

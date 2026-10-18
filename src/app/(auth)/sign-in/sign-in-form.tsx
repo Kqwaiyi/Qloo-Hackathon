@@ -32,17 +32,15 @@ export function SignInForm({
     const form = new FormData(event.currentTarget);
     setRefusal(null);
     startTransition(async () => {
-      const botCheckToken = await botCheck.token();
       // On success the action redirects into the app.
-      const result = await signInAction({
-        identifier: String(form.get("identifier") ?? ""),
-        password: String(form.get("password") ?? ""),
-        botCheckToken,
-      });
-      if (result.ok) return;
-      // Even a refusal for another reason has used the token up.
-      botCheck.reset();
-      setRefusal(result.refusal);
+      const result = await botCheck.send((botCheckToken) =>
+        signInAction({
+          identifier: String(form.get("identifier") ?? ""),
+          password: String(form.get("password") ?? ""),
+          botCheckToken,
+        }),
+      );
+      if (!result.ok) setRefusal(result.refusal);
     });
   }
 

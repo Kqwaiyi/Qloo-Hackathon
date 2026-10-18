@@ -294,7 +294,7 @@ describe("purges", () => {
     harness.clock.set("2026-11-01T12:00:00Z");
     await start(browser);
     await harness.stylings.runPending();
-    await requestPasswordReset(harness.context(new TestBrowser()), "rae@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "rae@example.com" });
     const october = new Date("2026-10-16T12:00:00Z");
     const november = new Date("2026-11-01T12:00:00Z");
     // A photo check and two Outfits each time; the verification email, then the reset.

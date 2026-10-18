@@ -40,13 +40,13 @@ function loadTurnstile(): Promise<Turnstile> {
 
 export interface BotCheck {
   /**
-   * The token to send with the form: undefined while the Bot Check is off, and "" if the widget
-   * failed, which the server refuses with a message to try again. A form sent before the widget has
-   * a token, or while Cloudflare wants a click, waits for one.
+   * Sends the form with the widget's token, as `sendForm` does it, and gives back its answer. The
+   * token is undefined while the Bot Check is off, and "" if the widget failed, which the server
+   * refuses with a message to try again. A form sent before the widget has a token, or while
+   * Cloudflare wants a click, waits for one. Cloudflare takes each token once, so whatever the
+   * answer, the widget then gets a new one for the next try.
    */
-  token(): Promise<string | undefined>;
-  /** Gets a new token. Cloudflare takes each token once, so the form calls this after any refusal. */
-  reset(): void;
+  send<T>(sendForm: (botCheckToken: string | undefined) => Promise<T>): Promise<T>;
   /** Where the widget goes in the form. Most visitors never see it. */
   widget: ReactNode;
 }
@@ -107,5 +107,16 @@ export function useBotCheck(siteKey: string | null): BotCheck {
     if (widgetId.current !== undefined) window.turnstile?.reset(widgetId.current);
   }, []);
 
-  return { token, reset, widget: siteKey ? <div ref={container} /> : null };
+  const send = useCallback(
+    async function send<T>(sendForm: (botCheckToken: string | undefined) => Promise<T>): Promise<T> {
+      try {
+        return await sendForm(await token());
+      } finally {
+        reset();
+      }
+    },
+    [token, reset],
+  );
+
+  return { send, widget: siteKey ? <div ref={container} /> : null };
 }

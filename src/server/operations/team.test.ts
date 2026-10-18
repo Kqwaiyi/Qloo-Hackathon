@@ -55,7 +55,7 @@ describe("the team deleting an account by email", () => {
 
   it("deletes the password reset links still waiting, as the user's own deletion does", async () => {
     await signedInUser({ email: "jem@example.com" });
-    await requestPasswordReset(harness.context(new TestBrowser()), "jem@example.com");
+    await requestPasswordReset(harness.context(new TestBrowser()), { email: "jem@example.com" });
     const token = new URL(harness.linkEmailedTo("jem@example.com")).pathname.split("/").at(-1)!;
 
     await deleteAccountByEmail(teamContext(), "jem@example.com");
