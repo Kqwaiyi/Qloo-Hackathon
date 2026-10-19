@@ -1,5 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import type { CookieToSet } from "@/server/http/cookies";
+import { signOutEverywhere } from "@/server/operations/account";
 import { readSignedInUser, refreshSession } from "@/server/operations/session";
 import { signIn } from "@/server/operations/sign-in";
 import { signUp } from "@/server/operations/sign-up";
@@ -60,4 +62,64 @@ describe("sessions", () => {
 
     expect(await readSignedInUser(harness.context(browser))).toMatchObject({ username: "sam" });
   });
+
+  it("aren't rolled forward by reading the signed-in user, so a refresh later that day still renews the cookie", async () => {
+    const browser = await signInAt(START);
+
+    vi.setSystemTime(START.getTime() + 2 * DAY_MS);
+    await readSignedInUser(harness.context(browser));
+    await refreshSession(harness.context(browser));
+    vi.setSystemTime(START.getTime() + 31 * DAY_MS);
+
+    expect(await readSignedInUser(harness.context(browser))).toMatchObject({ username: "sam" });
+  });
+
+  it("end 30 days after sign-in when the signed-in user was only read since", async () => {
+    const browser = await signInAt(START);
+
+    vi.setSystemTime(START.getTime() + 2 * DAY_MS);
+    await readSignedInUser(harness.context(browser));
+    vi.setSystemTime(START.getTime() + 31 * DAY_MS);
+
+    expect(await readSignedInUser(harness.context(browser))).toBeNull();
+  });
+
+  it("aren't renewed while less than a day old: the refresh sends no cookie", async () => {
+    const browser = await signInAt(START);
+
+    vi.setSystemTime(START.getTime() + DAY_MS / 2);
+
+    expect(await cookiesSentByRefresh(browser)).toEqual([]);
+  });
+
+  it("aren't started by a refresh from a browser that isn't signed in: it sends no cookie", async () => {
+    expect(await cookiesSentByRefresh(new TestBrowser())).toEqual([]);
+  });
+
+  it("stay ended after signing out of all devices: a refresh from another browser clears its cookie", async () => {
+    const laptop = await signInAt(START);
+    const phone = await signInAt(START);
+
+    vi.setSystemTime(START.getTime() + 2 * DAY_MS);
+    await signOutEverywhere(harness.context(laptop));
+    await refreshSession(harness.context(phone));
+
+    expect(phone.hasSessionCookie()).toBe(false);
+    expect(await readSignedInUser(harness.context(phone))).toBeNull();
+  });
 });
+
+/** Refreshes the browser's session, and gives back every cookie the response sent it. */
+async function cookiesSentByRefresh(browser: TestBrowser): Promise<CookieToSet[]> {
+  const sent: CookieToSet[] = [];
+  await refreshSession({
+    ...harness.context(browser),
+    responseCookies: {
+      set: (cookie) => {
+        sent.push(cookie);
+        browser.responseCookies.set(cookie);
+      },
+    },
+  });
+  return sent;
+}

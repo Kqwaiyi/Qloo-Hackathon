@@ -26,9 +26,13 @@ export interface PhotoConsent {
   acceptedAt: Date;
 }
 
-/** The user signed in on this request, or null. */
+/**
+ * The user signed in on this request, or null. Never renews the session (see `refreshSession`): a
+ * page can't set cookies, so a renewal here would roll the session forward in the database while
+ * the browser's cookie still expired 30 days after sign-in.
+ */
 export async function readSignedInUser(ctx: Pick<OperationContext, "auth" | "requestHeaders">): Promise<SignedInUser | null> {
-  const session = await ctx.auth.api.getSession({ headers: ctx.requestHeaders });
+  const session = await ctx.auth.api.getSession({ headers: ctx.requestHeaders, query: { disableRefresh: true } });
   if (!session) return null;
   const { user } = session;
   return {
@@ -52,7 +56,9 @@ export async function readSignedInUser(ctx: Pick<OperationContext, "auth" | "req
 
 /**
  * Rolls the session forward once it is a day old, and sends its cookie again so the browser keeps
- * it 30 more days. Runs on every page request that carries a session cookie.
+ * it 30 more days; a session that has ended has its cookie cleared. The only place a session
+ * renews outside Better Auth's own endpoints, since it passes the cookie on. Runs on every page load
+ * that carries a session cookie.
  */
 export async function refreshSession(ctx: AuthRequestContext): Promise<void> {
   const { headers } = await ctx.auth.api.getSession({ headers: ctx.requestHeaders, returnHeaders: true });
