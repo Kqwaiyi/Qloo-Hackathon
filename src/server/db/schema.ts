@@ -36,7 +36,7 @@ import {
   STYLING_STATUSES,
 } from "../../config/stylings";
 
-// Better Auth's own tables (user, session, account, verification, rate limit), plus the Outfit Recommender
+// Better Auth's own tables (user, session, account, verification, rate limit), plus the Qurator
 // fields on the user. Better Auth looks these up by the export names below.
 
 export const stylePreferenceEnum = pgEnum("style_preference", STYLE_PREFERENCES);

@@ -8,7 +8,6 @@ import { Hero, Statement } from "./chapters/opening";
 import { PhotoCare } from "./chapters/photo-care";
 import { PhotoCheck } from "./chapters/photo-check";
 import { PhotoTypes } from "./chapters/photo-types";
-import { Pieces } from "./chapters/pieces";
 import { ReadyToShop } from "./chapters/ready-to-shop";
 import { StyleIcons } from "./chapters/style-icons";
 import { LandingMotion } from "./motion/landing-motion";
@@ -38,7 +37,6 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
         <PhotoCheck sample={walkthroughSample} />
         <StyleIcons sample={walkthroughSample} />
         <Brands sample={walkthroughSample} />
-        <Pieces sample={walkthroughSample} />
         <ReadyToShop sample={walkthroughSample} />
         <PhotoCare />
         <GetStarted />

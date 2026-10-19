@@ -22,7 +22,7 @@ export const STYLE_PREFERENCE_LABELS: Record<StylePreference, string> = {
 export const LINES = ["womenswear", "menswear"] as const;
 export type Line = (typeof LINES)[number];
 
-/** Outfit Recommender is for adults only (ADR-0004). */
+/** Qurator is for adults only (ADR-0004). */
 export const MINIMUM_AGE = 18;
 
 /** An under-18 date of birth blocks sign-up from that browser for this long. */
@@ -74,7 +74,7 @@ export type EmailChangeStep = (typeof EMAIL_CHANGE_STEPS)[number];
  * COPY lines it shows. Raise it whenever that wording changes, so every user sees the sheet again
  * before their next Consultation.
  */
-export const PHOTO_NOTICE_VERSION = 1;
+export const PHOTO_NOTICE_VERSION = 2;
 
 /**
  * The Demo Account, the single shared account the judges use, is named by its email: the team

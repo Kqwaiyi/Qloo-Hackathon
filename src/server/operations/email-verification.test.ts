@@ -33,7 +33,7 @@ describe("signing up", () => {
     expect(await readSignedInUser(harness.context(browser))).toMatchObject({ email: "ava@example.com", emailVerified: false });
     const emails = harness.emails.to("ava@example.com");
     expect(emails).toHaveLength(1);
-    expect(emails[0]!.subject).toBe("Verify your email for Outfit Recommender");
+    expect(emails[0]!.subject).toBe("Verify your email for Qurator");
     expect(emails[0]!.text).toContain("http://localhost:3000/api/auth/verify-email?token=");
     expect(emails[0]!.text).toContain("The link works for 24 hours.");
     expect(emails[0]!.text).toContain("Unverified accounts are deleted 7 days after sign-up, so this one will be deleted on 23 October 2026");

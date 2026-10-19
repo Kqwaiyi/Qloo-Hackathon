@@ -8,7 +8,7 @@ function tryAnother(suggestBudgetTier: boolean): string {
 }
 
 export const COPY = {
-  under18: "You need to be 18 or older to use Outfit Recommender.",
+  under18: "You need to be 18 or older to use Qurator.",
   usernameTaken: "That username is taken",
   signUpsPaused: "We can't take new sign-ups right now. Please try again tomorrow.",
   botCheckFailed: "We couldn't check that you're not a bot. Please try again.",
@@ -30,9 +30,9 @@ export const COPY = {
   contentRules: "Only use photos of yourself that you have the rights to, with no nudity or intimate images.",
   photoHairNotVisible: "We need to see your hair to suggest a Hairstyle.",
   /** In the Terms, and for the landing page's footer. */
-  notAffiliated: "Style Icons and Brands aren't affiliated with Outfit Recommender.",
+  notAffiliated: "Style Icons and Brands aren't affiliated with Qurator.",
   /** The region gate. It mentions neither the Country setting nor VPNs. */
-  unsupportedRegion: "Outfit Recommender isn't available where you are right now.",
+  unsupportedRegion: "Qurator isn't available where you are right now.",
   /** The quiet line after the consent sheet is closed without agreeing. */
   agreeToBothBoxes: "To get Outfits, agree to both boxes on the consent sheet.",
   /**
@@ -53,9 +53,9 @@ export const COPY = {
   allowanceUsedUp: (allowance: number, time: string) => `You've made today's ${allowance} Outfits. More from ${time}.`,
   photoCheckLimitReached: (limit: number, time: string) => `You've checked ${limit} photos today. More from ${time}.`,
   /** The app-wide 24-hour cap. */
-  appWideCapForNow: "Outfit Recommender has made all the Outfits it can for now. Please try again in a few hours.",
+  appWideCapForNow: "Qurator has made all the Outfits it can for now. Please try again in a few hours.",
   /** The app-wide monthly cap, and the Qloo backstop. */
-  appWideCapForMonth: (date: string) => `Outfit Recommender has made all the Outfits it can for this month. Back on ${date}.`,
+  appWideCapForMonth: (date: string) => `Qurator has made all the Outfits it can for this month. Back on ${date}.`,
   faceGuide: "keep your face above this line",
   takingLonger: "This is taking longer than usual.",
   aiGenerated: "AI-generated",

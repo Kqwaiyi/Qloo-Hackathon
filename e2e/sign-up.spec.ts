@@ -37,8 +37,8 @@ test("someone under 18 is stopped at step 1, and stays stopped", async ({ page }
   await page.getByLabel("Year").fill("2012");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await expect(page.getByText("You need to be 18 or older to use Outfit Recommender.")).toBeVisible();
+  await expect(page.getByText("You need to be 18 or older to use Qurator.")).toBeVisible();
   await page.reload();
-  await expect(page.getByText("You need to be 18 or older to use Outfit Recommender.")).toBeVisible();
+  await expect(page.getByText("You need to be 18 or older to use Qurator.")).toBeVisible();
   await expect(page.getByLabel("Day")).toHaveCount(0);
 });

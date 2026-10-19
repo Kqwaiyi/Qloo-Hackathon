@@ -30,8 +30,8 @@ describe("a verified user changing their email", () => {
 
     expect(result).toEqual({ ok: true, awaiting: "approval" });
     const [approval] = harness.emails.to("ava@example.com").slice(1);
-    expect(approval!.subject).toBe("Approve your new email for Outfit Recommender");
-    expect(approval!.text).toContain("Someone asked to change the email for your Outfit Recommender account to ava.new@example.com.");
+    expect(approval!.subject).toBe("Approve your new email for Qurator");
+    expect(approval!.text).toContain("Someone asked to change the email for your Qurator account to ava.new@example.com.");
     expect(approval!.text).toContain("http://localhost:3000/api/auth/verify-email?token=");
     expect(approval!.text).toContain("The link works for 24 hours.");
     expect(approval!.text).toContain("email us at team@example.test");
@@ -48,8 +48,8 @@ describe("a verified user changing their email", () => {
     expect(approved.status).toBe(302);
     expect(approved.headers.get("location")).toBe("/email-change?step=approval");
     const [verification] = harness.emails.to("ben.new@example.com");
-    expect(verification!.subject).toBe("Confirm your new email for Outfit Recommender");
-    expect(verification!.text).toContain("To finish changing your Outfit Recommender email to this address, open this link:");
+    expect(verification!.subject).toBe("Confirm your new email for Qurator");
+    expect(verification!.text).toContain("To finish changing your Qurator email to this address, open this link:");
     expect(verification!.text).toContain("http://localhost:3000/api/auth/verify-email?token=");
     expect(verification!.text).toContain("The link works for 24 hours.");
     expect(verification!.text).toContain("Didn't ask for this? Ignore this email and nothing changes.");

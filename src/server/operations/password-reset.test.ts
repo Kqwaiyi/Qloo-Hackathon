@@ -245,7 +245,7 @@ describe("Better Auth's endpoints, called directly", () => {
 
 /** The reset emails sent to this address, oldest first. */
 function resetEmailsTo(address: string) {
-  return harness.emails.to(address).filter((email) => email.subject === "Reset your Outfit Recommender password");
+  return harness.emails.to(address).filter((email) => email.subject === "Reset your Qurator password");
 }
 
 /** Opens the newest link emailed to this address, as the user would, and reads the token the reset page gets. */

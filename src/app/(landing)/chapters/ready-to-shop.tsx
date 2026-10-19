@@ -29,7 +29,7 @@ export function ReadyToShop({ sample }: { sample: LandingSampleView }) {
             <Label className="mt-3 text-mute">Drag to compare</Label>
           </div>
         </figure>
-        <div className="col-span-4 md:col-span-7 md:col-start-6 lg:col-span-6 lg:col-start-7">
+        <div className="col-span-4 md:col-span-7 md:col-start-6 lg:col-span-5 lg:col-start-7">
           <h3 data-reveal="rise" className="text-title">
             Outfit {outfit.position} · Inspired by {outfit.styleIconName}
           </h3>
@@ -69,10 +69,10 @@ export function ReadyToShop({ sample }: { sample: LandingSampleView }) {
             </div>
           </div>
           {sample.budgetTier && (
-            <div data-reveal="blur" className="mt-10">
+            <div data-reveal="blur" className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-3">
               <Label className="text-mute">Budget Tier</Label>
               <p className="sr-only">Our sample used the {BUDGET_TIER_LABELS[sample.budgetTier]} Budget Tier.</p>
-              <div aria-hidden="true" className="mt-3 inline-flex flex-wrap gap-1 rounded-[1.25rem] bg-card p-1">
+              <div aria-hidden="true" className="inline-flex flex-wrap gap-1 rounded-[1.25rem] bg-card p-1">
                 {BUDGET_TIERS.map((budgetTier) => (
                   <Label
                     key={budgetTier}

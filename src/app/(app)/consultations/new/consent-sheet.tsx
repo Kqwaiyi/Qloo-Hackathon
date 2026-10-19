@@ -112,7 +112,7 @@ export function ConsentSheet({
 
           <div className="mt-5 space-y-3 border-t border-stone-200 pt-5">
             <ConsentBox checked={storeAndProcess} onChange={setStoreAndProcess}>
-              I agree to Outfit Recommender storing my photos and having AI process my face and body, as described above.
+              I agree to Qurator storing my photos and having AI process my face and body, as described above.
             </ConsentBox>
             <ConsentBox checked={sendToGemini} onChange={setSendToGemini}>
               I agree to my photos being sent to Google&apos;s Gemini.

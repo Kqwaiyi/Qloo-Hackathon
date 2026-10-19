@@ -405,14 +405,20 @@ export function setupCards(root: HTMLElement): void {
   }
 }
 
-/** The header slides away while the reader scrolls down and comes back as soon as they scroll up. */
+/**
+ * The header slides away while the reader scrolls down and comes back as soon as they scroll up,
+ * or once the last chapter fills half the screen, where it stays.
+ */
 export function setupHeader(root: HTMLElement): void {
   const parts = all(root, "[data-header]");
+  const last = root.querySelector<HTMLElement>("[data-header-returns]");
+  const lastChapter = last ? ScrollTrigger.create({ trigger: last, start: "top center" }) : null;
   ScrollTrigger.create({
     start: 0,
     end: "max",
     onUpdate: (self) => {
-      const hide = self.direction === 1 && self.scroll() > 160;
+      const reachedLast = lastChapter !== null && self.scroll() >= lastChapter.start;
+      const hide = self.direction === 1 && self.scroll() > 160 && !reachedLast;
       for (const part of parts) part.classList.toggle("is-hidden", hide);
     },
   });

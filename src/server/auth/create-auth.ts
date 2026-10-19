@@ -193,7 +193,7 @@ export function createAuth({
   }
 
   const auth = betterAuth({
-    appName: "Outfit Recommender",
+    appName: "Qurator",
     baseURL,
     basePath: AUTH_API_PATH,
     trustedOrigins,

@@ -75,12 +75,21 @@ body:has(.landing) {
   mix-blend-mode: soft-light;
 }
 
-/* The header slides away while the reader scrolls down and comes back when they scroll up. */
+/* The header slides away while the reader scrolls down and comes back when they scroll up, or
+   when they reach the last chapter (motion/scenes.ts). */
 .landing-header {
   transition: transform 0.6s var(--ease-glide);
 }
 .landing-header.is-hidden {
   transform: translateY(-130%);
+}
+
+/* The wordmark has no backing. It's drawn in paper and grey and subtracted from whatever is under
+   it, so it reads as ink on paper chapters and as paper on ink ones, and stays legible through the
+   scrubbed changes between them and over photos, with or without the motion layer. Its focus ring
+   is paper too (text-paper), so it inverts the same way. */
+.landing-wordmark {
+  mix-blend-mode: difference;
 }
 
 /* The first-visit loader. It's hidden unless an inline script, before the first paint, adds a

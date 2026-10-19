@@ -41,7 +41,6 @@ test.describe("with reduced motion", () => {
       "The AI checks the photo and reads its style.",
       "Qloo finds Style Icons",
       "…and the Brands their fans favour",
-      /The AI tailors each Piece to the photo/,
       "Your Outfit, ready to shop",
       "Careful with your photos",
       "Now try it on your own photo",

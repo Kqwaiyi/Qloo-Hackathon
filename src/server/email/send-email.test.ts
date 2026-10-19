@@ -29,7 +29,7 @@ beforeEach(() => {
 });
 
 describe("the send-email function", () => {
-  it("sends a plain-text email from Outfit Recommender and logs its kind, user and time, never the address", async () => {
+  it("sends a plain-text email from Qurator and logs its kind, user and time, never the address", async () => {
     const result = await harness.emailSender.send({
       kind: "password-reset",
       userId: ava,
@@ -40,7 +40,7 @@ describe("the send-email function", () => {
 
     expect(result).toEqual({ sent: true });
     expect(harness.emails.messages).toEqual([
-      { fromName: "Outfit Recommender", to: "ava@example.com", subject: "Reset your password", text: "Here's your link." },
+      { fromName: "Qurator", to: "ava@example.com", subject: "Reset your password", text: "Here's your link." },
     ]);
     expect(await harness.db.select().from(emailLog).where(gte(emailLog.sentAt, start))).toEqual([
       { id: expect.any(String), kind: "password-reset", userId: ava, sentAt: start },

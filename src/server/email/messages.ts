@@ -19,9 +19,9 @@ export function verificationEmail({ link, deletionDate }: { link: string; deleti
   const date = deletionDateText(deletionDate);
   const hours = VERIFICATION_LINK_LIFETIME_SECONDS / 3600;
   return {
-    subject: "Verify your email for Outfit Recommender",
+    subject: "Verify your email for Qurator",
     text: [
-      "Verify your email to start your first Consultation on Outfit Recommender:",
+      "Verify your email to start your first Consultation on Qurator:",
       link,
       `The link works for ${hours} hours. Unverified accounts are deleted ${UNVERIFIED_ACCOUNT_LIFETIME_DAYS} days after sign-up, so this one will be deleted on ${date} unless you verify it.`,
       COPY.didNotSignUp(date),
@@ -35,9 +35,9 @@ export function verificationEmail({ link, deletionDate }: { link: string; deleti
  */
 export function passwordChangedEmail({ forgotPasswordLink, teamEmail }: { forgotPasswordLink: string; teamEmail: string }): EmailContent {
   return {
-    subject: "Your Outfit Recommender password was changed",
+    subject: "Your Qurator password was changed",
     text: [
-      "The password for your Outfit Recommender account was just changed, and your other devices were signed out.",
+      "The password for your Qurator account was just changed, and your other devices were signed out.",
       "If you didn't change it, reset your password now:",
       forgotPasswordLink,
       `Then email us at ${teamEmail} so we can help secure your account.`,
@@ -62,9 +62,9 @@ export function emailChangeApprovalEmail({
 }): EmailContent {
   const hours = VERIFICATION_LINK_LIFETIME_SECONDS / 3600;
   return {
-    subject: "Approve your new email for Outfit Recommender",
+    subject: "Approve your new email for Qurator",
     text: [
-      `Someone asked to change the email for your Outfit Recommender account to ${newEmail}.`,
+      `Someone asked to change the email for your Qurator account to ${newEmail}.`,
       "If it was you, approve the change with this link:",
       link,
       `The link works for ${hours} hours. Once you approve, we'll send a link to ${newEmail}, and the change is done when it's opened there.`,
@@ -79,9 +79,9 @@ export function emailChangeApprovalEmail({
 export function emailChangeVerificationEmail({ link }: { link: string }): EmailContent {
   const hours = VERIFICATION_LINK_LIFETIME_SECONDS / 3600;
   return {
-    subject: "Confirm your new email for Outfit Recommender",
+    subject: "Confirm your new email for Qurator",
     text: [
-      "To finish changing your Outfit Recommender email to this address, open this link:",
+      "To finish changing your Qurator email to this address, open this link:",
       link,
       `The link works for ${hours} hours.`,
       "Didn't ask for this? Ignore this email and nothing changes.",
@@ -96,9 +96,9 @@ export function emailChangeVerificationEmail({ link }: { link: string }): EmailC
 export function inactivityWarningEmail({ deletionDate, signInLink }: { deletionDate: Date; signInLink: string }): EmailContent {
   const date = deletionDateText(deletionDate);
   return {
-    subject: `Your Outfit Recommender account will be deleted on ${date}`,
+    subject: `Your Qurator account will be deleted on ${date}`,
     text: [
-      `You haven't used your Outfit Recommender account in a while. Accounts are deleted after ${INACTIVE_ACCOUNT_LIFETIME_MONTHS} months without activity, so yours will be deleted on ${date}, ${INACTIVITY_WARNING_NOTICE_DAYS} days from now, together with its Consultations and their photos and Previews.`,
+      `You haven't used your Qurator account in a while. Accounts are deleted after ${INACTIVE_ACCOUNT_LIFETIME_MONTHS} months without activity, so yours will be deleted on ${date}, ${INACTIVITY_WARNING_NOTICE_DAYS} days from now, together with its Consultations and their photos and Previews.`,
       "To keep it, sign in before then:",
       signInLink,
       "If you don't need it any more, you don't have to do anything.",
@@ -110,9 +110,9 @@ export function inactivityWarningEmail({ deletionDate, signInLink }: { deletionD
 export function passwordResetEmail({ link }: { link: string }): EmailContent {
   const hours = PASSWORD_RESET_LINK_LIFETIME_SECONDS / 3600;
   return {
-    subject: "Reset your Outfit Recommender password",
+    subject: "Reset your Qurator password",
     text: [
-      "To choose a new password for your Outfit Recommender account, open this link:",
+      "To choose a new password for your Qurator account, open this link:",
       link,
       `The link works for ${hours} ${hours === 1 ? "hour" : "hours"}. Resetting your password signs you out on every device.`,
       "Didn't ask for this? Ignore this email and nothing changes.",

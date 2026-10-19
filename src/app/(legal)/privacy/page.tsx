@@ -62,7 +62,7 @@ export default function Page() {
     <>
       <h1 className="text-3xl font-semibold tracking-tight">Privacy Policy</h1>
       <p className={paragraph}>
-        This is how Outfit Recommender handles your personal data, in plain English. In short: we keep only what it takes to
+        This is how Qurator handles your personal data, in plain English. In short: we keep only what it takes to
         make your Outfits, we never sell it or use it for ads, and you can delete it whenever you like.
       </p>
 
@@ -81,7 +81,7 @@ export default function Page() {
 
       <LegalSection {...section("who-we-are")}>
         <p className={paragraph}>
-          Outfit Recommender is run by the Outfit Recommender team: Kqwaiyi, AlexanderBudi and alisakujou0711.
+          Qurator is run by the Qurator team: Kqwaiyi, AlexanderBudi and alisakujou0711.
           We&apos;re the controller of your personal data: we decide what&apos;s collected and why.
         </p>
         <p className={paragraph}>
@@ -100,7 +100,7 @@ export default function Page() {
         </p>
         <ul className={bulletList}>
           <li>
-            our processing is occasional: Outfit Recommender is a free project built for a hackathon, not an ongoing business;
+            our processing is occasional: Qurator is a free project built for a hackathon, not an ongoing business;
           </li>
           <li>
             we process no special categories of data, and no criminal records: photos are only ever edited, never used to
@@ -463,7 +463,7 @@ export default function Page() {
 
       <LegalSection {...section("adults-only")}>
         <p className={paragraph}>
-          Outfit Recommender is for adults: you must be {MINIMUM_AGE} or older to use it. Sign-up asks for your date of birth.
+          Qurator is for adults: you must be {MINIMUM_AGE} or older to use it. Sign-up asks for your date of birth.
           A date under {MINIMUM_AGE} creates no account and we keep nothing of it: only a cookie in that browser stops another
           try for {count(AGE_GATE_COOKIE_MAX_AGE_SECONDS / SECONDS_PER_DAY, "day")}. If we find out that an account belongs to someone under {MINIMUM_AGE},
           we delete it with everything in it. To tell us about one, email{" "}

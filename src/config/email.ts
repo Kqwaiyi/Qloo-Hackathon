@@ -2,7 +2,7 @@
 // enforces every cap below so that Gmail never blocks the team account (it allows about 500 a day).
 
 /** Who every email comes from. */
-export const EMAIL_FROM_NAME = "Outfit Recommender";
+export const EMAIL_FROM_NAME = "Qurator";
 
 /**
  * Each kind of email the app sends, as the email log records it. "verification" is the link sent

@@ -742,7 +742,7 @@ async function newAccount(): Promise<string> {
 
 /** The reset emails sent to this address, oldest first. */
 function resetEmailsTo(address: string, sentBy: TestHarness = harness) {
-  return sentBy.emails.to(address).filter((email) => email.subject === "Reset your Outfit Recommender password");
+  return sentBy.emails.to(address).filter((email) => email.subject === "Reset your Qurator password");
 }
 
 async function accountExists(email: string): Promise<boolean> {

@@ -11,7 +11,7 @@ import { GET_STARTED_ID } from "./frame";
 
 export function GetStarted() {
   return (
-    <section id={GET_STARTED_ID} data-ground="ink" aria-labelledby="get-started-title" className="grain relative overflow-hidden text-paper">
+    <section id={GET_STARTED_ID} data-ground="ink" data-header-returns aria-labelledby="get-started-title" className="grain relative overflow-hidden text-paper">
       <div aria-hidden="true" className="feather absolute inset-0 opacity-90">
         <LoopVideo name="drape/dark-loop" />
       </div>

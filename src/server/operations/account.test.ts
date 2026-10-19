@@ -307,7 +307,7 @@ function profileOf(overrides: Partial<ProfileInput> & Pick<ProfileInput, "userna
 
 /** The password-changed notices sent to this address, oldest first. */
 function passwordChangedEmailsTo(address: string) {
-  return harness.emails.to(address).filter((email) => email.subject === "Your Outfit Recommender password was changed");
+  return harness.emails.to(address).filter((email) => email.subject === "Your Qurator password was changed");
 }
 
 /** Starts a Full-Body Photo Consultation with a small, plain JPEG, returning its id. */

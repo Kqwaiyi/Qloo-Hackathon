@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: { default: "Outfit Recommender", template: "%s · Outfit Recommender" },
+  title: { default: "Qurator", template: "%s · Qurator" },
   description: "Complete Outfits picked with Qloo's taste data and shown on you.",
 };
 

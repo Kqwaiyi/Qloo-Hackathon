@@ -22,7 +22,7 @@ export default function Page() {
     <>
       <h1 className="text-3xl font-semibold tracking-tight">Terms</h1>
       <p className={paragraph}>
-        These are the rules for using Outfit Recommender. By creating an account, you agree to them and to our{" "}
+        These are the rules for using Qurator. By creating an account, you agree to them and to our{" "}
         <Link href={ROUTES.privacy} className={textLink}>
           Privacy Policy
         </Link>
@@ -31,7 +31,7 @@ export default function Page() {
 
       <LegalSection id="hackathon-project" title="A free hackathon project">
         <p className={paragraph}>
-          Outfit Recommender is a free project, built for the Qloo LLM Hackathon by the Outfit Recommender team. It costs
+          Qurator is a free project, built for the Qloo LLM Hackathon by the Qurator team. It costs
           nothing, sells nothing and takes no payments.
         </p>
         <p className={paragraph}>
@@ -43,7 +43,7 @@ export default function Page() {
 
       <LegalSection id="adults-only" title="Adults only">
         <p className={paragraph}>
-          You must be {MINIMUM_AGE} or older to use Outfit Recommender. If we find out that an account belongs to someone
+          You must be {MINIMUM_AGE} or older to use Qurator. If we find out that an account belongs to someone
           under {MINIMUM_AGE}, we delete it with everything in it.
         </p>
       </LegalSection>
@@ -69,7 +69,7 @@ export default function Page() {
 
       <LegalSection id="no-guarantees" title="No guarantees">
         <p className={paragraph}>
-          As a hackathon project, Outfit Recommender is provided as it is, with no guarantee that it works, stays available or
+          As a hackathon project, Qurator is provided as it is, with no guarantee that it works, stays available or
           suits you. We may change it, pause it or shut it down at any time. You can delete your account whenever you like,
           in Settings.
         </p>

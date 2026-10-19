@@ -70,7 +70,7 @@ describe("inactive accounts", () => {
     await runDailySweep(harness);
     const [warning, ...more] = warningsTo("ivy@example.com");
     expect(more).toEqual([]);
-    expect(warning!.subject).toBe("Your Outfit Recommender account will be deleted on 16 October 2027");
+    expect(warning!.subject).toBe("Your Qurator account will be deleted on 16 October 2027");
     expect(warning!.text).toContain("on 16 October 2027, 30 days from now");
     expect(warning!.text).toContain("Consultations");
     expect(warning!.text).toContain("sign in before then:\n\nhttp://localhost:3000/sign-in");
@@ -86,7 +86,7 @@ describe("inactive accounts", () => {
 
     harness.clock.set("2027-09-16T12:30:00Z");
     await runDailySweep(harness);
-    expect(warningsTo("jo@example.com")[0]!.subject).toBe("Your Outfit Recommender account will be deleted on 16 October 2027");
+    expect(warningsTo("jo@example.com")[0]!.subject).toBe("Your Qurator account will be deleted on 16 October 2027");
     harness.clock.set("2027-10-15T23:59:00Z");
     await runDailySweep(harness);
     expect(await readSignedInUser(harness.context(browser))).toMatchObject({ username: "Jo.Reed" });
@@ -121,7 +121,7 @@ describe("inactive accounts", () => {
     harness.clock.set("2028-08-21T12:00:00Z");
     await runDailySweep(harness);
     expect(warningsTo("kai@example.com")).toHaveLength(2);
-    expect(warningsTo("kai@example.com")[1]!.subject).toBe("Your Outfit Recommender account will be deleted on 20 September 2028");
+    expect(warningsTo("kai@example.com")[1]!.subject).toBe("Your Qurator account will be deleted on 20 September 2028");
   });
 
   it("counts using the app as activity: each page load refreshes the session, at most once a day", async () => {
@@ -157,7 +157,7 @@ describe("inactive accounts", () => {
     harness.clock.set("2027-09-17T13:00:00Z");
     await runDailySweep(harness);
     expect(warningsTo("ned@example.com").map(({ subject }) => subject)).toEqual([
-      "Your Outfit Recommender account will be deleted on 17 October 2027",
+      "Your Qurator account will be deleted on 17 October 2027",
     ]);
 
     harness.clock.set("2027-10-16T13:00:00Z");
@@ -186,7 +186,7 @@ describe("inactive accounts", () => {
     harness.clock.set("2027-09-17T12:05:00Z");
     await runDailySweep(harness);
     expect(warningsTo("oli@example.com").map(({ subject }) => subject)).toEqual([
-      "Your Outfit Recommender account will be deleted on 17 October 2027",
+      "Your Qurator account will be deleted on 17 October 2027",
     ]);
     harness.clock.set("2027-10-16T12:05:00Z");
     await runDailySweep(harness);
@@ -375,5 +375,5 @@ async function qlooCacheTimes(): Promise<Date[]> {
 
 /** The inactivity warnings sent to this address, oldest first. */
 function warningsTo(address: string) {
-  return harness.emails.to(address).filter(({ subject }) => subject.startsWith("Your Outfit Recommender account will be deleted"));
+  return harness.emails.to(address).filter(({ subject }) => subject.startsWith("Your Qurator account will be deleted"));
 }
