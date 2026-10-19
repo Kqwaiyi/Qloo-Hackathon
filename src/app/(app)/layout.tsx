@@ -7,6 +7,7 @@ import { deletionDateText } from "@/server/accounts/verification";
 import { getEmailVerification, requireSignedInUser } from "@/server/data/session";
 
 import { signOutAction } from "./actions";
+import { RenewSignIn } from "./renew-sign-in";
 import { VerifyEmailBanner } from "./verify-email-banner";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -14,6 +15,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const verification = await getEmailVerification();
   return (
     <div className="min-h-screen">
+      <RenewSignIn />
       <header className="border-b border-stone-200 bg-white">
         <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
           <Wordmark href={APP_HOME} />

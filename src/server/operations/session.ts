@@ -57,8 +57,8 @@ export async function readSignedInUser(ctx: Pick<OperationContext, "auth" | "req
 /**
  * Rolls the session forward once it is a day old, and sends its cookie again so the browser keeps
  * it 30 more days; a session that has ended has its cookie cleared. The only place a session
- * renews outside Better Auth's own endpoints, since it passes the cookie on. Runs on every page load
- * that carries a session cookie.
+ * renews outside Better Auth's own endpoints, since it passes the cookie on. Runs behind
+ * SIGN_IN_RENEWAL_ROUTE.
  */
 export async function refreshSession(ctx: AuthRequestContext): Promise<void> {
   const { headers } = await ctx.auth.api.getSession({ headers: ctx.requestHeaders, returnHeaders: true });

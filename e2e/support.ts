@@ -28,7 +28,8 @@ export async function signUpNewUser(page: Page): Promise<{ username: string; ema
   await page.getByRole("checkbox", { name: /I agree to the Terms/ }).check();
   await page.getByRole("button", { name: "Create account" }).click();
 
-  await expect(page).toHaveURL(/\/consultations\/new$/);
+  // In development, a run's first sign-up starts the database and compiles the page it lands on.
+  await expect(page).toHaveURL(/\/consultations\/new$/, { timeout: 15_000 });
   return { username, email };
 }
 

@@ -124,7 +124,7 @@ describe("inactive accounts", () => {
     expect(warningsTo("kai@example.com")[1]!.subject).toBe("Your Qurator account will be deleted on 20 September 2028");
   });
 
-  it("counts using the app as activity: each page load refreshes the session, at most once a day", async () => {
+  it("counts using the app as activity, which refreshes the session at most once a day", async () => {
     // Better Auth keeps session time with Date itself, so Date moves too while the session ages.
     vi.useFakeTimers({ toFake: ["Date"] });
     setTime("2026-10-16T12:00:00Z");
