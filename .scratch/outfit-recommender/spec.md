@@ -759,7 +759,7 @@ Deletions go through the same path as a user's own account deletion.
   - The 18+ rule appears in the footer only.
 - **Content source: frozen Consultations.**
   - The text of three real Consultations made on the Demo Account ships with the page as static data: the Photo Style, Style Icons, Brands and Pieces.
-  - The images (Pixabay originals and their Previews) are never committed. They live in the private Blob store, and the page is rendered dynamically with 1-hour signed links, like every other image.
+  - The images (the AI-generated photos and their Previews) ship with the page under `public/landing/samples/`. This replaced the private Blob store on 2026-10-19, when the team chose an AI-generated photo it supplied itself over the Pixabay images, whose licence was why they stayed out of the repo.
   - Visitors never trigger a Qloo or Gemini call.
 - **Captions:** every sample person gets "AI-generated person: not a real person." beside the photo, with alt text "AI-generated photo of a fictional person". Every Preview gets the "AI-generated" badge.
 
@@ -935,10 +935,9 @@ A Photo Style change's list becomes current only when its Styling succeeds.
   - add an Apps Script trigger that runs daily and permanently deletes sent mail older than 1 day, using the Gmail API's delete with the full-mail scope.
 - **Demo Account:** run the creation script once, after the production database exists. Send its login to the judges privately. The team deletes its own test Consultations before submitting.
 - **Landing page images:**
-  - pick clearly adult Pixabay images tagged "AI generated": one Full-Body person, plus a Face Photo and a Body-Only Photo between them covering both Style Preferences;
+  - pick clearly adult AI-generated images: one Full-Body person, plus a Face Photo and a Body-Only Photo between them covering both Style Preferences;
   - run a reverse-image search on each;
-  - upload them to Blob, and credit Pixabay in the README;
-  - after the app works, run the three frozen Consultations on the Demo Account and save their text as the landing page's static data.
+  - after the app works, run the three frozen Consultations on the Demo Account and export each, which writes its text and images into the repo for the page to ship with.
 - **First real Consultations:** check them on the Demo Account with phone photos, since the Preview test used only small web images.
 
 ## Testing Decisions
@@ -1041,7 +1040,7 @@ Everything else in the UI is checked by hand before submission.
   - A no-preference user's Brand calls and tailoring use the line of the Outfit's Style Icon.
   - The region check runs on every Styling, not just the first.
   - A Styling fetches Brands for at most 6 Style Icons.
-  - Landing page images are served through signed links from the private store.
+  - Landing page images ship with the page as static files.
   - The photo-check limit has its own message.
   - Team scripts handle birth-date corrections and emailed deletions.
 - **Checked while writing:** one read-only Qloo call on 2026-10-15 confirmed that Brands carry `properties.official_site`, and showed 9,703 calls left in the window that resets on 2026-11-13.

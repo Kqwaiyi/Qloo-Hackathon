@@ -1,11 +1,7 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import sharp from "sharp";
-import { beforeAll, beforeEach, describe, expect, it, onTestFinished } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { PhotoType } from "@/config/consultations";
-import { LocalBlobStore } from "@/server/blob/local";
 import { qlooCache, usageRecord } from "@/server/db/schema";
 import { type ConsultationView, deleteConsultation, readConsultation, startConsultation } from "@/server/operations/consultations";
 import { type LandingSample, type LandingSamples, readLandingPage } from "@/server/operations/landing";
@@ -59,7 +55,7 @@ const FULL_BODY: LandingSample = {
       },
     ],
   },
-  images: { photoPathname: "landing/c-full/photo.jpg", previewPathname: "landing/c-full/preview.webp" },
+  images: { photoPath: "/landing/samples/full_body/photo.jpg", previewPath: "/landing/samples/full_body/preview.webp" },
 };
 
 const FACE: LandingSample = {
@@ -74,7 +70,7 @@ const FACE: LandingSample = {
     styleIconName: "Ava Stone",
     pieces: [{ category: "hairstyle", item: "Chin-length blunt bob", why: "A blunt line for an edgy look.", brand: null }],
   },
-  images: { photoPathname: "landing/c-face/photo.jpg", previewPathname: "landing/c-face/preview.webp" },
+  images: { photoPath: "/landing/samples/face/photo.jpg", previewPath: "/landing/samples/face/preview.webp" },
 };
 
 const BODY_ONLY: LandingSample = {
@@ -97,13 +93,13 @@ const BODY_ONLY: LandingSample = {
       { category: "shoes", item: "Canvas sneakers", why: "Clean canvas keeps it light.", brand: { name: "Pace", priceRange: null, visitUrl: null } },
     ],
   },
-  images: { photoPathname: "landing/c-body/photo.jpg", previewPathname: "landing/c-body/preview.webp" },
+  images: { photoPath: "/landing/samples/body_only/photo.png", previewPath: "/landing/samples/body_only/preview.webp" },
 };
 
 const SAMPLES: LandingSamples = { full_body: FULL_BODY, face: FACE, body_only: BODY_ONLY };
 
 describe("the landing page", () => {
-  it("shows each frozen Consultation's text, with its photo and Preview through signed links valid for 1 hour", async () => {
+  it("shows each frozen Consultation's text, with its photo and Preview as they ship with the page", async () => {
     const page = await readLandingPage(harness.context(new TestBrowser()), SAMPLES);
 
     expect(page.samples.full_body).toEqual({
@@ -120,41 +116,27 @@ describe("the landing page", () => {
         priceRange: { min: 130, max: 410 },
         pieces: FULL_BODY.outfit.pieces,
       },
-      photoUrl: "https://blob.test/landing/c-full/photo.jpg?validUntil=2026-10-16T13:00:00.000Z",
-      previewUrl: "https://blob.test/landing/c-full/preview.webp?validUntil=2026-10-16T13:00:00.000Z",
+      photoUrl: "/landing/samples/full_body/photo.jpg",
+      previewUrl: "/landing/samples/full_body/preview.webp",
     });
     expect(page.samples.face).toMatchObject({
       countryName: "Australia",
       outfit: { position: 1, styleIconName: "Ava Stone", priceRange: null },
-      photoUrl: "https://blob.test/landing/c-face/photo.jpg?validUntil=2026-10-16T13:00:00.000Z",
-      previewUrl: "https://blob.test/landing/c-face/preview.webp?validUntil=2026-10-16T13:00:00.000Z",
+      photoUrl: "/landing/samples/face/photo.jpg",
+      previewUrl: "/landing/samples/face/preview.webp",
     });
     expect(page.samples.body_only).toMatchObject({
       countryName: "Germany",
       outfit: { styleIconName: "Cleo Hart", priceRange: { min: 15, max: 60 } },
-      photoUrl: "https://blob.test/landing/c-body/photo.jpg?validUntil=2026-10-16T13:00:00.000Z",
+      photoUrl: "/landing/samples/body_only/photo.png",
     });
   });
 
-  it("shows a placeholder sample, whose images haven't been captured yet, with no image links", async () => {
+  it("shows a placeholder sample, whose images haven't been captured yet, with no images", async () => {
     const page = await readLandingPage(harness.context(new TestBrowser()), { ...SAMPLES, face: { ...FACE, images: null } });
 
     expect(page.samples.face).toMatchObject({ outfit: { styleIconName: "Ava Stone" }, photoUrl: null, previewUrl: null });
-    expect(page.samples.full_body.photoUrl).toBe("https://blob.test/landing/c-full/photo.jpg?validUntil=2026-10-16T13:00:00.000Z");
-  });
-
-  it("shows an image the Blob store can't link with no link, rather than failing the page", async () => {
-    // Local development's store links only the files it holds, and a fresh checkout holds none of
-    // the samples' images.
-    const folder = await mkdtemp(path.join(tmpdir(), "landing-blob-"));
-    onTestFinished(() => rm(folder, { recursive: true, force: true }));
-    const blob = new LocalBlobStore(folder);
-    await blob.put(FACE.images!.photoPathname, new Uint8Array([1, 2, 3]), "image/jpeg");
-
-    const page = await readLandingPage({ ...harness.context(new TestBrowser()), blob }, SAMPLES);
-
-    expect(page.samples.full_body).toMatchObject({ photoUrl: null, previewUrl: null });
-    expect(page.samples.face).toMatchObject({ photoUrl: expect.any(String), previewUrl: null });
+    expect(page.samples.full_body.photoUrl).toBe("/landing/samples/full_body/photo.jpg");
   });
 
   it("tells the header whether the visitor is signed in, so it offers to open the app instead of signing in", async () => {
@@ -183,7 +165,7 @@ describe("the team exporting a Demo Account Consultation as a landing page sampl
       qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
   });
 
-  it("exports its Photo Style, its first ranked Style Icons, and its first Outfit's Brands and Pieces", async () => {
+  it("exports its Photo Style, its first ranked Style Icons, and, unless told otherwise, its first Outfit's Brands and Pieces", async () => {
     const demo = await signedInUser({ email: "demo@example.com", stylePreference: "womenswear", countryCode: "GB" });
     const consultationId = await start(demo, "full_body");
     await harness.stylings.runPending();
@@ -229,8 +211,9 @@ describe("the team exporting a Demo Account Consultation as a landing page sampl
             },
           ],
         },
-        images: { photoPathname: `landing/${consultationId}/photo.jpg`, previewPathname: `landing/${consultationId}/preview.webp` },
+        images: { photoPath: "/landing/samples/full_body/photo.jpg", previewPath: "/landing/samples/full_body/preview.webp" },
       },
+      images: expect.any(Array),
     });
   });
 
@@ -256,42 +239,63 @@ describe("the team exporting a Demo Account Consultation as a landing page sampl
     });
   });
 
-  it("copies its photo and first Preview into the landing page's own Blob folder, so the sample outlives the Consultation", async () => {
+  it("hands back its photo and first Preview to ship with the page, writing nothing, so the sample outlives the Consultation", async () => {
     const demo = await signedInUser({ email: "demo.copies@example.com" });
     const consultationId = await start(demo, "full_body");
     await harness.stylings.runPending();
     const shown = (await readConsultation(harness.context(demo), consultationId))!;
     const photo = harness.blob.objects.get(blobPathnameOf(shown.photoUrl));
     const preview = harness.blob.objects.get(blobPathnameOf(firstPreviewUrl(shown)));
+    const stored = [...harness.blob.objects.keys()];
 
     const result = await exportLandingSample(teamContext(), { email: "demo.copies@example.com", consultationId });
-    await deleteConsultation(harness.context(demo), consultationId);
 
+    expect([...harness.blob.objects.keys()]).toEqual(stored);
+    await deleteConsultation(harness.context(demo), consultationId);
     if (!result.ok) throw new Error(`Couldn't export the sample: ${result.refusal}`);
+    expect(result.images).toEqual([
+      { path: "/landing/samples/full_body/photo.jpg", bytes: photo?.bytes },
+      { path: "/landing/samples/full_body/preview.webp", bytes: preview?.bytes },
+    ]);
+    expect(photo).toBeDefined();
+    expect(preview).toBeDefined();
     const page = await readLandingPage(harness.context(new TestBrowser()), { ...SAMPLES, full_body: result.sample });
     expect(page.samples.full_body).toMatchObject({
-      photoUrl: `https://blob.test/landing/${consultationId}/photo.jpg?validUntil=2026-10-16T13:00:00.000Z`,
-      previewUrl: `https://blob.test/landing/${consultationId}/preview.webp?validUntil=2026-10-16T13:00:00.000Z`,
+      photoUrl: "/landing/samples/full_body/photo.jpg",
+      previewUrl: "/landing/samples/full_body/preview.webp",
     });
-    expect(harness.blob.objects.get(`landing/${consultationId}/photo.jpg`)).toEqual(photo);
-    expect(harness.blob.objects.get(`landing/${consultationId}/preview.webp`)).toEqual(preview);
-    expect(photo).toBeDefined();
+  });
+
+  it("exports another of its Outfits when the team picks one, with that Outfit's Preview", async () => {
+    const demo = await signedInUser({ email: "demo.picked@example.com" });
+    const consultationId = await start(demo, "full_body");
+    await harness.stylings.runPending();
+    const second = (await readConsultation(harness.context(demo), consultationId))!.outfits[1];
+    if (second?.preview.state !== "ready") throw new Error("The second Outfit has no Preview.");
+    const preview = harness.blob.objects.get(blobPathnameOf(second.preview.url));
+
+    const result = await exportLandingSample(teamContext(), { email: "demo.picked@example.com", consultationId, outfitPosition: 2 });
+
+    expect(result).toMatchObject({
+      ok: true,
+      sample: {
+        styleIcons: ["Ava Stone", "Bea Marsh", "Cleo Hart", "Dana Reed", "Esme Vale"],
+        outfit: { styleIconName: second.styleIconName, pieces: second.pieces },
+      },
+    });
+    expect(second.styleIconName).not.toBe("Ava Stone");
+    expect(result.ok && result.images[1]).toEqual({ path: "/landing/samples/full_body/preview.webp", bytes: preview?.bytes });
     expect(preview).toBeDefined();
   });
 
-  it("exports the same Consultation again, replacing its copies", async () => {
-    const demo = await signedInUser({ email: "demo.again@example.com" });
+  it("refuses an Outfit number the Consultation doesn't have", async () => {
+    const demo = await signedInUser({ email: "demo.no.such.outfit@example.com" });
     const consultationId = await start(demo, "full_body");
     await harness.stylings.runPending();
-    const first = await exportLandingSample(teamContext(), { email: "demo.again@example.com", consultationId });
 
-    const again = await exportLandingSample(teamContext(), { email: "demo.again@example.com", consultationId });
-
-    expect(again).toEqual(first);
-    expect(landingBlobs()).toEqual([
-      `landing/${consultationId}/photo.jpg`,
-      `landing/${consultationId}/preview.webp`,
-    ]);
+    expect(
+      await exportLandingSample(teamContext(), { email: "demo.no.such.outfit@example.com", consultationId, outfitPosition: 9 }),
+    ).toEqual({ ok: false, refusal: "no-outfit" });
   });
 
   it("refuses another account's Consultation, so no other user's photo can reach the public page", async () => {
@@ -308,7 +312,6 @@ describe("the team exporting a Demo Account Consultation as a landing page sampl
       ok: false,
       refusal: "no-such-account",
     });
-    expect(landingBlobs()).toEqual([]);
   });
 
   it("refuses a Consultation with no Outfit yet, or whose first Outfit has no Preview", async () => {
@@ -328,14 +331,8 @@ describe("the team exporting a Demo Account Consultation as a landing page sampl
       ok: false,
       refusal: "no-preview",
     });
-    expect(landingBlobs()).toEqual([]);
   });
 });
-
-/** Everything in the landing page's own Blob folders. */
-function landingBlobs(): string[] {
-  return [...harness.blob.objects.keys()].filter((pathname) => pathname.startsWith("landing/"));
-}
 
 /** The Blob pathname a test store's signed link points at. */
 function blobPathnameOf(signedUrl: string): string {

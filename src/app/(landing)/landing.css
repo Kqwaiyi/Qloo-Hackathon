@@ -1,0 +1,202 @@
+/* Lenis's own rules only match the classes it puts on <html> while it runs. */
+@import "lenis/dist/lenis.css";
+
+/*
+ * The landing page's stylesheet. Next.js keeps stylesheets loaded after a client-side navigation,
+ * so every rule here is scoped to the `.landing` root (or to a page that contains it) and can't
+ * restyle the app.
+ *
+ * The page works without any of its motion: chapters render as plain, readable sections, and the
+ * motion layer (motion/landing-motion.tsx) sets `data-live` on the root when it takes over. Rules
+ * under `[data-live]` are the pinned, layered versions it animates.
+ */
+
+body:has(.landing) {
+  background: var(--color-paper);
+}
+
+.landing {
+  /* The pinned track reaches past the sides; clip (unlike hidden) keeps pins working. */
+  overflow-x: clip;
+  font-family: var(--font-onest), ui-sans-serif, system-ui, sans-serif;
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+}
+
+.landing ::selection {
+  background: var(--color-ink);
+  color: var(--color-paper);
+}
+
+.landing :focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+/* The fixed ground behind the transparent chapters. The motion layer tweens its colour between
+   paper and ink as the chapters change. */
+.landing-ground {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--color-paper);
+}
+
+/* Without motion there's no morph between grounds, so each chapter paints its own. */
+.landing:not([data-live]) [data-ground="paper"] {
+  background: var(--color-paper);
+}
+.landing:not([data-live]) [data-ground="ink"] {
+  background: var(--color-ink);
+}
+
+/* Rendered media fades into the page at its edges, so a render's background never shows as a box. */
+.landing .feather {
+  mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent),
+    linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
+  mask-composite: intersect;
+}
+
+/* Subliminal grain, on dark grounds only and never animated. */
+.landing .grain {
+  position: relative;
+  isolation: isolate;
+}
+.landing .grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: soft-light;
+}
+
+/* The header slides away while the reader scrolls down and comes back when they scroll up. */
+.landing-header {
+  transition: transform 0.6s var(--ease-glide);
+}
+.landing-header.is-hidden {
+  transform: translateY(-130%);
+}
+
+/* The first-visit loader. It's hidden unless an inline script, before the first paint, adds a
+   <style data-landing-loader> that shows it (chapters/frame.tsx). It hides itself after a few
+   seconds even if the motion layer never runs. */
+.landing-loader {
+  display: none;
+}
+@keyframes landing-loader-rise {
+  from {
+    transform: translateY(105%);
+  }
+}
+@keyframes landing-loader-bar {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes landing-loader-fallback {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+/* What will your photo show? Without motion: the three Photo Types as a list. Live: one at a time
+   over the turning Figure, with hotspots on it, each sitting at the foot of the column. */
+.landing .hotspot {
+  display: none;
+}
+.landing[data-live] .photo-types-stage .hotspot {
+  display: inline-flex;
+}
+.landing[data-live] .photo-types-states {
+  display: grid;
+}
+.landing[data-live] .photo-types-states > * {
+  grid-area: 1 / 1;
+  align-self: end;
+}
+.landing[data-live] .photo-types-crop {
+  display: block;
+}
+.landing .photo-types-crop {
+  display: none;
+}
+/* Pinned, the stage is exactly one screen tall, or on a short window the words at its foot sit
+   below the fold for the whole turn. The Figure keeps its usual size when there's room, and
+   shrinks (still 4:5, never wider than its column) to whatever the headline and words leave. */
+.landing[data-live] .photo-types-stage {
+  height: 100svh;
+}
+.landing[data-live] .photo-types-body {
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+.landing[data-live] .photo-types-figure {
+  container-type: size;
+}
+.landing[data-live] .photo-types-frame {
+  height: min(100cqh, 125cqw, 36svh, 30rem);
+}
+@media (width >= 48rem) {
+  .landing[data-live] .photo-types-body {
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .landing[data-live] .photo-types-frame {
+    height: min(100cqh, 125cqw, 62svh, 40rem);
+  }
+}
+
+/* Style Icons: a swipeable row; live on wide screens, a pinned track the scroll moves. */
+.landing .track {
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+.landing .track::-webkit-scrollbar {
+  display: none;
+}
+.landing .track > * {
+  scroll-snap-align: start;
+}
+@media (min-width: 768px) {
+  .landing[data-live] .track {
+    overflow: visible;
+  }
+}
+
+/* Brands: every card open; live, one at a time. */
+.landing .accordion-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.7s var(--ease-glide), opacity 0.7s var(--ease-glide);
+}
+.landing .accordion-body > div {
+  overflow: hidden;
+  min-height: 0;
+}
+.landing[data-live] .accordion-item:not(.is-open) .accordion-body {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.landing .accordion-item {
+  transition: background-color 0.7s var(--ease-glide), color 0.7s var(--ease-glide);
+}
+.landing:not([data-live]) .accordion-item,
+.landing .accordion-item.is-open {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing *,
+  .landing *::before,
+  .landing *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
