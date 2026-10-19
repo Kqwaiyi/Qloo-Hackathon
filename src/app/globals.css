@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Screens too short for a New Consultation step at its roomiest: laptops, phones. */
+@custom-variant short (@media (max-height: 800px));
+
 body {
   background: var(--color-stone-50);
   color: var(--color-stone-900);
@@ -14,6 +17,9 @@ body {
   --color-mute-dark: #9a9a9a;
   --color-card: #efefef;
   --color-card-dark: #161616;
+  /* The grey of the Qurator mark. Too light for text: for outlines, silhouettes and things not yet
+     reached or not unlocked. */
+  --color-ash: #a3a3a3;
 
   --text-display: clamp(2.25rem, 0.5rem + 4.8vw, 6.5rem);
   --text-display--line-height: 0.92;
@@ -31,4 +37,13 @@ body {
   --ease-glide: cubic-bezier(0.25, 0.74, 0.22, 0.99);
   --ease-sweep: cubic-bezier(0.645, 0.045, 0.355, 1);
   --ease-curtain: cubic-bezier(0.7, 0, 0.3, 1);
+
+  /* A New Consultation step, or a sheet, arriving after the user moved on to it. */
+  --animate-step-in: step-in 0.5s var(--ease-glide) both;
+  @keyframes step-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+  }
 }

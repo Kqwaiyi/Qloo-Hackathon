@@ -150,6 +150,9 @@ export type ConsultationState = (typeof CONSULTATION_STATES)[number];
 /** The picker refuses bigger files before anything is sent. */
 export const PICKER_MAX_FILE_BYTES = 20 * 1024 * 1024;
 
+/** The camera's self-timer, so the user can step back far enough for a body photo. */
+export const SELF_TIMER_SECONDS = 5;
+
 /** The browser redraws every photo as a JPEG at most this many pixels on its long side. */
 export const PHOTO_MAX_LONG_SIDE_PX = 1600;
 

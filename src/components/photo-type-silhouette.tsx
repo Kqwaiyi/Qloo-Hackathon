@@ -43,6 +43,25 @@ export function PhotoTypeSilhouette({ photoType, className }: { photoType: Photo
 }
 
 /**
+ * The silhouette as a dashed outline in the current colour, on a light ground: the camera's outline,
+ * drawn where there's no camera yet.
+ */
+export function PhotoTypeSketch({ photoType, className }: { photoType: PhotoType; className?: string }) {
+  const maskId = `${useId().replace(/[^\w-]/g, "")}-sketch`;
+  return (
+    <svg viewBox={FRAMES[photoType]} preserveAspectRatio="xMidYMid slice" aria-hidden="true" className={className}>
+      <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="300" height="400">
+        <rect width="300" height="400" fill="white" />
+        <Figure fill="black" />
+      </mask>
+      <g mask={`url(#${maskId})`}>
+        <Figure fill="none" stroke="currentColor" strokeWidth={3} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />
+      </g>
+    </svg>
+  );
+}
+
+/**
  * The silhouette as a dashed outline, for laying over the camera. A Body-Only Photo adds a
  * "keep your face above this line" guide.
  */

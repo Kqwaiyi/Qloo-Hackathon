@@ -11,6 +11,7 @@ import { requireSignedInUser } from "@/server/data/session";
 import { getUsageSummary } from "@/server/data/usage";
 
 import { Stepper } from "../stepper";
+import { stepHeading, stepLead } from "../ui";
 import { NewConsultation } from "./new-consultation";
 
 export const metadata: Metadata = { title: "New Consultation" };
@@ -27,7 +28,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
           {COPY.emailVerified}
         </p>
       )}
-      <h1 className="mb-6 text-2xl font-semibold tracking-tight">New Consultation</h1>
+      {/* The page's name, kept quiet: each step's question is the headline. */}
+      <h1 className="mb-3 font-medium sm:mb-4">New Consultation</h1>
       {stylingStart.ok ? (
         <NewConsultation
           outfitsWanted={stylingStart.outfitsWanted}
@@ -49,12 +51,12 @@ function VerifyFirst({ email }: { email: string }) {
   return (
     <>
       <Stepper current={1} />
-      <section aria-labelledby="verify-first-heading" className="rounded-xl border-2 border-dashed border-stone-200 p-8 text-center">
-        <h2 id="verify-first-heading" className="text-xl font-semibold tracking-tight">
+      <section aria-labelledby="verify-first-heading">
+        <h2 id="verify-first-heading" className={stepHeading}>
           Verify your email first
         </h2>
-        <p className="mx-auto mt-2 max-w-md text-stone-600">
-          Open the link we sent to <span className="font-medium text-stone-900">{email}</span> to start your first Consultation.
+        <p className={stepLead}>
+          Open the link we sent to <span className="font-medium text-ink">{email}</span> to start your first Consultation.
           Can&apos;t find it? Resend it, or fix the address, from the banner above.
         </p>
       </section>
@@ -71,11 +73,11 @@ function StylingUnavailable({ refusal }: { refusal: LimitRefusal }) {
   return (
     <>
       <Stepper current={1} />
-      <section aria-labelledby="styling-unavailable-heading" className="rounded-xl border-2 border-dashed border-stone-200 p-8 text-center">
-        <h2 id="styling-unavailable-heading" className="text-xl font-semibold tracking-tight">
+      <section aria-labelledby="styling-unavailable-heading">
+        <h2 id="styling-unavailable-heading" className={`${stepHeading} max-w-[24ch]`}>
           <LimitMessage refusal={refusal} />
         </h2>
-        <p className="mx-auto mt-2 max-w-md text-stone-600">
+        <p className={stepLead}>
           You can still open and delete your Consultations in{" "}
           <Link href={ROUTES.myConsultations} className={textLink}>
             My Consultations
