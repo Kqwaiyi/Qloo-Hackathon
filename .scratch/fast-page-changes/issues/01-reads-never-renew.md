@@ -8,14 +8,14 @@
 
 **Spec:** [spec.md](../spec.md) sections "Implementation Decisions › Renewing a sign-in" (One place renews, Reads never renew) and "Testing Decisions" (Layer 1). Stories 15, 16, 17, 20, 21, 22, 23, 24, 36 and 37.
 
-- [ ] Reading the signed-in user asks Better Auth not to refresh the sign-in (its read option for that), so no page or action read renews it.
-- [ ] The renewal operation is unchanged: it renews only once the sign-in is a day old, and passes every cookie Better Auth hands back to the response, including a cleared cookie when the sign-in has ended.
-- [ ] Renewal still marks the user active for the daily sweep, through the existing session hooks; nothing changes there.
-- [ ] Tests at the operation seam, with a test browser and a moved `Date` as the existing session tests do:
-  - [ ] The existing "roll forward 30 days from when they were last used" test still passes.
-  - [ ] Signed in on day 0, read on day 2, then renewed on day 2: the browser gets a fresh 30-day cookie and is still signed in on day 31.
-  - [ ] Signed in on day 0, only read on day 2: the user is signed out on day 31.
-  - [ ] Renewing a sign-in less than a day old sends no new cookie.
-  - [ ] Renewing with no sign-in cookie sends no cookie and doesn't throw.
-  - [ ] Renewing after "Sign out of all devices" clears that browser's cookie, and the browser stays signed out.
-- [ ] Every existing unit test and the type check still pass.
+- [x] Reading the signed-in user asks Better Auth not to refresh the sign-in (its read option for that), so no page or action read renews it.
+- [x] The renewal operation is unchanged: it renews only once the sign-in is a day old, and passes every cookie Better Auth hands back to the response, including a cleared cookie when the sign-in has ended.
+- [x] Renewal still marks the user active for the daily sweep, through the existing session hooks; nothing changes there.
+- [x] Tests at the operation seam, with a test browser and a moved `Date` as the existing session tests do:
+  - [x] The existing "roll forward 30 days from when they were last used" test still passes.
+  - [x] Signed in on day 0, read on day 2, then renewed on day 2: the browser gets a fresh 30-day cookie and is still signed in on day 31.
+  - [x] Signed in on day 0, only read on day 2: the user is signed out on day 31.
+  - [x] Renewing a sign-in less than a day old sends no new cookie.
+  - [x] Renewing with no sign-in cookie sends no cookie and doesn't throw.
+  - [x] Renewing after "Sign out of all devices" clears that browser's cookie, and the browser stays signed out.
+- [x] Every existing unit test and the type check still pass.

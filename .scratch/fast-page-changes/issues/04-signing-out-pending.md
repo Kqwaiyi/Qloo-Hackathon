@@ -8,8 +8,8 @@
 
 **Spec:** [spec.md](../spec.md) section "Implementation Decisions › Pending states". Stories 28, 29, 30 and 33.
 
-- [ ] Both buttons read their form's pending status. While pending they are disabled and labelled "Signing out…", in the style of the existing "Signing in…" and "Sending…".
-- [ ] The new label lives in the shared copy next to "Sign out of all devices".
-- [ ] The Demo Account's managed "Sign out of all devices" in Settings is unchanged.
-- [ ] Every other action button's existing pending state is untouched; a check found these two to be the only ones without one.
-- [ ] No test asserts "Signing out…" on screen: it shows only for a moment. Every existing Playwright spec, unit test and the type check still pass.
+- [x] Both buttons read their form's pending status. While pending they are disabled and labelled "Signing out…", in the style of the existing "Signing in…" and "Sending…".
+- [x] The new label lives in the shared copy next to "Sign out of all devices".
+- [x] The Demo Account's managed "Sign out of all devices" in Settings is unchanged.
+- [x] Every other action button's existing pending state is untouched; a check found these two to be the only ones without one.
+- [x] No test asserts "Signing out…" on screen: it shows only for a moment. Every existing Playwright spec, unit test and the type check still pass.

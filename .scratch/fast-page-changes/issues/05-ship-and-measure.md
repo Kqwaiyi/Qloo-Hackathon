@@ -8,7 +8,7 @@
 
 **Spec:** [spec.md](../spec.md) sections "Testing Decisions" (Acceptance on Production) and "Further Notes" (The measurements behind this spec, Deploying). Story 39.
 
-- [ ] Locally, the type check, the unit tests and the Playwright tests all pass.
+- [x] Locally, the type check, the unit tests and the Playwright tests all pass.
 - [ ] The change is committed following the team's commit conventions and pushed to `main`, which deploys Production. The team agreed to this push in the grilling; confirm with the user in chat before pushing all the same.
 - [ ] After at least a day of real use, these Vercel observability queries for the project are compared with the "before" numbers below:
   - [ ] Proxy invocations: none on any path any more.
