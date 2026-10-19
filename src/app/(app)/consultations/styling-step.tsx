@@ -13,13 +13,13 @@ import { stepHeading } from "./ui";
 /** Where things stand: the photo check, before there's a Styling, or the Styling's stage. */
 type ChecklistStage = "photo_check" | StylingStage;
 
-/** The checklist's items, in order, each with the stages it covers and who does the work. */
-const ITEMS: readonly { label: string; stages: readonly ChecklistStage[]; by: string }[] = [
-  { label: "Checking your photo", stages: ["photo_check"], by: "AI" },
-  { label: "Finding Style Icons", stages: ["style_icons"], by: "Qloo" },
+/** The checklist's items, in order, each with the stages it covers. */
+const ITEMS: readonly { label: string; stages: readonly ChecklistStage[] }[] = [
+  { label: "Checking your photo", stages: ["photo_check"] },
+  { label: "Finding Style Icons", stages: ["style_icons"] },
   // Fetching Brands is part of building the Outfits, so a Budget Tier change ticks the Style Icons.
-  { label: "Building Outfits", stages: ["brands", "building_outfits"], by: "Qloo and AI" },
-  { label: "Generating Previews", stages: ["previews"], by: "AI" },
+  { label: "Building Outfits", stages: ["brands", "building_outfits"] },
+  { label: "Generating Previews", stages: ["previews"] },
 ];
 
 /**
@@ -122,18 +122,12 @@ export function StylingChecklist({
               ) : (
                 <span aria-hidden="true" className="size-6 shrink-0 rounded-full border-2 border-ink/12" />
               )}
-              <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-4 pt-0.5">
-                <span className={done || active ? "font-medium text-ink" : "text-mute"}>
-                  {item.label}
-                  {item.stages.includes("previews") && previews && (
-                    <span className="tabular-nums">{` (${previews.done} of ${previews.of})`}</span>
-                  )}
-                  {done && <span className="sr-only"> (done)</span>}
-                </span>
-                <span className="text-sm text-mute">
-                  <span className="sr-only">, by </span>
-                  {item.by}
-                </span>
+              <span className={`min-w-0 flex-1 pt-0.5 ${done || active ? "font-medium text-ink" : "text-mute"}`}>
+                {item.label}
+                {item.stages.includes("previews") && previews && (
+                  <span className="tabular-nums">{` (${previews.done} of ${previews.of})`}</span>
+                )}
+                {done && <span className="sr-only"> (done)</span>}
               </span>
             </li>
           );

@@ -109,7 +109,8 @@ export function NewConsultation({
  * The Photo Type step: three viewfinders framing the same figure the way each Photo Type does, each
  * with the four Categories under it, lit where that photo unlocks them. It fits the screen: on
  * phones the three share the height left above Continue, and on wider screens the viewfinders
- * shrink where the screen is short.
+ * shrink where the screen is short. There the three also share their rows, so each one's name,
+ * hint and Categories line up with the others'.
  */
 function PhotoTypeStep({
   photoType,
@@ -132,12 +133,12 @@ function PhotoTypeStep({
           What will your photo show?
         </h2>
         <p className={stepLead}>This decides which parts of an Outfit you get.</p>
-        <fieldset className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col gap-2 sm:mt-6 sm:grid sm:flex-initial sm:grid-cols-3 sm:grid-rows-[minmax(0,1fr)] sm:gap-4 sm:short:mt-5">
+        <fieldset className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col gap-2 sm:mt-6 sm:grid sm:flex-initial sm:grid-cols-3 sm:grid-rows-[minmax(0,1fr)_auto_auto_auto] sm:gap-x-4 sm:gap-y-0 sm:short:mt-5">
           <legend className="sr-only">Photo Type</legend>
           {PHOTO_TYPES.map((type) => (
             <label
               key={type}
-              className="group/option flex min-h-0 flex-1 cursor-pointer gap-3 rounded-xl bg-white p-2.5 ring-1 ring-ink/10 transition-shadow duration-200 ring-inset hover:ring-ink/30 has-checked:ring-2 has-checked:ring-ink has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ink sm:flex-col sm:gap-4 sm:p-4 sm:short:gap-3 sm:short:p-3"
+              className="group/option flex min-h-0 flex-1 cursor-pointer gap-3 rounded-xl bg-white p-2.5 ring-1 ring-ink/10 transition-shadow duration-200 ring-inset hover:ring-ink/30 has-checked:ring-2 has-checked:ring-ink has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ink sm:row-span-4 sm:grid sm:grid-rows-subgrid sm:gap-0 sm:p-4 sm:short:p-3"
             >
               <input
                 type="radio"
@@ -148,15 +149,15 @@ function PhotoTypeStep({
                 className="sr-only"
               />
               <Viewfinder photoType={type} />
-              <span className="min-w-0 flex-1 sm:flex-none">
-                <span className="flex items-center justify-between gap-3">
+              <span className="min-w-0 flex-1 sm:contents">
+                <span className="flex items-center justify-between gap-3 sm:mt-4 sm:short:mt-3">
                   <span className="font-medium">{PHOTO_TYPE_LABELS[type]}</span>
                   <span
                     aria-hidden="true"
                     className="size-[18px] shrink-0 rounded-full ring-1 ring-ink/25 transition-[box-shadow] duration-200 ring-inset group-has-checked/option:ring-[5px] group-has-checked/option:ring-ink"
                   />
                 </span>
-                <span className="mt-0.5 block text-[13px] text-mute sm:min-h-[2lh] sm:text-sm sm:short:min-h-0">{PHOTO_TYPE_HINTS[type]}</span>
+                <span className="mt-0.5 block text-[13px] text-mute sm:text-sm">{PHOTO_TYPE_HINTS[type]}</span>
                 <CategorySlots photoType={type} />
               </span>
             </label>
@@ -175,12 +176,12 @@ function PhotoTypeStep({
 /**
  * The figure framed as `photoType` frames it, inside crop marks. It turns ink when its option is
  * chosen. On phones it's as tall as its option; wider, as wide as its option unless the screen is
- * too short, when it shrinks, staying 4:5.
+ * too short, when it's only as tall as the row left for it, staying 4:5.
  */
 function Viewfinder({ photoType }: { photoType: PhotoType }) {
   const corners = ["top-1.5 left-1.5 border-t border-l", "top-1.5 right-1.5 border-t border-r", "bottom-1.5 left-1.5 border-b border-l", "bottom-1.5 right-1.5 border-b border-r"];
   return (
-    <span aria-hidden="true" className="block aspect-[4/5] h-full shrink-0 [container-type:size] sm:h-auto sm:min-h-0 sm:w-full sm:shrink">
+    <span aria-hidden="true" className="block aspect-[4/5] h-full shrink-0 [container-type:size] sm:h-auto sm:max-h-full sm:w-full">
       <span className="relative mx-auto block h-full w-[min(100cqw,80cqh)] overflow-hidden rounded-md bg-paper">
         <PhotoTypeSilhouette
           photoType={photoType}
