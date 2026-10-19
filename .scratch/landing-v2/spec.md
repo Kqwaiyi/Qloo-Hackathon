@@ -4,9 +4,9 @@ The landing page keeps its story (one frozen sample Consultation, told step by s
 
 ## Rules that don't change
 
-- The page never calls Qloo or the AI: it shows the frozen samples with fresh 1-hour signed Blob links (`src/server/operations/landing.ts` and its tests are untouched).
-- AI chapters say "AI". Gemini is named once, in the call to action. 18+ appears in the footer only.
-- Style Icons by name and initials, never photos. Every sample person is captioned, every Preview badged "AI-generated".
+- The page never calls Qloo or the AI: it shows the frozen samples, whose images ship with it under `public/landing/samples/`.
+- AI chapters say "AI". Gemini is named once, in the call to action. The page has no footer.
+- Style Icons by rank and name, never photos. Every sample person is captioned, every Preview badged "AI-generated".
 - Photos are edited, never analysed (ADR-0005): the photo check is shown as plain ticks, never a scan.
 - Placeholders are designed: until tickets 05 and 39 capture the real samples, image slots show the page's rendered Figure with "Sample photo to come" / "Sample Preview to come".
 - Every number on the page comes from the config (`OUTFIT_ALLOWANCE`, `OUTFITS_PER_STYLING`, `CATEGORIES`), every claim from the code or the Privacy Policy.
@@ -21,4 +21,6 @@ The landing page keeps its story (one frozen sample Consultation, told step by s
 
 ## Chapters
 
-Hero (spread headline over the light Drape) · How it works (word fill) · 01 You: what will your photo show? (pinned Figure turntable, hotspots per Photo Type) · 02 AI: the photo check · 03 Qloo: Style Icons (pinned sideways track) · 04 Qloo: the Brands (pinned accordion) · 05 AI: the Pieces · 06 AI: the Preview (pinned grow and wipe, white bloom out) · 07 You: ready to shop (comparison slider, Budget Tier) · Not after a whole Outfit? (cylinder of the three samples) · By the numbers · Get started · curtain footer.
+Hero (centred headline over the light Drape) · How it works (word fill) · What will your photo show? (pinned Figure turntable, hotspots per Photo Type) · the photo check · Style Icons (pinned sideways track) · the Brands (pinned accordion) · the Pieces · ready to shop (comparison slider, Budget Tier) · Careful with your photos · Get started, the last screen: nothing comes after it.
+
+Chapters are unnumbered and carry no You / AI / Qloo tags.

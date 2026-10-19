@@ -11,15 +11,12 @@ import {
   setupAnchors,
   setupCards,
   setupCovers,
-  setupCylinder,
   setupFills,
   setupGround,
   setupHeader,
-  setupIndicator,
   setupLoader,
   setupLoops,
   setupPhotoTypes,
-  setupPreview,
   setupReveals,
   setupTrack,
   startSmoothScroll,
@@ -38,7 +35,7 @@ CustomEase.create("curtain", "0.7,0,0.3,1");
  * The chapters are plain markup; this finds them by their data attributes and brings them to life,
  * but only for visitors who haven't asked for reduced motion. They get the static page as it is.
  * Smooth scrolling is for mouse and trackpad only: touch screens keep their own momentum. Pinned
- * tracks and the cylinder need a wide screen; phones get swipeable rows instead.
+ * tracks need a wide screen; phones get swipeable rows instead.
  */
 export function LandingMotion() {
   useGSAP(() => {
@@ -60,7 +57,6 @@ export function LandingMotion() {
           setupAnchors(root, lenis),
           setupLoops(root),
           setupPhotoTypes(root, wide),
-          wide ? setupCylinder(root) : undefined,
         ];
         setupGround(root);
         setupCovers(root);
@@ -68,10 +64,8 @@ export function LandingMotion() {
         setupFills(root);
         if (wide) setupTrack(root);
         setupAccordion(root);
-        setupPreview(root);
         setupCards(root);
         setupHeader(root);
-        setupIndicator(root);
         ScrollTrigger.sort();
         ScrollTrigger.refresh();
         // Line breaks move once the web font arrives, and pins measure from them.

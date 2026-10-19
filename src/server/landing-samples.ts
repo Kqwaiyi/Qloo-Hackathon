@@ -7,72 +7,74 @@ import type { LandingSamples } from "@/server/operations/landing";
 export const LANDING_SAMPLES: LandingSamples = {
   "full_body": {
     "photoType": "full_body",
-    "stylePreference": "menswear",
+    "stylePreference": "no_preference",
     "ageGroup": "25_29",
-    "countryCode": "GB",
-    "budgetTier": "medium",
+    "countryCode": "US",
+    "budgetTier": "no_budget",
     "photoStyle": [
-      "streetwear",
       "casual"
     ],
     "styleIcons": [
-      "Jordan Vale",
-      "Marcus Lane",
-      "Theo Hart",
-      "Rafael Cruz",
-      "Sam Okafor"
+      "Millie Bobby Brown",
+      "Post Malone",
+      "Lucy Hale",
+      "J. Cole",
+      "Lili Reinhart"
     ],
     "outfit": {
-      "styleIconName": "Jordan Vale",
+      "styleIconName": "Post Malone",
       "pieces": [
         {
           "category": "hairstyle",
-          "item": "Textured crop with a low fade",
-          "why": "A short, textured top keeps the easy streetwear feel of your photo.",
+          "item": "Messy textured short braid crop",
+          "why": "This hairstyle channels Post Malone's signature look effortlessly while matching your casual photo style and current hair length.",
           "brand": null
         },
         {
           "category": "top",
-          "item": "Boxy heavyweight tee in washed sage",
-          "why": "A boxy tee sits well with the relaxed way you already dress.",
+          "item": "Black graphic printed cotton t-shirt",
+          "why": "This black t-shirt captures Post Malone's laid-back style and complements the casual photo vibe while adding contrast to your look.",
           "brand": {
-            "name": "Northline",
+            "name": "Stance",
             "priceRange": {
-              "min": 55,
-              "max": 180
+              "min": 15,
+              "max": 75
             },
             "visitUrl": null
           }
         },
         {
           "category": "bottom",
-          "item": "Straight-leg jeans, mid wash",
-          "why": "Mid-wash denim grounds the sage tee without competing with it.",
+          "item": "Washed black relaxed denim jeans",
+          "why": "These jeans bring a relaxed edge to your outfit, echoing Post Malone's street-smart style for a casual full-body photo shoot.",
           "brand": {
-            "name": "Indigo Row",
+            "name": "Fear Of God",
             "priceRange": {
-              "min": 50,
-              "max": 130
+              "min": 100,
+              "max": 2500
             },
             "visitUrl": null
           }
         },
         {
           "category": "shoes",
-          "item": "Retro runners in grey suede",
-          "why": "Grey suede runners finish a streetwear Outfit without shouting.",
+          "item": "White chunky leather athletic sneakers",
+          "why": "These sneakers ground your casual look with a sporty, statement-making finish that echoes Post Malone's preference for bulky footwear.",
           "brand": {
-            "name": "Strideworks",
+            "name": "Big Baller Brand",
             "priceRange": {
-              "min": 80,
-              "max": 160
+              "min": 50,
+              "max": 500
             },
             "visitUrl": null
           }
         }
       ]
     },
-    "images": null
+    "images": {
+      "photoPath": "/landing/samples/full_body/photo.jpg",
+      "previewPath": "/landing/samples/full_body/preview.webp"
+    }
   },
   "face": {
     "photoType": "face",
@@ -84,12 +86,12 @@ export const LANDING_SAMPLES: LandingSamples = {
       "edgy"
     ],
     "styleIcons": [
-      "Nova Reyes",
-      "Lena Park",
-      "Iris Bell"
+      "Miranda Kerr",
+      "Gigi Hadid",
+      "Taylor Marie Hill"
     ],
     "outfit": {
-      "styleIconName": "Nova Reyes",
+      "styleIconName": "Miranda Kerr",
       "pieces": [
         {
           "category": "hairstyle",
@@ -112,12 +114,12 @@ export const LANDING_SAMPLES: LandingSamples = {
       "classic"
     ],
     "styleIcons": [
-      "Clara Moss",
-      "Ines Ward",
-      "Mila Stone"
+      "Victoria Beckham",
+      "Reese Witherspoon",
+      "Blake Lively"
     ],
     "outfit": {
-      "styleIconName": "Clara Moss",
+      "styleIconName": "Victoria Beckham",
       "pieces": [
         {
           "category": "one_piece",

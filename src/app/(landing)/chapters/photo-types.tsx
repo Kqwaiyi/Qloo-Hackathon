@@ -1,8 +1,8 @@
 import { CATEGORIES, CATEGORY_LABELS, PHOTO_TYPE_CATEGORIES, PHOTO_TYPE_LABELS, PHOTO_TYPES, type PhotoType } from "@/config/consultations";
 
-import { ChapterTag, GridFrame, Label, SpreadHeadline } from "../ui";
+import { GridFrame, Headline, Label } from "../ui";
 
-// 01 · You. Which photo unlocks which Categories, shown on the page's turning Figure: one Photo
+// What will your photo show? Which photo unlocks which Categories, shown on the page's turning Figure: one Photo
 // Type at a time, with a hotspot lit for each Category it unlocks. Without motion, the three Photo
 // Types are a plain list beside the Figure.
 
@@ -18,13 +18,12 @@ export const FIGURE_SEQUENCE = { base: "/landing/figure/light", frames: 48, mobi
 
 export function PhotoTypes() {
   return (
-    <section data-ground="paper" data-chapter="01 / 07 · You" data-scene="photo-types" aria-labelledby="photo-types-title" className="relative">
+    <section data-ground="paper" data-scene="photo-types" aria-labelledby="photo-types-title" className="relative">
       <div data-pin className="photo-types-stage relative flex min-h-svh flex-col pt-24 pb-8 md:pt-28">
-        <SpreadHeadline id="photo-types-title" left="What will" right="your photo show?" />
-        <div className="mt-6 grid flex-1 grid-cols-4 gap-x-4 gap-y-6 px-4 md:mt-8 md:grid-cols-12 md:gap-y-10 md:px-6">
+        <Headline id="photo-types-title">What will your photo show?</Headline>
+        <div className="photo-types-body mt-6 grid flex-1 grid-cols-4 gap-x-4 gap-y-6 px-4 md:mt-8 md:grid-cols-12 md:gap-y-10 md:px-6">
           <div className="order-2 col-span-4 flex flex-col justify-end md:order-none md:col-span-4 lg:col-span-3">
-            <ChapterTag number={1} who="You" tone="paper" />
-            <ol className="photo-types-states mt-6 flex flex-col gap-10">
+            <ol className="photo-types-states flex flex-col gap-10">
               {PHOTO_TYPES.map((photoType) => (
                 <li key={photoType} data-state={photoType} data-unlocks={PHOTO_TYPE_CATEGORIES[photoType].join(" ")}>
                   <h3 className="text-title">{PHOTO_TYPE_LABELS[photoType]}</h3>
@@ -50,8 +49,8 @@ export function PhotoTypes() {
               ))}
             </ol>
           </div>
-          <div className="order-1 col-span-4 flex items-center justify-center md:order-none md:col-span-8 lg:col-span-6">
-            <GridFrame tone="paper" className="aspect-[4/5] h-[min(36svh,30rem)] md:h-[min(62svh,40rem)]">
+          <div className="photo-types-figure order-1 col-span-4 flex items-center justify-center md:order-none md:col-span-8 lg:col-span-6">
+            <GridFrame tone="paper" className="photo-types-frame aspect-[4/5] h-[min(36svh,30rem)] md:h-[min(62svh,40rem)]">
               <img
                 data-sequence-poster
                 src={`${FIGURE_SEQUENCE.base}/000.webp`}
@@ -85,11 +84,6 @@ export function PhotoTypes() {
                 </span>
               ))}
             </GridFrame>
-          </div>
-          <div className="hidden lg:col-span-3 lg:flex lg:flex-col lg:items-end lg:justify-end">
-            <Label className="text-mute">
-              <span data-photo-type-counter>1</span> / {PHOTO_TYPES.length}
-            </Label>
           </div>
         </div>
       </div>

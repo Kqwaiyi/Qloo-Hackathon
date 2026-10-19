@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { Label, LoopVideo, SpreadHeadline } from "../ui";
+import { Headline, Label, LoopVideo } from "../ui";
 
 // The opening: the promise in four words over the turning Drape, then how it works in one line.
 
@@ -18,7 +18,9 @@ export function Hero({ notice }: { notice?: ReactNode }) {
           <LoopVideo name="drape/light-loop" />
         </div>
         <div className="absolute inset-x-0 top-1/2 -translate-y-1/2">
-          <SpreadHeadline as="h1" id="hero-title" left="One photo" joiner=", " right="complete Outfits" gap="Picked with Qloo's taste data, shown on you" />
+          <Headline as="h1" id="hero-title" caption="Picked with Qloo's taste data, shown on you">
+            One photo, complete Outfits
+          </Headline>
         </div>
         <div className="absolute inset-x-0 bottom-0 flex items-end justify-between px-4 pb-5 md:px-6 md:pb-6">
           <Label className="text-mute">Scroll to follow along</Label>
@@ -46,7 +48,7 @@ export function Statement() {
       id={HOW_IT_WORKS_ID}
       data-ground="paper"
       aria-label="How it works"
-      className="relative z-10 flex min-h-[110svh] items-center justify-center bg-paper px-4 py-40 md:px-6"
+      className="relative z-10 flex min-h-svh items-center justify-center bg-paper px-4 py-24 md:px-6"
     >
       <p data-fill="paper" className="max-w-[24ch] text-center text-title">
         <span data-fill-hold className="text-mute">

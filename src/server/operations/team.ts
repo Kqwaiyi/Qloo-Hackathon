@@ -3,12 +3,10 @@ import { and, asc, eq } from "drizzle-orm";
 
 import { DEMO_ACCOUNT_BIRTH_DATE, DEMO_ACCOUNT_PROFILE, isAllowedPassword } from "@/config/accounts";
 import { byCategoryOrder } from "@/config/consultations";
-import { LANDING_STYLE_ICONS } from "@/config/landing";
+import { LANDING_SAMPLES_FOLDER, LANDING_STYLE_ICONS } from "@/config/landing";
 import { judgeAge, parseIsoBirthDate, storeBirthYearAndMonth } from "@/server/accounts/birth-date";
 import { type AccountDeletionContext, deleteAccountOf } from "@/server/accounts/deletion";
 import { checkProfile, usernameProblem } from "@/server/accounts/profile";
-import type { BlobStore } from "@/server/blob/store";
-import { landingSampleFolder, landingSamplePathname } from "@/server/consultations/blob-pathnames";
 import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
 import { pieceView, pieceViewColumns } from "@/server/operations/consultations";
 import type { OperationContext, Result } from "@/server/operations/context";
@@ -110,21 +108,29 @@ export async function createDemoAccount(
 export interface LandingSampleExport {
   email: string;
   consultationId: string;
+  /** Which of its current Outfits the sample shows, as "Outfit N" numbers it. The first unless given. */
+  outfitPosition?: number;
 }
 
 export type ExportLandingSampleRefusal = { refusal: "no-such-account" | "no-such-consultation" | "no-outfit" | "no-preview" };
 
+/** One of a frozen sample's images, for the script to ship with the page: its path from the site's root, and its bytes. */
+export interface LandingSampleImage {
+  path: string;
+  bytes: Uint8Array;
+}
+
 /**
  * Freezes a Consultation made on the Demo Account as a landing page sample: its text, from the
- * Photo Style to its first Outfit's Pieces, and copies of its photo and that Outfit's Preview in
- * the landing page's own Blob folder, which outlive the Consultation. It must be a Consultation of
- * the account using this email, the Demo Account's, so a mistyped ID can't put another user's
- * photo on the public page.
+ * Photo Style to one Outfit's Pieces (the first, unless the team picks another), and its photo and
+ * that Outfit's Preview, for the script to ship with the page so the sample outlives the
+ * Consultation. It writes nothing itself. It must be a Consultation of the account using this
+ * email, the Demo Account's, so a mistyped ID can't put another user's photo on the public page.
  */
 export async function exportLandingSample(
   ctx: TeamContext,
-  { email, consultationId }: LandingSampleExport,
-): Promise<Result<{ sample: LandingSample }, ExportLandingSampleRefusal>> {
+  { email, consultationId, outfitPosition = 1 }: LandingSampleExport,
+): Promise<Result<{ sample: LandingSample; images: LandingSampleImage[] }, ExportLandingSampleRefusal>> {
   const userId = await findUserIdByEmail(ctx, email);
   if (!userId) return { ok: false, refusal: "no-such-account" };
   const [row] = await ctx.db
@@ -132,7 +138,7 @@ export async function exportLandingSample(
     .from(consultation)
     .where(and(eq(consultation.id, consultationId), eq(consultation.userId, userId)));
   if (!row) return { ok: false, refusal: "no-such-consultation" };
-  const [first] = await ctx.db
+  const [shown] = await ctx.db
     .select({
       id: outfit.id,
       previewState: outfit.previewState,
@@ -144,28 +150,21 @@ export async function exportLandingSample(
     })
     .from(outfit)
     .innerJoin(styleIcon, eq(styleIcon.id, outfit.styleIconId))
-    .where(and(eq(outfit.consultationId, row.id), eq(outfit.current, true)))
-    .orderBy(asc(outfit.position))
-    .limit(1);
-  if (!first) return { ok: false, refusal: "no-outfit" };
-  if (first.previewState !== "ready" || !first.previewPathname) return { ok: false, refusal: "no-preview" };
+    .where(and(eq(outfit.consultationId, row.id), eq(outfit.current, true), eq(outfit.position, outfitPosition)));
+  if (!shown) return { ok: false, refusal: "no-outfit" };
+  if (shown.previewState !== "ready" || !shown.previewPathname) return { ok: false, refusal: "no-preview" };
   const styleIcons = await ctx.db
     .select({ name: styleIcon.name })
     .from(styleIcon)
-    .where(eq(styleIcon.stylingId, first.styleIconList))
+    .where(eq(styleIcon.stylingId, shown.styleIconList))
     .orderBy(asc(styleIcon.position))
-    // Down to the first Outfit's Style Icon, when Style Icons passed over push it below the first few.
-    .limit(Math.max(LANDING_STYLE_ICONS, first.styleIconRank));
-  const pieces = await ctx.db.select(pieceViewColumns).from(piece).where(eq(piece.outfitId, first.id));
-  const images = {
-    // Named as the photo was stored, for its format.
-    photoPathname: landingSamplePathname(row.id, row.photoPathname.split("/").at(-1)!),
-    previewPathname: landingSamplePathname(row.id, "preview.webp"),
-  };
-  // The store never overwrites, so an export run again replaces its copies.
-  await ctx.blob.deleteFolder(landingSampleFolder(row.id));
-  await copyBlob(ctx.blob, row.photoPathname, images.photoPathname);
-  await copyBlob(ctx.blob, first.previewPathname, images.previewPathname);
+    // Down to the shown Outfit's Style Icon, when it ranks below the first few.
+    .limit(Math.max(LANDING_STYLE_ICONS, shown.styleIconRank));
+  const pieces = await ctx.db.select(pieceViewColumns).from(piece).where(eq(piece.outfitId, shown.id));
+  const folder = `${LANDING_SAMPLES_FOLDER}/${row.photoType}`;
+  // The photo keeps the name it was stored under, for its format.
+  const photo = { path: `${folder}/${row.photoPathname.split("/").at(-1)!}`, bytes: (await ctx.blob.get(row.photoPathname)).bytes };
+  const preview = { path: `${folder}/preview.webp`, bytes: (await ctx.blob.get(shown.previewPathname)).bytes };
   return {
     ok: true,
     sample: {
@@ -176,15 +175,11 @@ export async function exportLandingSample(
       budgetTier: row.budgetTier,
       photoStyle: row.photoStyle,
       styleIcons: styleIcons.map(({ name }) => name),
-      outfit: { styleIconName: first.styleIconName, pieces: pieces.toSorted(byCategoryOrder).map(pieceView) },
-      images,
+      outfit: { styleIconName: shown.styleIconName, pieces: pieces.toSorted(byCategoryOrder).map(pieceView) },
+      images: { photoPath: photo.path, previewPath: preview.path },
     },
+    images: [photo, preview],
   };
-}
-
-async function copyBlob(blob: BlobStore, from: string, to: string): Promise<void> {
-  const { bytes, contentType } = await blob.get(from);
-  await blob.put(to, bytes, contentType);
 }
 
 /** The account using this email, as Better Auth finds it at sign-in: ignoring case. */

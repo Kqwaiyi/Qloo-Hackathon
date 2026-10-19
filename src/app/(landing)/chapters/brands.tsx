@@ -3,22 +3,21 @@ import { CATEGORY_LABELS } from "@/config/consultations";
 import type { LandingSampleView } from "@/server/operations/landing";
 
 import { budgetTierChip, budgetTierPhrase } from "../format";
-import { ChapterTag, Chip, Label } from "../ui";
+import { Chip, Label } from "../ui";
 
-// 04 · Qloo. The Brands that the Style Icon's fans favour, within the sample's Budget Tier: one
+// The Brands that the Style Icon's fans favour, within the sample's Budget Tier: one
 // card per Brand Piece. Live, the section pins and opens one card at a time while a hairline fills.
 
 export function Brands({ sample }: { sample: LandingSampleView }) {
   const { outfit } = sample;
   const brandPieces = outfit.pieces.flatMap(({ category, brand }) => (brand ? [{ category, brand }] : []));
   return (
-    <section data-ground="ink" data-chapter="04 / 07 · Qloo" data-scene="accordion" aria-labelledby="brands-title" className="relative text-paper">
+    <section data-ground="ink" data-scene="accordion" aria-labelledby="brands-title" className="relative text-paper">
       <div data-pin className="relative grid min-h-svh grid-cols-4 content-center gap-x-4 gap-y-12 px-4 py-28 md:grid-cols-12 md:px-6">
         <div aria-hidden="true" className="absolute inset-x-4 top-24 h-px bg-paper/14 md:inset-x-6 md:top-28">
           <div data-progress className="h-full origin-left bg-paper" />
         </div>
-        <div className="col-span-4 flex flex-col gap-6 md:col-span-5">
-          <ChapterTag number={4} who="Qloo" tone="ink" />
+        <div className="col-span-4 flex flex-col gap-5 md:col-span-5">
           <h2 id="brands-title" data-reveal="rise" className="text-title">
             …and the Brands their fans favour
           </h2>

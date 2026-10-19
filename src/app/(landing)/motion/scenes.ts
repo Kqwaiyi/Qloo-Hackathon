@@ -216,9 +216,9 @@ const LIT = { pill: ["bg-ink", "text-paper"], dot: ["bg-ink"] };
 const GHOST = { pill: ["bg-paper/70", "text-ink/40", "ring-1", "ring-ink/15"], dot: ["bg-ink/25"] };
 
 /**
- * 01 · What will your photo show? The chapter pins while the Figure makes one full turn. Each third
- * of the turn is one Photo Type: its words rise in, the hotspots for the Categories it unlocks
- * light up, and a dashed crop frames what that photo would show.
+ * What will your photo show? The chapter pins while the Figure makes one full turn. Each third of
+ * the turn is one Photo Type: its words rise in, the hotspots for the Categories it unlocks light
+ * up, and a dashed crop frames what that photo would show.
  */
 export function setupPhotoTypes(root: HTMLElement, wide: boolean): Cleanup | undefined {
   const section = root.querySelector<HTMLElement>('[data-scene="photo-types"]');
@@ -234,7 +234,6 @@ export function setupPhotoTypes(root: HTMLElement, wide: boolean): Cleanup | und
   const states = all(section, "[data-state]");
   const hotspots = all(section, "[data-hotspot]");
   const crop = section.querySelector<HTMLElement>("[data-crop]");
-  const counter = section.querySelector("[data-photo-type-counter]");
   let anchors: FigureAnchors | null = null;
   let frame = 0;
   let state = -1;
@@ -277,7 +276,14 @@ export function setupPhotoTypes(root: HTMLElement, wide: boolean): Cleanup | und
     const previous = states[state];
     const current = states[next];
     if (!current) return;
-    if (previous && previous !== current) gsap.to(previous, { autoAlpha: 0, y: -12, duration: instant ? 0 : 0.45, ease: "glide" });
+    // A quick scroll can change state while the last change is still easing. Its tweens go first,
+    // or one still fading a state in brings it back over the one now showing.
+    gsap.killTweensOf(states);
+    for (const other of states) {
+      if (other === current) continue;
+      if (other === previous && !instant) gsap.to(other, { autoAlpha: 0, y: -12, duration: 0.45, ease: "glide" });
+      else gsap.set(other, { autoAlpha: 0 });
+    }
     gsap.fromTo(current, { autoAlpha: 0, y: 14 }, { autoAlpha: 1, y: 0, duration: instant ? 0 : 0.8, delay: instant ? 0 : 0.1, ease: "glide" });
     const unlocks = (current.dataset.unlocks ?? "").split(" ");
     for (const hotspot of hotspots) {
@@ -289,9 +295,8 @@ export function setupPhotoTypes(root: HTMLElement, wide: boolean): Cleanup | und
         element?.classList.add(...looks[part]);
       }
     }
-    if (counter) counter.textContent = String(next + 1);
     const frameFor = cropFor(current.dataset.state ?? "");
-    if (crop && frameFor) gsap.to(crop, { ...frameFor, autoAlpha: 1, duration: instant ? 0 : 0.9, ease: "sweep" });
+    if (crop && frameFor) gsap.to(crop, { ...frameFor, autoAlpha: 1, duration: instant ? 0 : 0.9, ease: "sweep", overwrite: true });
     state = next;
   };
 
@@ -340,7 +345,7 @@ export function setupPhotoTypes(root: HTMLElement, wide: boolean): Cleanup | und
   };
 }
 
-/** 03 · Style Icons: on wide screens the row pins and the scroll carries it sideways. */
+/** Style Icons: on wide screens the row pins and the scroll carries it sideways. */
 export function setupTrack(root: HTMLElement): void {
   const section = root.querySelector<HTMLElement>('[data-scene="track"]');
   const pin = section?.querySelector<HTMLElement>("[data-pin]");
@@ -361,7 +366,7 @@ export function setupTrack(root: HTMLElement): void {
   });
 }
 
-/** 04 · Brands: the chapter pins and opens one Brand at a time while a hairline fills. */
+/** Brands: the chapter pins and opens one Brand at a time while a hairline fills. */
 export function setupAccordion(root: HTMLElement): void {
   const section = root.querySelector<HTMLElement>('[data-scene="accordion"]');
   const pin = section?.querySelector<HTMLElement>("[data-pin]");
@@ -387,81 +392,7 @@ export function setupAccordion(root: HTMLElement): void {
   });
 }
 
-/**
- * 06 · The Preview: the chapter pins; the photo grows from a small frame to nearly full height, the
- * Preview wipes in over it from the right behind a hairline, and a white bloom rises into the next,
- * light chapter.
- */
-export function setupPreview(root: HTMLElement): void {
-  const section = root.querySelector<HTMLElement>('[data-scene="preview"]');
-  const pin = section?.querySelector<HTMLElement>("[data-pin]");
-  const stage = section?.querySelector("[data-preview-stage]");
-  const after = section?.querySelector("[data-preview-after]");
-  const divider = section?.querySelector("[data-preview-divider]");
-  const bloom = section?.querySelector("[data-bloom]");
-  if (!section || !pin || !stage || !after || !divider || !bloom) return;
-  gsap
-    .timeline({ scrollTrigger: { trigger: section, start: "top top", end: () => `+=${window.innerHeight * 2.2}`, pin, scrub: true } })
-    .fromTo(stage, { scale: 0.56 }, { scale: 1, ease: "none", duration: 0.35 })
-    .fromTo(after, { clipPath: "inset(0% 0% 0% 100%)" }, { clipPath: "inset(0% 0% 0% 0%)", ease: "none", duration: 0.45 }, 0.4)
-    .fromTo(divider, { left: "100%", autoAlpha: 1 }, { left: "0%", ease: "none", duration: 0.45 }, 0.4)
-    .to(divider, { autoAlpha: 0, duration: 0.04 }, 0.85)
-    .fromTo(bloom, { autoAlpha: 0, yPercent: 30 }, { autoAlpha: 1, yPercent: 0, ease: "none", duration: 0.15 }, 0.85);
-}
-
-/**
- * Not after a whole Outfit? On wide screens the samples sit on the inside of a cylinder, and the
- * scroll turns it so each one passes the middle in turn.
- */
-export function setupCylinder(root: HTMLElement): Cleanup | undefined {
-  const section = root.querySelector<HTMLElement>('[data-scene="cylinder"]');
-  const pin = section?.querySelector<HTMLElement>("[data-pin]");
-  const ring = section?.querySelector<HTMLElement>("[data-cylinder-ring]");
-  const panels = section ? all(section, "[data-cylinder-panel]") : [];
-  if (!section || !pin || !ring || panels.length === 0) return;
-  const middle = (panels.length - 1) / 2;
-  let radius = 0;
-  let step = 0;
-  const layout = () => {
-    const width = panels[0]?.offsetWidth ?? 0;
-    radius = Math.min(window.innerWidth * 0.36, 560);
-    step = ((width + 72) / radius) * (180 / Math.PI);
-    panels.forEach((panel, index) => {
-      // The first sample sits to the left, so the turn reads left to right.
-      panel.style.transform = `translateX(-50%) rotateY(${(middle - index) * step}deg) translateZ(${-radius}px)`;
-    });
-  };
-  const turn = { angle: 0 };
-  const apply = () => {
-    ring.style.transform = `translateZ(${radius}px) rotateY(${turn.angle}deg)`;
-  };
-  layout();
-  gsap.fromTo(
-    turn,
-    { angle: () => -middle * step },
-    {
-      angle: () => middle * step,
-      ease: "none",
-      onUpdate: apply,
-      scrollTrigger: {
-        trigger: section,
-        start: "top top",
-        end: () => `+=${window.innerHeight * 1.6}`,
-        pin,
-        scrub: true,
-        invalidateOnRefresh: true,
-        onRefreshInit: layout,
-      },
-    },
-  );
-  apply();
-  return () => {
-    ring.style.transform = "";
-    for (const panel of panels) panel.style.transform = "";
-  };
-}
-
-/** By the numbers: the cards rise into place one after another as the section scrolls in. */
+/** Careful with your photos: the cards rise into place one after another as the section scrolls in. */
 export function setupCards(root: HTMLElement): void {
   for (const list of all(root, "[data-cards]")) {
     gsap.from(all(list, "[data-card]"), {
@@ -485,39 +416,6 @@ export function setupHeader(root: HTMLElement): void {
       for (const part of parts) part.classList.toggle("is-hidden", hide);
     },
   });
-}
-
-/** Which numbered chapter the reader is in, top centre; hidden between chapters. */
-export function setupIndicator(root: HTMLElement): void {
-  const indicator = root.querySelector("[data-chapter-indicator]");
-  const text = root.querySelector("[data-chapter-indicator-text]");
-  if (!indicator || !text) return;
-  let active: HTMLElement | null = null;
-  const show = (section: HTMLElement | null) => {
-    if (!section) {
-      gsap.to(indicator, { autoAlpha: 0, duration: 0.4, ease: "glide" });
-      return;
-    }
-    text.textContent = section.dataset.chapter ?? "";
-    gsap.to(indicator, { autoAlpha: 1, duration: 0.4, ease: "glide" });
-    gsap.fromTo(text, { autoAlpha: 0, y: 6 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: "glide" });
-  };
-  for (const section of all(root, "[data-chapter]")) {
-    ScrollTrigger.create({
-      trigger: section,
-      start: "top 55%",
-      end: "bottom 55%",
-      onToggle: (self) => {
-        if (self.isActive) {
-          active = section;
-          show(section);
-        } else if (active === section) {
-          active = null;
-          show(null);
-        }
-      },
-    });
-  }
 }
 
 /**

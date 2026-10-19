@@ -6,89 +6,41 @@ import type { ReactNode } from "react";
 
 export type Tone = "paper" | "ink";
 
-/** Small, uppercase and tracked: chapter numbers, chips, hotspots, captions and buttons. */
+/** Small, uppercase and tracked: chips, hotspots, captions and buttons. */
 export function Label({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <span className={`text-label font-medium uppercase ${className}`}>{children}</span>;
 }
 
 /**
- * A headline in two parts pushed to the edges of the page, with an optional label under it,
- * centred. On narrower screens the parts stack, the second one right-aligned. Screen readers hear
- * the parts joined into one heading, with the joiner between them.
+ * A display headline, centred, its lines balanced, with an optional caption under it in small
+ * capitals.
  */
-export function SpreadHeadline({
+export function Headline({
   as: Tag = "h2",
   id,
-  left,
-  right,
-  joiner = " ",
-  gap,
+  children,
+  caption,
   className = "",
 }: {
   as?: "h1" | "h2";
   id?: string;
-  left: string;
-  right: string;
-  joiner?: string;
-  gap?: ReactNode;
+  children: string;
+  caption?: ReactNode;
   className?: string;
 }) {
   return (
-    <div className={`px-4 md:px-6 ${className}`}>
-      {/* Its name is spelled out: split into masked lines, the parts would otherwise be heard with stray spaces. */}
-      <Tag
-        id={id}
-        aria-label={`${left}${joiner}${right}`}
-        className="flex flex-col text-display font-normal uppercase xl:flex-row xl:items-baseline xl:justify-between"
-      >
-        <span data-reveal="rise" className="block">
-          {left}
-        </span>
-        <span data-reveal="rise" className="block self-end text-right xl:self-auto">
-          {right}
-        </span>
+    <div className={`px-4 text-center md:px-6 ${className}`}>
+      <Tag id={id} data-reveal="rise" className="mx-auto max-w-[16ch] text-display font-normal text-balance uppercase">
+        {children}
       </Tag>
-      {gap && (
-        <p data-reveal="blur" className="mt-6 max-w-[26ch] text-label font-medium uppercase xl:mx-auto xl:mt-8 xl:text-center">
-          {gap}
+      {caption && (
+        <p data-reveal="blur" className="mx-auto mt-5 max-w-[32ch] text-label font-medium uppercase">
+          {caption}
         </p>
       )}
     </div>
   );
 }
-
-/** Who does a step, per ADR-0001, told apart by shape rather than colour: Qloo filled, AI outlined, You dotted. */
-export type Who = "Qloo" | "AI" | "You";
-
-const WHO_SHAPES: Record<Who, string> = {
-  Qloo: "bg-current",
-  AI: "border border-current",
-  You: "border border-dashed border-current",
-};
-
-export function WhoTag({ who, tone }: { who: Who; tone: Tone }) {
-  const filledText = tone === "paper" ? "text-paper" : "text-ink";
-  return (
-    <span className={`inline-flex h-6 items-center rounded-full px-2.5 ${WHO_SHAPES[who]}`}>
-      <Label className={who === "Qloo" ? filledText : ""}>{who}</Label>
-    </span>
-  );
-}
-
-/** A chapter's number and who does it: "03 / 07" and a Who tag. */
-export function ChapterTag({ number, who, tone }: { number: number; who: Who; tone: Tone }) {
-  return (
-    <p data-reveal="blur" className="flex items-center gap-3">
-      <Label>
-        {String(number).padStart(2, "0")} / {String(CHAPTER_COUNT).padStart(2, "0")}
-      </Label>
-      <WhoTag who={who} tone={tone} />
-    </p>
-  );
-}
-
-/** The walkthrough's numbered chapters, from the photo to the Outfit. */
-export const CHAPTER_COUNT = 7;
 
 /** A word or two on a pill: Photo Style words, profile details, a Budget Tier. */
 export function Chip({ children, tone }: { children: ReactNode; tone: Tone }) {

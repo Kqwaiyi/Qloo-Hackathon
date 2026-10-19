@@ -3,10 +3,10 @@ import Link from "next/link";
 import { COPY } from "@/config/copy";
 import { APP_HOME, ROUTES } from "@/config/routes";
 
+import { FirstPaintScript } from "../first-paint-script";
 import { Label, Pill } from "../ui";
 
-// What frames every chapter: the fixed ground behind them, the header, the chapter indicator and
-// the first-visit loader.
+// What frames every chapter: the fixed ground behind them, the header and the first-visit loader.
 
 /** Where "Get started" goes: the call to action, which says where photos go before anyone signs up. */
 export const GET_STARTED_ID = "get-started";
@@ -28,23 +28,24 @@ const LOADER_STYLE = [
  * Turns the loader on before the first paint, once per browser session, and never for someone who
  * asked for reduced motion. It's inline so it runs before the page is drawn, and it adds a <style>
  * to the head rather than touching any element React renders, so hydration finds nothing changed.
+ * A client-side visit never runs it, so it never shows the loader.
  */
 const LOADER_SCRIPT = `try{if(!sessionStorage.getItem("landing-loader")&&!matchMedia("(prefers-reduced-motion: reduce)").matches){var s=document.createElement("style");s.setAttribute("data-landing-loader","");s.textContent=${JSON.stringify(LOADER_STYLE)};document.head.appendChild(s);sessionStorage.setItem("landing-loader","1")}}catch(e){}`;
 
-/** The wordmark spread across the screen while a hairline fills, for about a second on the first visit. */
+/** The wordmark, centred, while a hairline fills, for about a second on the first visit. */
 export function Loader() {
   return (
     <>
-      <script dangerouslySetInnerHTML={{ __html: LOADER_SCRIPT }} />
+      <FirstPaintScript code={LOADER_SCRIPT} />
       <div data-loader aria-hidden="true" className="landing-loader fixed inset-0 z-[100] flex-col justify-center bg-paper text-ink">
         <span data-loader-bar className="absolute top-0 left-0 h-px w-full origin-left bg-ink" />
-        <p className="flex flex-col px-4 text-display uppercase md:px-6 xl:flex-row xl:justify-between">
+        <p className="flex flex-wrap justify-center gap-x-[0.25em] px-4 text-center text-display uppercase md:px-6">
           <span className="block overflow-hidden">
             <span data-loader-word className="block">
               Outfit
             </span>
           </span>
-          <span className="block self-end overflow-hidden xl:self-auto">
+          <span className="block overflow-hidden">
             <span data-loader-word className="block">
               Recommender
             </span>
@@ -71,19 +72,6 @@ export function Header({ signedIn }: { signedIn: boolean }) {
         </Pill>
       </nav>
     </header>
-  );
-}
-
-/** Which numbered chapter the reader is in, top centre, set by the motion layer. */
-export function ChapterIndicator() {
-  return (
-    <p
-      data-chapter-indicator
-      aria-hidden="true"
-      className="pointer-events-none fixed top-7 left-1/2 z-40 hidden -translate-x-1/2 text-paper opacity-0 mix-blend-difference lg:block"
-    >
-      <span data-chapter-indicator-text className="text-label font-medium uppercase" />
-    </p>
   );
 }
 

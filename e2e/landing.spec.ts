@@ -32,7 +32,7 @@ test("a visitor follows the walkthrough's promise to the call to action, then on
 test.describe("with reduced motion", () => {
   test.use({ reducedMotion: "reduce" });
 
-  test("every chapter reads as a plain page, naming Gemini once and 18+ only in the footer", async ({ page }) => {
+  test("every chapter reads as a plain page, naming Gemini once", async ({ page }) => {
     const errors = watchForErrors(page);
     await page.goto("/");
 
@@ -42,10 +42,8 @@ test.describe("with reduced motion", () => {
       "Qloo finds Style Icons",
       "…and the Brands their fans favour",
       /The AI tailors each Piece to the photo/,
-      "Only the hair and clothes change",
       "Your Outfit, ready to shop",
-      "Not after a whole Outfit?",
-      "Free to use, and careful with your photos.",
+      "Careful with your photos",
       "Now try it on your own photo",
     ]) {
       const heading = page.getByRole("heading", { level: 2, name });
@@ -59,8 +57,8 @@ test.describe("with reduced motion", () => {
 
     const text = await page.locator("main").innerText();
     expect(text.match(/Gemini/g)).toHaveLength(1);
-    expect(text).not.toContain("18+");
-    await expect(page.locator("footer")).toContainText("For adults 18+");
+    // The call to action is the last screen: nothing follows it.
+    await expect(page.locator("footer")).toHaveCount(0);
     expect(errors).toEqual([]);
   });
 });

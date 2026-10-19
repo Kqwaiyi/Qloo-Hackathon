@@ -5,9 +5,9 @@ import type { LandingSampleView } from "@/server/operations/landing";
 
 import { BeforeAfter } from "../before-after";
 import { AiGeneratedPersonCaption, SamplePhotoImage, SamplePreviewImage } from "../sample-images";
-import { ChapterTag, Label, SpreadHeadline } from "../ui";
+import { Headline, Label } from "../ui";
 
-// 07 · You. The sample's first Outfit, ready to shop: its Pieces with their Brands, price ranges
+// The sample's first Outfit, ready to shop: its Pieces with their Brands, price ranges
 // and, where there is one, a link to the Brand's site; the photo and Preview to compare by hand;
 // how many Outfits come at a time; and the Budget Tier control that makes Qloo pick again. The
 // app's own Outfit card is left as it is: this is the landing page's monochrome telling of it.
@@ -15,12 +15,9 @@ import { ChapterTag, Label, SpreadHeadline } from "../ui";
 export function ReadyToShop({ sample }: { sample: LandingSampleView }) {
   const { outfit } = sample;
   return (
-    <section data-ground="paper" data-chapter="07 / 07 · You" aria-labelledby="ready-to-shop-title" className="relative pt-44 pb-40">
-      <div className="px-4 md:px-6">
-        <ChapterTag number={7} who="You" tone="paper" />
-      </div>
-      <SpreadHeadline id="ready-to-shop-title" className="mt-8" left="Your Outfit," right="ready to shop" />
-      <div className="mt-20 grid grid-cols-4 gap-x-4 gap-y-16 px-4 md:grid-cols-12 md:px-6">
+    <section data-ground="paper" aria-labelledby="ready-to-shop-title" className="relative pt-28 pb-[30svh]">
+      <Headline id="ready-to-shop-title">Your Outfit, ready to shop</Headline>
+      <div className="mt-12 grid grid-cols-4 gap-x-4 gap-y-16 px-4 md:grid-cols-12 md:px-6">
         <figure data-reveal="blur" className="col-span-4 md:col-span-5 lg:col-span-4 lg:col-start-2">
           <BeforeAfter
             label="Compare the photo with its Preview"
@@ -61,7 +58,7 @@ export function ReadyToShop({ sample }: { sample: LandingSampleView }) {
               </li>
             ))}
           </ul>
-          <div className="mt-14 grid grid-cols-2 gap-4">
+          <div className="mt-10 grid grid-cols-2 gap-4">
             <div data-reveal="blur">
               <p className="text-display">{OUTFITS_PER_STYLING}</p>
               <Label className="mt-3 block text-mute">Outfits to start</Label>
@@ -72,7 +69,7 @@ export function ReadyToShop({ sample }: { sample: LandingSampleView }) {
             </div>
           </div>
           {sample.budgetTier && (
-            <div data-reveal="blur" className="mt-14">
+            <div data-reveal="blur" className="mt-10">
               <Label className="text-mute">Budget Tier</Label>
               <p className="sr-only">Our sample used the {BUDGET_TIER_LABELS[sample.budgetTier]} Budget Tier.</p>
               <div aria-hidden="true" className="mt-3 inline-flex flex-wrap gap-1 rounded-[1.25rem] bg-card p-1">
@@ -87,7 +84,7 @@ export function ReadyToShop({ sample }: { sample: LandingSampleView }) {
               </div>
             </div>
           )}
-          <p data-reveal="blur" className="mt-8 max-w-[44ch] text-body text-mute">
+          <p data-reveal="blur" className="mt-6 max-w-[44ch] text-body text-mute">
             Each Piece names its Brand, its price range and, where there is one, its site. Change the Budget Tier or Photo Style and Qloo picks
             again.
           </p>
