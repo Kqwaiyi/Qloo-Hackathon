@@ -37,5 +37,9 @@ test("a Consultation opens from My Consultations, and is deleted for good after 
 
   await expect(page.getByText("No Consultations yet.")).toBeVisible();
   await expect(rows).toHaveCount(0);
-  expect((await page.goto(consultationUrl))?.status()).toBe(404);
+  // The app pages stream in behind the loading placeholder, so a page that isn't found says so with
+  // the 200 already sent, and a noindex tag, rather than a 404.
+  await page.goto(consultationUrl);
+  await expect(page.getByRole("heading", { name: "This page could not be found." })).toBeVisible();
+  await expect(page.locator('meta[name="robots"][content="noindex"]').first()).toBeAttached();
 });

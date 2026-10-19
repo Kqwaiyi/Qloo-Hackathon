@@ -20,3 +20,7 @@
   - [ ] One Consultation → another
 - [ ] While a page loads, clicking another header link goes there instead.
 - [ ] No test asserts the placeholder on screen: it shows only for a moment. Every existing Playwright spec, unit test and the type check still pass.
+
+## Comments
+
+**A deleted Consultation's page now answers 200, not 404.** The loading boundaries make an app page's response start streaming, with a 200, before the page runs, so a Consultation page's `notFound()` (deleted, or someone else's) can no longer change the status. It still shows "404 / This page could not be found." in the main area, under the header, with Next.js's `noindex` tag. A real 404 would need the existence check to run before the stream starts: something in front of page requests, which this spec removes, or per-page boundaries with a Consultation layout doing an extra database read on every Consultation page and every prefetched "Open" link. `e2e/my-consultations.spec.ts` (issue 17's "its page is a 404") now checks the not-found heading and the `noindex` tag instead of the status.
