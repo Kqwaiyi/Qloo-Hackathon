@@ -13,6 +13,7 @@ import { birthMonthAndYearText } from "@/server/accounts/birth-date";
 import { getPendingEmailChange, requireSignedInUser } from "@/server/data/session";
 import { getTeamEmail } from "@/server/data/team";
 
+import { SignOutButton } from "../sign-out-button";
 import { signOutEverywhereAction } from "./actions";
 import { DeleteAccount } from "./delete-account";
 import { DemoAccountBirthDateForm } from "./demo-account-birth-date-form";
@@ -89,9 +90,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
             <ManagedAction id="sign-out-everywhere" label={COPY.signOutEverywhere} />
           ) : (
             <form action={signOutEverywhereAction}>
-              <button type="submit" className={secondaryButton}>
-                {COPY.signOutEverywhere}
-              </button>
+              <SignOutButton label={COPY.signOutEverywhere} className={secondaryButton} />
               <p className="mt-2 text-sm text-stone-600">Ends every sign-in to your account, this one included.</p>
             </form>
           )}

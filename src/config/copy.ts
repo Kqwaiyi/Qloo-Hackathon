@@ -103,6 +103,8 @@ export const COPY = {
   birthDateWrong: "Wrong?",
   emailUs: "Email us",
   signOutEverywhere: "Sign out of all devices",
+  /** What Sign out and "Sign out of all devices" say while they work. */
+  signingOut: "Signing out…",
   /** Beside each Settings item the Demo Account can't change, with a lock icon. */
   managedByTheTeam: "Managed by the team",
   /** On the Demo Account's consent sheet, as part of its photo notice, and on its My Consultations. */

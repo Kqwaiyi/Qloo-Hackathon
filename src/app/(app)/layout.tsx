@@ -8,6 +8,7 @@ import { getEmailVerification, requireSignedInUser } from "@/server/data/session
 
 import { signOutAction } from "./actions";
 import { RenewSignIn } from "./renew-sign-in";
+import { SignOutButton } from "./sign-out-button";
 import { VerifyEmailBanner } from "./verify-email-banner";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -24,9 +25,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             <NavLink href={ROUTES.myConsultations}>My Consultations</NavLink>
             <NavLink href={ROUTES.settings}>Settings</NavLink>
             <form action={signOutAction}>
-              <button type="submit" className="rounded-lg px-3 py-1.5 font-medium text-stone-600 hover:bg-stone-100">
-                Sign out
-              </button>
+              <SignOutButton label="Sign out" className="rounded-lg px-3 py-1.5 font-medium text-stone-600 hover:bg-stone-100" />
             </form>
           </nav>
         </div>
