@@ -152,7 +152,7 @@ export function CameraView({
   const { state } = camera;
   const live = state.status === "live";
   return (
-    <div className="relative h-full w-full overflow-hidden bg-stone-900 text-stone-200">
+    <div className="relative h-full w-full overflow-hidden bg-ink text-paper/85">
       <video
         ref={camera.videoRef}
         autoPlay
@@ -162,7 +162,7 @@ export function CameraView({
         className={`absolute inset-0 h-full w-full object-cover ${live ? "" : "invisible"} ${live && state.mirrored ? "-scale-x-100" : ""}`}
       />
       {live && <PhotoTypeOutline photoType={photoType} className="absolute inset-0 h-full w-full" />}
-      <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center text-sm empty:hidden">
+      <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-5 p-6 text-center text-sm text-balance empty:hidden">
         {state.status === "starting" && <p>Starting your camera… Allow access if your browser asks.</p>}
         {state.status === "unavailable" && (
           <>
@@ -172,7 +172,7 @@ export function CameraView({
                 <button
                   type="button"
                   onClick={camera.retry}
-                  className="rounded-lg border border-stone-500 px-4 py-2 font-medium hover:bg-stone-800"
+                  className="inline-flex h-10 items-center rounded-full px-5 font-medium ring-1 ring-paper/30 ring-inset outline-offset-2 hover:ring-paper/60 focus-visible:outline-2 focus-visible:outline-paper"
                 >
                   Try again
                 </button>
@@ -180,7 +180,7 @@ export function CameraView({
               <button
                 type="button"
                 onClick={onUpload}
-                className="rounded-lg bg-white px-4 py-2 font-medium text-stone-900 hover:bg-stone-200"
+                className="inline-flex h-10 items-center rounded-full bg-paper px-5 font-medium text-ink outline-offset-2 hover:bg-paper/85 focus-visible:outline-2 focus-visible:outline-paper"
               >
                 Upload a photo instead
               </button>

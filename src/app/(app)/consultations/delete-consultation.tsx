@@ -21,7 +21,8 @@ export function DeleteConsultation({
   return (
     <ConfirmDialog
       trigger={<>Delete{children}</>}
-      triggerClassName="rounded-lg px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+      // Above the print's link, which covers the whole print.
+      triggerClassName="relative z-10 -mr-2 rounded-full px-2 py-0.5 text-sm text-mute outline-offset-2 hover:bg-red-50 hover:text-red-700 focus-visible:outline-2 focus-visible:outline-red-700"
       title="Delete this Consultation?"
       confirmLabel="Delete"
       confirmingLabel="Deleting…"

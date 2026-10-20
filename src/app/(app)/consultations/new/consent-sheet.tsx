@@ -4,9 +4,11 @@ import Link from "next/link";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { SharedDemoAccountNote } from "@/components/shared-demo-account-note";
-import { primaryButton, secondaryButton, textLink } from "@/components/ui";
+import { textLink } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import { ROUTES } from "@/config/routes";
+
+import { inkPill, linePill } from "../ui";
 
 /** What `dialog.close()` is given when the user agrees, telling that apart from closing it. */
 const AGREED = "agreed";
@@ -21,6 +23,8 @@ const AGREED = "agreed";
  * says plainly that anyone with the login can see the Consultations made there.
  *
  * `onClose` says whether the user agreed to both, or closed it (with "Not now" or Escape) without.
+ *
+ * On phones it rises from the bottom edge, where the boxes and Continue are in reach of a thumb.
  */
 export function ConsentSheet({
   open,
@@ -53,16 +57,16 @@ export function ConsentSheet({
       ref={dialog}
       aria-labelledby={titleId}
       onClose={(event) => onClose(event.currentTarget.returnValue === AGREED)}
-      className="m-auto w-[calc(100%-2rem)] max-w-lg rounded-2xl bg-white p-0 text-stone-900 shadow-xl backdrop:bg-black/40"
+      className="mx-0 mt-auto mb-0 w-full max-w-none rounded-t-2xl bg-white p-0 text-ink backdrop:bg-ink/50 motion-safe:open:animate-step-in sm:m-auto sm:w-[calc(100%-2rem)] sm:max-w-lg sm:rounded-2xl"
     >
       <div className="flex max-h-[calc(100dvh-2rem)] flex-col">
-        <div className="overflow-y-auto p-6">
-          <h2 ref={heading} id={titleId} tabIndex={-1} className="text-lg font-semibold outline-none">
+        <div className="min-h-0 overflow-y-auto px-6 pt-7 pb-6">
+          <h2 ref={heading} id={titleId} tabIndex={-1} className="text-[1.375rem] leading-tight font-medium tracking-[-0.01em] outline-none">
             Before we use your photos
           </h2>
-          {isDemoAccount && <SharedDemoAccountNote className="mt-3" />}
-          <p className="mt-2 text-sm text-stone-600">Here&apos;s what happens to each photo you send.</p>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-stone-700">
+          {isDemoAccount && <SharedDemoAccountNote className="mt-4" />}
+          <p className="mt-2 text-sm text-mute">Here&apos;s what happens to each photo you send.</p>
+          <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-ink/80 marker:text-ash">
             <li>
               We keep it privately, with the Outfits and Previews made from it, until{" "}
               {isDemoAccount
@@ -85,8 +89,8 @@ export function ConsentSheet({
             <li>Qloo, which picks the Style Icons and Brands, never sees your photo.</li>
           </ul>
 
-          <h3 className="mt-5 text-sm font-semibold">What to send</h3>
-          <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-stone-700">
+          <h3 className="mt-6 text-sm font-medium">What to send</h3>
+          <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-ink/80 marker:text-ash">
             <li>{COPY.contentRules}</li>
             <li>
               A Body-Only Photo can still show your face. If it does, your face is processed with the rest of the photo, and
@@ -94,10 +98,10 @@ export function ConsentSheet({
             </li>
           </ul>
 
-          <h3 className="mt-5 text-sm font-semibold">When you delete them</h3>
-          <p className="mt-2 text-sm text-stone-700">{COPY.deletionPromise}</p>
+          <h3 className="mt-6 text-sm font-medium">When you delete them</h3>
+          <p className="mt-2 text-sm text-ink/80">{COPY.deletionPromise}</p>
 
-          <p className="mt-5 text-sm text-stone-700">
+          <p className="mt-6 text-sm text-ink/80">
             There&apos;s more in our{" "}
             {/* A new tab, so the photo waiting on this step is kept. */}
             <Link href={ROUTES.privacy} target="_blank" className={textLink}>
@@ -109,25 +113,25 @@ export function ConsentSheet({
             </Link>
             .
           </p>
-
-          <div className="mt-5 space-y-3 border-t border-stone-200 pt-5">
-            <ConsentBox checked={storeAndProcess} onChange={setStoreAndProcess}>
-              I agree to Qurator storing my photos and having AI process my face and body, as described above.
-            </ConsentBox>
-            <ConsentBox checked={sendToGemini} onChange={setSendToGemini}>
-              I agree to my photos being sent to Google&apos;s Gemini.
-            </ConsentBox>
-          </div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-stone-200 p-4">
-          <button type="button" onClick={() => dialog.current?.close()} className={secondaryButton}>
+        {/* Always in view, under the notice however far it's scrolled. */}
+        <div className="space-y-2 border-t border-ink/10 px-6 pt-4">
+          <ConsentBox checked={storeAndProcess} onChange={setStoreAndProcess}>
+            I agree to Qurator storing my photos and having AI process my face and body, as described above.
+          </ConsentBox>
+          <ConsentBox checked={sendToGemini} onChange={setSendToGemini}>
+            I agree to my photos being sent to Google&apos;s Gemini.
+          </ConsentBox>
+        </div>
+        <div className="flex justify-end gap-2 px-6 pt-3 pb-4 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <button type="button" onClick={() => dialog.current?.close()} className={`${linePill} max-sm:flex-1`}>
             Not now
           </button>
           <button
             type="button"
             onClick={() => dialog.current?.close(AGREED)}
             disabled={!storeAndProcess || !sendToGemini}
-            className={primaryButton}
+            className={`${inkPill} max-sm:flex-1`}
           >
             Continue
           </button>
@@ -137,19 +141,22 @@ export function ConsentSheet({
   );
 }
 
-/** One of the sheet's two agreements: a box, unticked until the user ticks it, and what it agrees to. */
+/**
+ * One of the sheet's two agreements: a box, unticked until the user ticks it, and what it agrees
+ * to, on a row that ticks it wherever it's tapped.
+ */
 function ConsentBox({ checked, onChange, children }: { checked: boolean; onChange: (checked: boolean) => void; children: ReactNode }) {
   const id = useId();
   return (
-    <div className="flex items-start gap-3">
+    <div className="relative flex items-start gap-3 rounded-xl px-3.5 py-3 ring-1 ring-ink/12 transition-shadow duration-200 ring-inset has-checked:ring-ink has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ink">
       <input
         id={id}
         type="checkbox"
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
-        className="mt-0.5 h-4 w-4 shrink-0 accent-stone-900"
+        className="relative z-10 mt-0.5 size-[18px] shrink-0 accent-ink outline-none"
       />
-      <label htmlFor={id} className="text-sm">
+      <label htmlFor={id} className="text-sm after:absolute after:inset-0 after:cursor-pointer">
         {children}
       </label>
     </div>
