@@ -24,7 +24,6 @@ import {
   DEFAULT_PHOTO_TYPE,
   hasBudgetTier,
   PHOTO_TYPE_CATEGORIES,
-  PHOTO_TYPE_HINTS,
   PHOTO_TYPE_LABELS,
   PHOTO_TYPES,
   type PhotoType,
@@ -133,12 +132,12 @@ function PhotoTypeStep({
           What will your photo show?
         </h2>
         <p className={stepLead}>This decides which parts of an Outfit you get.</p>
-        <fieldset className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col gap-2 sm:mt-6 sm:grid sm:flex-initial sm:grid-cols-3 sm:grid-rows-[minmax(0,1fr)_auto_auto_auto] sm:gap-x-4 sm:gap-y-0 sm:short:mt-5">
+        <fieldset className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col gap-2 sm:mt-6 sm:grid sm:flex-initial sm:grid-cols-3 sm:grid-rows-[minmax(0,1fr)_auto_auto] sm:gap-x-4 sm:gap-y-0 sm:short:mt-5">
           <legend className="sr-only">Photo Type</legend>
           {PHOTO_TYPES.map((type) => (
             <label
               key={type}
-              className="group/option flex min-h-0 flex-1 cursor-pointer gap-3 rounded-xl bg-white p-2.5 ring-1 ring-ink/10 transition-shadow duration-200 ring-inset hover:ring-ink/30 has-checked:ring-2 has-checked:ring-ink has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ink sm:row-span-4 sm:grid sm:grid-rows-subgrid sm:gap-0 sm:p-4 sm:short:p-3"
+              className="group/option flex min-h-0 flex-1 cursor-pointer gap-3 rounded-xl bg-white p-2.5 ring-1 ring-ink/10 transition-shadow duration-200 ring-inset hover:ring-ink/30 has-checked:ring-2 has-checked:ring-ink has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ink sm:row-span-3 sm:grid sm:grid-rows-subgrid sm:gap-0 sm:p-4 sm:short:p-3"
             >
               <input
                 type="radio"
@@ -157,7 +156,6 @@ function PhotoTypeStep({
                     className="size-[18px] shrink-0 rounded-full ring-1 ring-ink/25 transition-[box-shadow] duration-200 ring-inset group-has-checked/option:ring-[5px] group-has-checked/option:ring-ink"
                   />
                 </span>
-                <span className="mt-0.5 block text-[13px] text-mute sm:text-sm">{PHOTO_TYPE_HINTS[type]}</span>
                 <CategorySlots photoType={type} />
               </span>
             </label>
@@ -510,8 +508,6 @@ function PhotoStep({
           {source === "camera" ? "Take" : "Upload"} your {label}
         </h2>
         <p className={stepLead}>
-          {PHOTO_TYPE_HINTS[photoType]}
-          <span className="max-sm:hidden"> Just you in the photo.</span>{" "}
           <button
             type="button"
             onClick={onBack}

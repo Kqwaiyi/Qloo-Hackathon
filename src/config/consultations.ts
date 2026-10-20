@@ -13,12 +13,6 @@ export const PHOTO_TYPE_LABELS: Record<PhotoType, string> = {
   body_only: "Body-Only Photo",
 };
 
-export const PHOTO_TYPE_HINTS: Record<PhotoType, string> = {
-  face: "Your face and hair, shoulders up.",
-  full_body: "Head to toe, face included.",
-  body_only: "Shoulders to toe, face out of frame.",
-};
-
 export const CATEGORIES = ["hairstyle", "top", "bottom", "shoes"] as const;
 export type Category = (typeof CATEGORIES)[number];
 
