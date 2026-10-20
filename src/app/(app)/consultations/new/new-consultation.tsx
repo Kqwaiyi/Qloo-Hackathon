@@ -687,7 +687,7 @@ function BudgetTierPicker({
   className?: string;
 }) {
   return (
-    <fieldset aria-describedby="budget-tier-note" className={className}>
+    <fieldset className={className}>
       <legend className={groupLabel}>Budget Tier</legend>
       <div className="mt-2.5 grid grid-cols-2 gap-2">
         {BUDGET_TIERS.map((tier) => (
@@ -707,9 +707,6 @@ function BudgetTierPicker({
           </label>
         ))}
       </div>
-      <p id="budget-tier-note" className="mt-2.5 text-sm text-mute">
-        Change it later, on your Outfits.
-      </p>
     </fieldset>
   );
 }
