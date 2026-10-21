@@ -14,6 +14,8 @@ import {
   needsBrands,
   outfitPriceRange,
   pickBrands,
+  type PieceSearches,
+  pieceSearchKey,
   planOutfitBrands,
   usableBrands,
   type UsedBrands,
@@ -29,6 +31,9 @@ const NOTHING_USED: UsedBrands = { top: new Set(), bottom: new Set(), shoes: new
 
 /** No Brand looked up in the product search yet, so every Brand can be picked. */
 const NONE_LOOKED_UP: BrandMatches = new Map();
+
+/** No Piece searched in the product search yet. */
+const NONE_SEARCHED: PieceSearches = new Map();
 
 const search: BrandSearch = { ageGroup: "35_44", countryCode: "GB", budgetTier: "no_budget" };
 
@@ -517,6 +522,7 @@ describe("the Brands of the Outfits a Styling builds", () => {
       2,
       NOTHING_USED,
       NONE_LOOKED_UP,
+      NONE_SEARCHED,
     );
 
     expect(plan.picked.map(({ styleIconId, brands }) => [styleIconId, pickedNames(brands)])).toEqual([
@@ -529,7 +535,7 @@ describe("the Brands of the Outfits a Styling builds", () => {
   it("start from the Brands the Outfits already built use", () => {
     const used: UsedBrands = { shoes: new Set(["s1"]), top: new Set(["b"]), bottom: new Set(["d"]) };
 
-    const plan = planOutfitBrands([{ styleIconId: "icon-3", line: "womenswear", brands: pool }], "no_budget", 1, used, NONE_LOOKED_UP);
+    const plan = planOutfitBrands([{ styleIconId: "icon-3", line: "womenswear", brands: pool }], "no_budget", 1, used, NONE_LOOKED_UP, NONE_SEARCHED);
 
     expect(plan.picked.map(({ brands }) => pickedNames(brands))).toEqual([{ shoes: "Sole", top: "Dune", bottom: "Bolt" }]);
   });
@@ -544,7 +550,7 @@ describe("the Brands of the Outfits a Styling builds", () => {
     // That Outfit's Top and Bottom became one One-Piece on Bolt, so Jeanery was left out of it.
     const used = brandsUsedBy([{ top: "b", bottom: "j", shoes: "s1" }]);
 
-    const plan = planOutfitBrands([{ styleIconId: "icon-2", line: "womenswear", brands: withDenim }], "no_budget", 1, used, NONE_LOOKED_UP);
+    const plan = planOutfitBrands([{ styleIconId: "icon-2", line: "womenswear", brands: withDenim }], "no_budget", 1, used, NONE_LOOKED_UP, NONE_SEARCHED);
 
     // Jeanery, denim in the raw top 10, would otherwise be the Bottom.
     expect(plan.picked.map(({ brands }) => pickedNames(brands))).toEqual([{ shoes: "Sole", top: "Jeanery", bottom: "Bolt" }]);
@@ -562,6 +568,7 @@ describe("the Brands of the Outfits a Styling builds", () => {
       2,
       NOTHING_USED,
       NONE_LOOKED_UP,
+      NONE_SEARCHED,
     );
 
     expect(plan.picked.map(({ styleIconId }) => styleIconId)).toEqual(["icon-2", "icon-3"]);
@@ -585,6 +592,7 @@ describe("the Brands of the Outfits a Styling builds", () => {
       2,
       NOTHING_USED,
       NONE_LOOKED_UP,
+      NONE_SEARCHED,
     );
 
     expect(plan.picked.map(({ styleIconId }) => styleIconId)).toEqual(["icon-1", "icon-3"]);
@@ -603,10 +611,54 @@ describe("the Brands of the Outfits a Styling builds", () => {
       2,
       NOTHING_USED,
       NONE_LOOKED_UP,
+      NONE_SEARCHED,
     );
 
     expect(plan.picked.map(({ styleIconId }) => styleIconId)).toEqual(["icon-m"]);
     expect(plan.skipped).toEqual(["icon-w"]);
+  });
+});
+
+describe("the searches for the Pieces of the Outfits a Styling builds", () => {
+  const pool = [
+    brand("s1", "Stride", { tags: [FOOTWEAR], affinity: 0.95 }),
+    brand("s2", "Sole", { tags: [FOOTWEAR], affinity: 0.9 }),
+    brand("b", "Bolt", { tags: [APPAREL], affinity: 0.85 }),
+    brand("d", "Dune", { tags: [APPAREL], affinity: 0.8 }),
+  ];
+  const twoStyleIcons = [
+    { styleIconId: "icon-1", line: "womenswear" as const, brands: pool },
+    { styleIconId: "icon-2", line: "womenswear" as const, brands: pool },
+  ];
+  const allKnown: BrandMatches = new Map(pool.map(({ entityId }) => [entityId, `c3-${entityId}`]));
+
+  it("are each pick's Top, Bottom and Shoes not searched yet, once every pick's Brand is looked up", () => {
+    const searched: PieceSearches = new Map([[pieceSearchKey("icon-1", "top", "b"), true]]);
+
+    expect(planOutfitBrands(twoStyleIcons, "no_budget", 2, NOTHING_USED, NONE_LOOKED_UP, searched).searches).toEqual([]);
+    const plan = planOutfitBrands(twoStyleIcons, "no_budget", 2, NOTHING_USED, allKnown, searched);
+    expect(plan.searches.map(({ styleIconId, category, brand }) => [styleIconId, category, brand.name])).toEqual([
+      ["icon-1", "bottom", "Dune"],
+      ["icon-1", "shoes", "Stride"],
+      ["icon-2", "top", "Dune"],
+      ["icon-2", "bottom", "Bolt"],
+      ["icon-2", "shoes", "Sole"],
+    ]);
+  });
+
+  it("skip a Style Icon one of whose Pieces' searches found nothing, and plan the next without its picks", () => {
+    const searched: PieceSearches = new Map([
+      [pieceSearchKey("icon-1", "top", "b"), true],
+      [pieceSearchKey("icon-1", "shoes", "s1"), false],
+    ]);
+
+    const plan = planOutfitBrands(twoStyleIcons, "no_budget", 2, NOTHING_USED, allKnown, searched);
+
+    expect(plan.skipped).toEqual(["icon-1"]);
+    // Stride and Bolt are free again for icon-2.
+    expect(plan.picked.map(({ styleIconId, brands }) => [styleIconId, pickedNames(brands)])).toEqual([
+      ["icon-2", { shoes: "Stride", top: "Bolt", bottom: "Dune" }],
+    ]);
   });
 });
 

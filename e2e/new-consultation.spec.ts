@@ -50,4 +50,15 @@ test("a new Consultation asks for photo consent, then shows the Styling checklis
   await expect(outfitTitles).toHaveText([/^Outfit 1 · /, /^Outfit 2 · /], { timeout: 60_000 });
   await expect(checklist).toBeHidden();
   await expect(page.getByText("AI-generated")).toHaveCount(2);
+
+  // Each Piece is a Product from the fake product search, which the fake AI picks first: its title,
+  // its price in the British market's pounds with the day it was found, and a link to its shop.
+  const firstOutfit = page.getByRole("list", { name: "Outfits" }).getByRole("listitem").first();
+  await expect(firstOutfit.getByText("Cropped boxy cotton shirt", { exact: true })).toBeVisible();
+  await expect(firstOutfit.getByText(/^£\d+ on \d{1,2} [A-Z][a-z]{2}$/)).toHaveCount(3);
+  const viewAt = firstOutfit.getByRole("link", { name: /^View at shop\.example/ });
+  await expect(viewAt).toHaveCount(3);
+  await expect(viewAt.first()).toHaveAttribute("target", "_blank");
+  await expect(viewAt.first()).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(firstOutfit.getByText("Product photos © their sellers")).toBeVisible();
 });

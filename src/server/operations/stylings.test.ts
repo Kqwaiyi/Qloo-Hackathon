@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import sharp from "sharp";
@@ -7,7 +7,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type BudgetTier, byCategoryOrder, type PhotoType } from "@/config/consultations";
 import type { StylingKind } from "@/config/stylings";
 import type { AiProvider } from "@/server/ai/provider";
-import { brandMatch, consultation, outfit, piece, qlooCache, styleIcon, styling, usageRecord, user } from "@/server/db/schema";
+import { brandMatch, consultation, outfit, piece, pieceCandidates, qlooCache, styleIcon, styling, usageRecord, user } from "@/server/db/schema";
 import { listConsultations, readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
 import {
@@ -22,7 +22,14 @@ import {
 } from "@/server/operations/stylings";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { readUsageSummary } from "@/server/operations/usage";
-import { channel3KnowingEveryBrand } from "@/server/product-search/fake-channel3";
+import {
+  channel3Offer,
+  channel3Product,
+  type Channel3Search,
+  channel3Search,
+  channel3SellingEveryBrand,
+  channel3SmallCatalogue,
+} from "@/server/product-search/fake-channel3";
 import { qlooBrand, qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
 import { recordUsage } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
@@ -77,7 +84,7 @@ beforeEach(async () => {
   harness.qloo.respond = qlooAnswering({ female: WOMEN, male: MEN });
   harness.qloo.duringRequest = undefined;
   harness.channel3.requests.length = 0;
-  harness.channel3.respond = channel3KnowingEveryBrand();
+  harness.channel3.respond = channel3SellingEveryBrand();
   harness.channel3.duringRequest = undefined;
   await harness.db.delete(qlooCache);
   await harness.db.delete(brandMatch);
@@ -114,6 +121,7 @@ describe("a new Consultation's first Styling", () => {
         tailoringFailures: 0,
         failureReason: null,
         workflowRunId: expect.any(String),
+        market: "US",
         startedAt: new Date("2026-10-16T12:30:00Z"),
         finishedAt: null,
       },
@@ -264,16 +272,16 @@ describe("each Outfit's Pieces", () => {
         position: 1,
         styleIconName: "Ava Stone",
         preview: { state: "ready", url: expect.any(String) },
-        priceRange: null,
-        pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone"), brand: null }],
+        total: null,
+        pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone"), brand: null, product: null }],
       },
       {
         id: expect.any(String),
         position: 2,
         styleIconName: "Bea Marsh",
         preview: { state: "ready", url: expect.any(String) },
-        priceRange: null,
-        pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Bea Marsh"), brand: null }],
+        total: null,
+        pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Bea Marsh"), brand: null, product: null }],
       },
     ]);
     expect(brandCalls()).toEqual([]);
@@ -373,7 +381,7 @@ describe("each Outfit's Pieces", () => {
     expect(harness.ai.tailoringRequests).toHaveLength(8);
   });
 
-  it("are tailored from the photo itself and the Outfit, with each Brand Piece's Brand, never the Country or the Budget Tier", async () => {
+  it("are tailored from the photo itself and the Outfit, with each Brand Piece's Brand and candidate Products by their words alone, never the Country or the Budget Tier", async () => {
     harness.qloo.respond = qlooAnswering({ male: [MEN[0]!] });
     const browser = await signedInUser({ stylePreference: "menswear", countryCode: "FR", birthDate: { day: "2", month: "2", year: "1992" } });
 
@@ -381,6 +389,9 @@ describe("each Outfit's Pieces", () => {
     await harness.stylings.runPending();
 
     const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+    // Each candidate's ID, title, description and colours: never its photos, offers or prices.
+    const candidates = (brandId: string, category: string) =>
+      [1, 2].map((n) => ({ id: `${brandId}-${category}-${n}`, title: `Product ${brandId}-${category}-${n}`, description: `About product ${brandId}-${category}-${n}.`, colours: ["#1f2a44"] }));
     expect(harness.ai.tailoringRequests).toEqual([
       {
         photo: { mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) },
@@ -391,9 +402,9 @@ describe("each Outfit's Pieces", () => {
         styleIconName: "Dev Rowe",
         pieces: [
           { category: "hairstyle" },
-          { category: "top", brand: { name: "Bolt", categoryTags: ["apparel"], priceRangeUsd: { min: 20, max: 120 } } },
-          { category: "bottom", brand: { name: "Jeanery", categoryTags: ["apparel", "denim"], priceRangeUsd: { min: 50, max: 110 } } },
-          { category: "shoes", brand: { name: "Stride", categoryTags: ["footwear"], priceRangeUsd: { min: 60, max: 180 } } },
+          { category: "top", brand: { name: "Bolt", categoryTags: ["apparel"] }, candidates: candidates("c3-bolt", "top") },
+          { category: "bottom", brand: { name: "Jeanery", categoryTags: ["apparel", "denim"] }, candidates: candidates("c3-jeanery", "bottom") },
+          { category: "shoes", brand: { name: "Stride", categoryTags: ["footwear"] }, candidates: candidates("c3-stride", "shoes") },
         ],
       },
     ]);
@@ -401,52 +412,32 @@ describe("each Outfit's Pieces", () => {
 });
 
 describe("a body photo's Outfits", () => {
-  it("are built on Brands: a Full-Body Photo's have a Hairstyle, Top, Bottom and Shoes, with each Brand's price range and Visit link", async () => {
+  it("are built on Brands: a Full-Body Photo's have a Hairstyle, and a Top, Bottom and Shoes that are Products of their Brands", async () => {
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
     const consultationId = await start(browser, "full_body");
     await harness.stylings.runPending();
 
     const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
-    expect(outfits).toEqual([
-      {
-        id: expect.any(String),
-        position: 1,
-        styleIconName: "Ava Stone",
-        preview: { state: "ready", url: expect.any(String) },
-        // Stride 60–180, Bolt 20–120 and Jeanery 50–110.
-        priceRange: { min: 130, max: 410 },
-        pieces: [
-          { category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone"), brand: null },
-          {
-            category: "top",
-            item: expect.any(String),
-            why: expect.stringContaining("Ava Stone"),
-            brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" },
-          },
-          // Jeanery has no official site, so no Visit link.
-          { category: "bottom", item: expect.any(String), why: expect.any(String), brand: { name: "Jeanery", priceRange: { min: 50, max: 110 }, visitUrl: null } },
-          {
-            category: "shoes",
-            item: expect.any(String),
-            why: expect.any(String),
-            brand: { name: "Stride", priceRange: { min: 60, max: 180 }, visitUrl: "https://stride.example/" },
-          },
+    expect(outfits.map((o) => [o.styleIconName, o.pieces.map((p) => [p.category, p.brand?.name ?? null, p.product?.url ?? null])])).toEqual([
+      [
+        "Ava Stone",
+        [
+          ["hairstyle", null, null],
+          ["top", "Bolt", "https://shop.example/products/c3-bolt-top-1"],
+          ["bottom", "Jeanery", "https://shop.example/products/c3-jeanery-bottom-1"],
+          ["shoes", "Stride", "https://shop.example/products/c3-stride-shoes-1"],
         ],
-      },
-      expect.objectContaining({
-        position: 2,
-        styleIconName: "Bea Marsh",
-        // Sole 40–90 and Bolt 20–120; Dune has no price data.
-        priceRange: { min: 60, max: 210 },
-        pieces: [
-          expect.objectContaining({ category: "hairstyle", brand: null }),
-          expect.objectContaining({ category: "top", brand: { name: "Dune", priceRange: null, visitUrl: "https://dune.example/" } }),
-          expect.objectContaining({ category: "bottom", brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" } }),
-          // Sole's official site is http, so no Visit link.
-          expect.objectContaining({ category: "shoes", brand: { name: "Sole", priceRange: { min: 40, max: 90 }, visitUrl: null } }),
+      ],
+      [
+        "Bea Marsh",
+        [
+          ["hairstyle", null, null],
+          ["top", "Dune", "https://shop.example/products/c3-dune-top-1"],
+          ["bottom", "Bolt", "https://shop.example/products/c3-bolt-bottom-1"],
+          ["shoes", "Sole", "https://shop.example/products/c3-sole-shoes-1"],
         ],
-      }),
+      ],
     ]);
   });
 
@@ -506,56 +497,6 @@ describe("a body photo's Outfits", () => {
       { category: "top", brandEntityId: "b-bolt", brandName: "Bolt", brandOfficialSite: "https://bolt.example/", brandPriceUsdMin: 20, brandPriceUsdMax: 120 },
       { category: "bottom", brandEntityId: "b-jeanery", brandName: "Jeanery", brandOfficialSite: null, brandPriceUsdMin: 50, brandPriceUsdMax: 110 },
       { category: "shoes", brandEntityId: "b-stride", brandName: "Stride", brandOfficialSite: "https://stride.example/", brandPriceUsdMin: 60, brandPriceUsdMax: 180 },
-    ]);
-  });
-
-  it("can make the Top and Bottom one One-Piece on the Top Brand, shown as one row, with the Bottom Brand left out but kept reserved", async () => {
-    harness.ai.styleIconScenarios = { "Ava Stone": "one-piece" };
-    const browser = await signedInUser({ stylePreference: "womenswear" });
-
-    const consultationId = await start(browser, "full_body");
-    await harness.stylings.runPending();
-
-    const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
-    expect(outfits[0]).toEqual({
-      id: expect.any(String),
-      position: 1,
-      styleIconName: "Ava Stone",
-      preview: { state: "ready", url: expect.any(String) },
-      // Bolt 20–120 and Stride 60–180: Jeanery, the Bottom Brand Qloo picked, is left out.
-      priceRange: { min: 80, max: 300 },
-      pieces: [
-        expect.objectContaining({ category: "hairstyle", brand: null }),
-        {
-          category: "one_piece",
-          item: expect.any(String),
-          why: expect.stringContaining("Ava Stone"),
-          brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" },
-        },
-        expect.objectContaining({ category: "shoes", brand: { name: "Stride", priceRange: { min: 60, max: 180 }, visitUrl: "https://stride.example/" } }),
-      ],
-    });
-    expect(outfits[1]!.pieces.map((p) => p.category)).toEqual(["hairstyle", "top", "bottom", "shoes"]);
-    expect(harness.ai.previewRequests.map((request) => request.pieces.map((p) => p.category))).toContainEqual(["hairstyle", "one_piece", "shoes"]);
-    const [picks] = await harness.db
-      .select({ top: outfit.topBrandEntityId, bottom: outfit.bottomBrandEntityId, shoes: outfit.shoesBrandEntityId })
-      .from(outfit)
-      .where(and(eq(outfit.consultationId, consultationId), eq(outfit.position, 1)));
-    expect(picks).toEqual({ top: "b-bolt", bottom: "b-jeanery", shoes: "b-stride" });
-  });
-
-  it("never offer a One-Piece Outfit's left-out Bottom Brand to a later Outfit as its Bottom", async () => {
-    // Bea Marsh's tailoring fails, so Cleo Hart's Outfit is planned after Ava Stone's One-Piece is saved.
-    harness.ai.styleIconScenarios = { "Ava Stone": "one-piece", "Bea Marsh": "tailoring-fails" };
-    const browser = await signedInUser({ stylePreference: "womenswear" });
-
-    const consultationId = await start(browser, "body_only");
-    await harness.stylings.runPending();
-
-    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => [p.category, p.brand?.name])])).toEqual([
-      ["Ava Stone", [["one_piece", "Bolt"], ["shoes", "Stride"]]],
-      // Jeanery, denim in Qloo's top 10, would be the Bottom if Ava Stone's Outfit hadn't kept it reserved.
-      ["Cleo Hart", [["top", "Dune"], ["bottom", "Bolt"], ["shoes", "Sole"]]],
     ]);
   });
 
@@ -777,7 +718,7 @@ describe("the Brand calls", () => {
 
 describe("the Brands the product search knows", () => {
   it("are the only ones an Outfit is built on: one it doesn't know is passed over for the next in Qloo's order", async () => {
-    harness.channel3.respond = channel3KnowingEveryBrand({ except: ["Bolt"] });
+    harness.channel3.respond = channel3SellingEveryBrand({ except: ["Bolt"] });
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
     const consultationId = await start(browser, "body_only");
@@ -791,7 +732,7 @@ describe("the Brands the product search knows", () => {
   });
 
   it("are looked up only as a pick is about to use them: the next in Qloo's order only once one before it isn't known", async () => {
-    harness.channel3.respond = channel3KnowingEveryBrand({ except: ["Bolt"] });
+    harness.channel3.respond = channel3SellingEveryBrand({ except: ["Bolt"] });
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
     await start(browser, "body_only");
@@ -823,11 +764,11 @@ describe("the Brands the product search knows", () => {
   });
 
   it("are looked up once in 30 days, whether the product search knew them or not", async () => {
-    harness.channel3.respond = channel3KnowingEveryBrand({ except: ["Bolt"] });
+    harness.channel3.respond = channel3SellingEveryBrand({ except: ["Bolt"] });
     await start(await signedInUser({ stylePreference: "womenswear" }), "body_only");
     await harness.stylings.runPending();
     // Channel3 knows Bolt from now on.
-    harness.channel3.respond = channel3KnowingEveryBrand();
+    harness.channel3.respond = channel3SellingEveryBrand();
     harness.channel3.requests.length = 0;
 
     harness.clock.set("2026-11-15T11:59:59Z");
@@ -856,7 +797,7 @@ describe("the Brands the product search knows", () => {
   it("must complete an Outfit, or its Style Icon is skipped for the next, without counting as a tailoring failure", async () => {
     // Stride is the only footwear Brand Ava Stone's fans favour, and the product search doesn't know it.
     harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) => (styleIconId === "w-1" ? BRANDS.filter((b) => b.name !== "Sole" && b.name !== "Pace") : BRANDS));
-    harness.channel3.respond = channel3KnowingEveryBrand({ except: ["Stride"] });
+    harness.channel3.respond = channel3SellingEveryBrand({ except: ["Stride"] });
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
     const consultationId = await start(browser, "body_only");
@@ -883,6 +824,370 @@ describe("the Brands the product search knows", () => {
 
     expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toHaveLength(2);
     expect(harness.channel3.requests).toEqual([]);
+  });
+});
+
+describe("a body photo's Products", () => {
+  it("are what its Top, Bottom and Shoes are: each a Product of its Brand, saved with its title, photo, offer, price, currency, market and date", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
+    const consultationId = await start(browser, "body_only");
+    harness.clock.set("2026-10-21T09:30:00Z");
+
+    await harness.stylings.runPending();
+
+    // The fake AI picks each Category's first candidate: Bolt's, Jeanery's and Stride's first Products.
+    expect(await productPiecesOf(consultationId)).toEqual([
+      {
+        category: "top",
+        item: "Product c3-bolt-top-1",
+        details: null,
+        brandName: "Bolt",
+        productId: "c3-bolt-top-1",
+        productPhotoUrl: "https://cdn.channel3.test/c3-bolt-top-1-cleaned.png",
+        offerUrl: "https://shop.example/products/c3-bolt-top-1",
+        offerShopDomain: "shop.example",
+        price: 45,
+        currency: "USD",
+        market: "US",
+        pricedAt: new Date("2026-10-21T09:30:00Z"),
+        available: true,
+      },
+      expect.objectContaining({ category: "bottom", item: "Product c3-jeanery-bottom-1", brandName: "Jeanery", price: 50, currency: "USD", market: "US" }),
+      expect.objectContaining({ category: "shoes", item: "Product c3-stride-shoes-1", brandName: "Stride", price: 60, currency: "USD", market: "US" }),
+    ]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toEqual([
+      {
+        id: expect.any(String),
+        position: 1,
+        styleIconName: "Ava Stone",
+        preview: { state: "ready", url: expect.any(String) },
+        // 45, 50 and 60 dollars.
+        total: { kind: "products", price: { amount: 155, currency: "USD" } },
+        pieces: [
+          {
+            category: "top",
+            item: "Product c3-bolt-top-1",
+            why: expect.stringContaining("Ava Stone"),
+            brand: { name: "Bolt", priceRange: null, visitUrl: null },
+            product: { price: { amount: 45, currency: "USD" }, pricedOn: "2026-10-21", url: "https://shop.example/products/c3-bolt-top-1", shopDomain: "shop.example" },
+          },
+          {
+            category: "bottom",
+            item: "Product c3-jeanery-bottom-1",
+            why: expect.stringContaining("Ava Stone"),
+            brand: { name: "Jeanery", priceRange: null, visitUrl: null },
+            product: { price: { amount: 50, currency: "USD" }, pricedOn: "2026-10-21", url: "https://shop.example/products/c3-jeanery-bottom-1", shopDomain: "shop.example" },
+          },
+          {
+            category: "shoes",
+            item: "Product c3-stride-shoes-1",
+            why: expect.stringContaining("Ava Stone"),
+            brand: { name: "Stride", priceRange: null, visitUrl: null },
+            product: { price: { amount: 60, currency: "USD" }, pricedOn: "2026-10-21", url: "https://shop.example/products/c3-stride-shoes-1", shopDomain: "shop.example" },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("keep all of their Product's fields and no hidden Preview description, which the database holds them to", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    const consultationId = await start(await signedInUser({ stylePreference: "womenswear" }), "body_only");
+    await harness.stylings.runPending();
+    const [productPiece] = await harness.db
+      .select({ id: piece.id })
+      .from(piece)
+      .innerJoin(outfit, eq(outfit.id, piece.outfitId))
+      .where(and(eq(outfit.consultationId, consultationId), isNotNull(piece.productId)))
+      .limit(1);
+    const thatPiece = eq(piece.id, productPiece!.id);
+
+    await expect(harness.db.update(piece).set({ price: null }).where(thatPiece)).rejects.toThrow();
+    await expect(harness.db.update(piece).set({ details: "A navy overshirt with two chest pockets." }).where(thatPiece)).rejects.toThrow();
+    await expect(harness.db.update(piece).set({ brandEntityId: null, brandName: null }).where(thatPiece)).rejects.toThrow();
+  });
+
+  it("are searched for once per Piece, for its Brand alone, in the Outfit's line and the market, new and in stock, within the Brand's price range in a US-dollar market", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
+
+    await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(productSearchesSent().map(({ brandId, category, gender, market, priceRange }) => [brandId, category, gender, market, priceRange])).toEqual([
+      ["c3-bolt", "bottom", "female", "US", { min: 20, max: 120 }],
+      ["c3-bolt", "top", "female", "US", { min: 20, max: 120 }],
+      // Dune has no price range, so its search has no price filter.
+      ["c3-dune", "top", "female", "US", null],
+      ["c3-jeanery", "bottom", "female", "US", { min: 50, max: 110 }],
+      ["c3-sole", "shoes", "female", "US", { min: 40, max: 90 }],
+      ["c3-stride", "shoes", "female", "US", { min: 60, max: 180 }],
+    ]);
+    for (const { body } of browseRequests()) {
+      expect(body).toMatchObject({ filters: { brand_ids: [expect.any(String)], conditions: ["new"], availability: ["InStock"] }, config: { country: "US" } });
+    }
+  });
+
+  it("are searched for with no price filter in a market priced in another currency, until prices convert, keeping that market and their offers' currency", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "GB" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(productSearchesSent().map(({ market, priceRange }) => [market, priceRange])).toEqual([
+      ["GB", null],
+      ["GB", null],
+      ["GB", null],
+    ]);
+    expect((await productPiecesOf(consultationId)).map(({ market, price, currency }) => [market, price, currency])).toEqual([
+      ["GB", 45, "GBP"],
+      ["GB", 45, "GBP"],
+      ["GB", 45, "GBP"],
+    ]);
+  });
+
+  it("link to the Brand's own store when it sells them, by Qloo's official site, and otherwise to their first new, in-stock offer", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    harness.channel3.respond = channel3SellingEveryBrand({
+      products: ({ brandId, category, gender }) => [
+        channel3Product(`${brandId}-${category}`, {
+          brandIds: [brandId],
+          gender,
+          offers: [
+            channel3Offer({ url: "https://resale.example/p", domain: "resale.example", price: 20, condition: "used" }),
+            channel3Offer({ url: "https://store.example/p", domain: "store.example", price: 70 }),
+            channel3Offer({ url: `https://www.bolt.example/p/${category}`, domain: "www.bolt.example", price: 80 }),
+          ],
+        }),
+      ],
+    });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    // Bolt's official site is https://bolt.example/. Jeanery has none, and Stride's store doesn't sell it.
+    expect((await productPiecesOf(consultationId)).map(({ category, offerUrl, offerShopDomain, price }) => [category, offerUrl, offerShopDomain, price])).toEqual([
+      ["top", "https://www.bolt.example/p/top", "www.bolt.example", 80],
+      ["bottom", "https://store.example/p", "store.example", 70],
+      ["shoes", "https://store.example/p", "store.example", 70],
+    ]);
+  });
+
+  it("must each be found for an Outfit: a Style Icon one of whose searches finds none that qualify is skipped for the next, without counting as a tailoring failure", async () => {
+    // Bolt's tops are all shown on a model. Bea Marsh's and Cleo Hart's fans don't favour Bolt.
+    harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) => (styleIconId === "w-1" ? BRANDS : BRANDS.filter((b) => b.name !== "Bolt")));
+    harness.channel3.respond = channel3SellingEveryBrand({
+      products: (search) =>
+        search.brandId === "c3-bolt" && search.category === "top"
+          ? [channel3Product("bolt-on-model", { brandIds: ["c3-bolt"], images: [{ url: "https://images.example/bolt.jpg", cleaned_url: null, shot_type: "on_model" }] })]
+          : channel3SmallCatalogue(search),
+    });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(await styleIconStatuses(consultationId)).toEqual([
+      ["Ava Stone", "skipped"],
+      ["Bea Marsh", "used"],
+      ["Cleo Hart", "used"],
+    ]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 0 })]);
+    expect(harness.ai.tailoringRequests.map((request) => request.styleIconName)).not.toContain("Ava Stone");
+  });
+
+  it("break the Styling when a search still fails after its retries, so the user can Try again", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    const selling = channel3SellingEveryBrand();
+    harness.channel3.respond = (request) => (request.url.pathname === "/v1/browse" ? Response.json({ detail: "Internal error" }, { status: 500 }) : selling(request));
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "failed", failureReason: "something_broke", outfitsMade: 0 })]);
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "no_outfits",
+      failedStyling: { kind: "first", reason: "something_broke" },
+    });
+    expect(harness.ai.tailoringRequests).toEqual([]);
+  });
+
+  it("are each Piece's search's candidates, kept only while the Styling runs, so a later Styling searches afresh", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
+    const consultationId = await start(browser, "body_only");
+    const keptWhileTailoring: number[] = [];
+    harness.ai.duringCall = async (call) => {
+      if (call === "tailorPieces") keptWhileTailoring.push((await candidatesOf(consultationId)).length);
+    };
+
+    await harness.stylings.runPending();
+
+    // A search for each of the two Outfits' Top, Bottom and Shoes.
+    expect(keptWhileTailoring).toEqual([6, 6]);
+    expect(await candidatesOf(consultationId)).toEqual([]);
+    harness.channel3.requests.length = 0;
+
+    // From the top of the same Style Icons: Ava Stone's Outfit is Bolt, Jeanery and Stride again.
+    await changeBudgetTier(harness.context(browser), consultationId, "low");
+    await harness.stylings.runPending();
+
+    expect(productSearchesSent().map(({ brandId, category }) => [brandId, category])).toEqual(
+      expect.arrayContaining([
+        ["c3-bolt", "top"],
+        ["c3-jeanery", "bottom"],
+        ["c3-stride", "shoes"],
+      ]),
+    );
+    expect(await candidatesOf(consultationId)).toEqual([]);
+  });
+
+  it("are deleted when the Styling breaks, too", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    harness.ai.duringCall = async (call) => {
+      if (call === "tailorPieces") throw new Error("The model is down.");
+    };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "failed", failureReason: "something_broke" })]);
+    expect(browseRequests()).toHaveLength(3);
+    expect(await candidatesOf(consultationId)).toEqual([]);
+  });
+
+  it("come from the market of the user's Country as each Styling starts, which a Country change since doesn't move", async () => {
+    // A fourth footwear Brand, so the later Outfits' Shoes needn't repeat.
+    const tread = qlooBrand("b-tread", "Tread", { categories: ["footwear"], affinity: 0.75, price: [35, 75] });
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN }, () => [...BRANDS, tread]);
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
+    const userId = (await readSignedInUser(harness.context(browser)))!.id;
+    const consultationId = await start(browser, "body_only");
+    await harness.db.update(user).set({ countryCode: "DE" }).where(eq(user.id, userId));
+    await harness.stylings.runPending();
+    const firstMarkets = new Set(productSearchesSent().map(({ market }) => market));
+    harness.channel3.requests.length = 0;
+
+    await showMoreOutfits(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    expect(firstMarkets).toEqual(new Set(["US"]));
+    expect(new Set(productSearchesSent().map(({ market }) => market))).toEqual(new Set(["DE"]));
+    expect((await productPiecesOf(consultationId)).map(({ market }) => market)).toEqual(["US", "US", "US", "US", "US", "US", "DE", "DE", "DE", "DE", "DE", "DE"]);
+  });
+});
+
+describe("a Consultation made before Products", () => {
+  it("still shows each Piece as the item the AI described, with its Brand's price range and Visit link", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "full_body");
+    await harness.stylings.runPending();
+
+    await asMadeBeforeProducts(consultationId);
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toEqual([
+      {
+        id: expect.any(String),
+        position: 1,
+        styleIconName: "Ava Stone",
+        preview: { state: "ready", url: expect.any(String) },
+        // Stride 60–180, Bolt 20–120 and Jeanery 50–110.
+        total: { kind: "brand_ranges", usdRange: { min: 130, max: 410 } },
+        pieces: [
+          { category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone"), brand: null, product: null },
+          {
+            category: "top",
+            item: "Navy relaxed cotton overshirt",
+            why: expect.any(String),
+            brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" },
+            product: null,
+          },
+          // Jeanery has no official site, so no Visit link.
+          {
+            category: "bottom",
+            item: "Navy relaxed cotton overshirt",
+            why: expect.any(String),
+            brand: { name: "Jeanery", priceRange: { min: 50, max: 110 }, visitUrl: null },
+            product: null,
+          },
+          {
+            category: "shoes",
+            item: "Navy relaxed cotton overshirt",
+            why: expect.any(String),
+            brand: { name: "Stride", priceRange: { min: 60, max: 180 }, visitUrl: "https://stride.example/" },
+            product: null,
+          },
+        ],
+      },
+      expect.objectContaining({
+        position: 2,
+        styleIconName: "Bea Marsh",
+        // Sole 40–90 and Bolt 20–120; Dune has no price data.
+        total: { kind: "brand_ranges", usdRange: { min: 60, max: 210 } },
+        pieces: [
+          expect.objectContaining({ category: "hairstyle", brand: null, product: null }),
+          expect.objectContaining({ category: "top", brand: { name: "Dune", priceRange: null, visitUrl: "https://dune.example/" }, product: null }),
+          expect.objectContaining({ category: "bottom", brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" }, product: null }),
+          // Sole's official site is http, so no Visit link.
+          expect.objectContaining({ category: "shoes", brand: { name: "Sole", priceRange: { min: 40, max: 90 }, visitUrl: null }, product: null }),
+        ],
+      }),
+    ]);
+  });
+
+  it('never gets an older One-Piece Outfit\'s left-out Bottom Brand as a Bottom from "Show 2 more Outfits"', async () => {
+    // A fourth footwear Brand, so the later Outfits' Shoes needn't repeat.
+    const tread = qlooBrand("b-tread", "Tread", { categories: ["footwear"], affinity: 0.75, price: [35, 75] });
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN }, () => [...BRANDS, tread]);
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+    await asMadeBeforeProducts(consultationId);
+    // Ava Stone's Outfit was made as a One-Piece on Bolt, which left out Jeanery, its Bottom Brand.
+    const [first] = await harness.db.select({ id: outfit.id }).from(outfit).where(and(eq(outfit.consultationId, consultationId), eq(outfit.position, 1)));
+    await harness.db.delete(piece).where(and(eq(piece.outfitId, first!.id), eq(piece.category, "bottom")));
+    await harness.db.update(piece).set({ category: "one_piece" }).where(and(eq(piece.outfitId, first!.id), eq(piece.category, "top")));
+
+    await showMoreOutfits(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Ava Stone", ["Bolt", "Stride"]],
+      ["Bea Marsh", ["Dune", "Bolt", "Sole"]],
+      // Jeanery, denim in Qloo's top 10, would be the Bottom if Ava Stone's Outfit hadn't kept it reserved.
+      ["Cleo Hart", ["Jeanery", "Dune", "Pace"]],
+      ["Dana Reed", ["Ember", "Hem", "Tread"]],
+    ]);
+  });
+
+  it.each([
+    ['"Show 2 more Outfits"', (browser: TestBrowser, consultationId: string) => showMoreOutfits(harness.context(browser), consultationId)],
+    ["a Budget Tier change", (browser: TestBrowser, consultationId: string) => changeBudgetTier(harness.context(browser), consultationId, "low")],
+    ["a Photo Style change", (browser: TestBrowser, consultationId: string) => changePhotoStyle(harness.context(browser), consultationId, ["edgy"])],
+  ])("gets Outfits whose Top, Bottom and Shoes are Products from %s", async (_, restyle) => {
+    // A fourth footwear Brand, so the later Outfits' Shoes needn't repeat.
+    const tread = qlooBrand("b-tread", "Tread", { categories: ["footwear"], affinity: 0.75, price: [35, 75] });
+    harness.qloo.respond = qlooAnsweringByPhotoStyle({ casual: { female: SIX_WOMEN }, edgy: { female: EDGY_WOMEN } }, () => [...BRANDS, tread]);
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+    await asMadeBeforeProducts(consultationId);
+    const olderIds = (await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.id);
+
+    expect(await restyle(browser, consultationId)).toEqual({ ok: true });
+    await harness.stylings.runPending();
+
+    const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
+    const made = outfits.filter((o) => !olderIds.includes(o.id));
+    expect(made.map((o) => [o.total?.kind, o.pieces.map((p) => p.product !== null)])).toEqual([
+      ["products", [true, true, true]],
+      ["products", [true, true, true]],
+    ]);
+    // Any older Outfit kept beside them is as it was.
+    for (const older of outfits.filter((o) => olderIds.includes(o.id))) expect(older.pieces.map((p) => p.product)).toEqual([null, null, null]);
   });
 });
 
@@ -916,7 +1221,7 @@ describe("each Outfit's Preview", () => {
     expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", stage: "previews", outfitsMade: 2 })]);
   });
 
-  it("is drawn from the photo, the Photo Type and each Piece's details, never the Style Icon", async () => {
+  it("is drawn from the photo, the Photo Type, the Hairstyle's details and each Product's title, never the Style Icon", async () => {
     harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
@@ -924,13 +1229,18 @@ describe("each Outfit's Preview", () => {
     await harness.stylings.runPending();
 
     const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
-    const pieces = (await piecesOf(consultationId)).toSorted(byCategoryOrder);
-    expect(pieces.map((p) => p.category)).toEqual(["hairstyle", "top", "bottom", "shoes"]);
+    const hairstyle = (await piecesOf(consultationId)).find((p) => p.category === "hairstyle");
+    expect(hairstyle).toMatchObject({ details: expect.any(String) });
     expect(harness.ai.previewRequests).toEqual([
       {
         photo: { mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) },
         photoType: "full_body",
-        pieces: pieces.map(({ category, details }) => ({ category, details })),
+        pieces: [
+          { category: "hairstyle", details: hairstyle!.details },
+          { category: "top", details: "Product c3-bolt-top-1" },
+          { category: "bottom", details: "Product c3-jeanery-bottom-1" },
+          { category: "shoes", details: "Product c3-stride-shoes-1" },
+        ],
       },
     ]);
     expect(JSON.stringify(harness.ai.previewRequests)).not.toContain("Ava Stone");
@@ -2514,6 +2824,18 @@ function brandCalls(): URLSearchParams[] {
   return harness.qloo.requests.map((request) => request.url.searchParams).filter((params) => params.get("filter.type") === "urn:entity:brand");
 }
 
+/** The product searches that went out to Channel3. */
+function browseRequests() {
+  return harness.channel3.requests.filter(({ url }) => url.pathname === "/v1/browse");
+}
+
+/** What each product search sent to Channel3 asked for, by Brand and Category. */
+function productSearchesSent(): Channel3Search[] {
+  return browseRequests()
+    .map(channel3Search)
+    .toSorted((a, b) => `${a.brandId} ${a.category}`.localeCompare(`${b.brandId} ${b.category}`));
+}
+
 /** The names of the Brands looked up in the product search, Channel3, in the order the lookups went out. */
 function brandLookups(): string[] {
   return harness.channel3.requests.filter(({ url }) => url.pathname === "/v1/brands/search").map(({ url }) => url.searchParams.get("query") ?? "");
@@ -2564,12 +2886,13 @@ async function stylingsOf(consultationId: string) {
   return harness.db.select().from(styling).where(eq(styling.consultationId, consultationId));
 }
 
-/** The Consultation's Stylings of one kind, such as its "Show 2 more Outfits" ones. */
+/** The Consultation's Stylings of one kind, such as its "Show 2 more Outfits" ones, in the order they started. */
 async function stylingsOfKind(consultationId: string, kind: StylingKind) {
   return harness.db
     .select()
     .from(styling)
-    .where(and(eq(styling.consultationId, consultationId), eq(styling.kind, kind)));
+    .where(and(eq(styling.consultationId, consultationId), eq(styling.kind, kind)))
+    .orderBy(asc(styling.startedAt));
 }
 
 /**
@@ -2629,6 +2952,67 @@ async function brandPiecesOf(consultationId: string) {
       .toSorted(byCategoryOrder)
       .map(({ position: _, ...brandPiece }) => brandPiece),
   );
+}
+
+/** The stored Product Pieces of the Consultation's Outfits, in Outfit and Category order. */
+async function productPiecesOf(consultationId: string) {
+  const rows = await harness.db
+    .select({
+      position: outfit.position,
+      category: piece.category,
+      item: piece.item,
+      details: piece.details,
+      brandName: piece.brandName,
+      productId: piece.productId,
+      productPhotoUrl: piece.productPhotoUrl,
+      offerUrl: piece.offerUrl,
+      offerShopDomain: piece.offerShopDomain,
+      price: piece.price,
+      currency: piece.currency,
+      market: piece.market,
+      pricedAt: piece.pricedAt,
+      available: piece.available,
+    })
+    .from(piece)
+    .innerJoin(outfit, eq(outfit.id, piece.outfitId))
+    .where(eq(outfit.consultationId, consultationId));
+  return rows
+    .filter((row) => row.productId !== null)
+    .toSorted((a, b) => a.position - b.position || byCategoryOrder(a, b))
+    .map(({ position: _, ...productPiece }) => productPiece);
+}
+
+/**
+ * Makes the Consultation's Product Pieces as Pieces were made before Products existed: an item the
+ * AI described, with a hidden description for the Preview, and no Product.
+ */
+async function asMadeBeforeProducts(consultationId: string): Promise<void> {
+  const outfitIds = (await harness.db.select({ id: outfit.id }).from(outfit).where(eq(outfit.consultationId, consultationId))).map(({ id }) => id);
+  await harness.db
+    .update(piece)
+    .set({
+      item: "Navy relaxed cotton overshirt",
+      details: "A navy cotton overshirt with a relaxed fit, a straight hem and two chest pockets.",
+      productId: null,
+      productPhotoUrl: null,
+      offerUrl: null,
+      offerShopDomain: null,
+      price: null,
+      currency: null,
+      market: null,
+      pricedAt: null,
+      available: null,
+    })
+    .where(and(inArray(piece.outfitId, outfitIds), isNotNull(piece.productId)));
+}
+
+/** The candidates kept for the Consultation's Stylings' Piece searches. */
+async function candidatesOf(consultationId: string) {
+  return harness.db
+    .select({ styleIconId: pieceCandidates.styleIconId, category: pieceCandidates.category, candidates: pieceCandidates.candidates })
+    .from(pieceCandidates)
+    .innerJoin(styling, eq(styling.id, pieceCandidates.stylingId))
+    .where(eq(styling.consultationId, consultationId));
 }
 
 /** What each of the Consultation's Outfits stored about its Preview, in Outfit order. */

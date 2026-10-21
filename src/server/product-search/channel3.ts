@@ -10,6 +10,8 @@ import {
   PRODUCTS_PER_SEARCH,
 } from "@/config/product-search";
 import { matchedBrand, sameNameBrands } from "@/server/outfit-assembly/brand-names";
+// Channel3 knows websites by their host, without `www.`.
+import { siteHost } from "@/server/outfit-assembly/products";
 
 import {
   type BrandLookup,
@@ -169,13 +171,6 @@ const CHANNEL3_GENDERS: Record<Line, string> = { menswear: "male", womenswear: "
 function categoryIds(category: ProductCategory, line: Line): string[] {
   if (category === "one_piece") return ONE_PIECE_KINDS[line].flatMap((kind) => CHANNEL3_ONE_PIECE_CATEGORY_IDS[kind]);
   return [...CHANNEL3_CATEGORY_IDS[category]];
-}
-
-/** A site's host, as Channel3 knows websites by it: without `www.`. Null when it isn't a URL. */
-function siteHost(site: string): string | null {
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(site) ? site : `https://${site}`;
-  if (!URL.canParse(withScheme)) return null;
-  return new URL(withScheme).hostname.replace(/^www\./, "") || null;
 }
 
 // The trimming. Parsing keeps only the fields named here and drops the rest. A field Channel3 leaves

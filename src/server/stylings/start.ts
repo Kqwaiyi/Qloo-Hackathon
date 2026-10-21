@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import type { BudgetTier, PhotoStyleWords } from "@/config/consultations";
 import { QLOO_BACKSTOP_CALLS } from "@/config/limits";
+import type { ProductSearchMarket } from "@/config/product-search";
 import { OUTFITS_PER_STYLING, type StylingKind, type StylingStage } from "@/config/stylings";
 import { startOfNextUtcMonth } from "@/server/clock";
 import type { Transaction } from "@/server/db/database";
@@ -112,6 +113,8 @@ export interface NewStyling {
   photoStyle: PhotoStyleWords;
   /** How many Outfits it makes, at most: what `checkStylingStart` allowed. */
   outfitsWanted: number;
+  /** The market its Products come from: the user's Country's, as it starts (`productSearchMarket`). */
+  market: ProductSearchMarket;
   /**
    * Where it starts. At Style Icons, it ranks its own, as a first Styling and a Photo Style change
    * do. Further in, it has them already: "Show 2 more Outfits" carries on down the current ones

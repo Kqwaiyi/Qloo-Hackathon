@@ -32,6 +32,7 @@ import {
   type PreviewResult,
   tailoredPiecesSchema,
   type TailoringBrand,
+  type TailoringCandidate,
   type TailoringInput,
   type TailoringPiece,
   UnretryableAiError,
@@ -233,26 +234,21 @@ When there is nobody in the photo, every part of visible is false and photoStyle
 
 Never guess the person's age. Never infer their ethnicity, skin tone, body measurements or health, and never mention them.`;
 
-const TAILORING_PROMPT = `You are the stylist in a styling app. For the person in the photo, you make one Outfit concrete. Its picks are already made: the Style Icon who inspires it, and the Brand each clothing Piece is built on. You choose each Piece: one garment from its Brand, or for the Hairstyle one haircut, to suit the person in the photo, their Photo Style and the Style Icon. You may use the photo to match colours to what they're wearing.
+const TAILORING_PROMPT = `You are the stylist in a styling app. For the person in the photo, you make one Outfit concrete. Its picks are already made: the Style Icon who inspires it, and the Brand each clothing Piece comes from. Each clothing Piece comes with its Brand's real products, as candidates: you pick one of them. For the Hairstyle, you choose one haircut. Choose so that the Outfit goes together and suits the person in the photo, their Photo Style and the Style Icon. You may use the photo to match colours to what they're wearing.
 
 Reply with one Piece per category you're given, in the order given, each with:
 - category: the Piece's category, as given.
-- item: a label of about 6 words, colour included, such as "Washed-black relaxed cargo trousers". For the Hairstyle, the cut.
-- details: one sentence on the colour, fabric, fit and cut, used to picture the person wearing it. It describes the item alone: it never names the Style Icon or anyone else.
+- productId: for a clothing Piece only, the id of the candidate you pick, exactly as given. Only ever one of that Piece's own candidates.
+- item: for the Hairstyle only, the cut, as a label of about 6 words.
+- details: for the Hairstyle only, one sentence on the cut, used to picture the person with it. It describes the cut alone: it never names the Style Icon or anyone else.
 - why: one line of about 20 words, in English, speaking to the person as "you", on why it suits them.
 - unknownCut: for the Hairstyle only. See below.
 
-Every item:
-- is generic: never a product name or a model name;
-- has no price, currency or cost anywhere in what you write;
-- is something its Brand plausibly makes, going by the Brand's product categories;
-- for the Top, is one garment: the main visible upper layer.
+Nothing you write states a price, currency or cost.
 
-Each why may mention the garment, the Style Icon, the Photo Style, the person's hair and what they're already wearing. It never mentions their body size or shape, weight, skin colour, ethnicity, gender or age.
+For the Top, pick one garment that works as the main visible upper layer.
 
-A Brand's price range tells you how to pitch its item. Never repeat it.
-
-One-Piece: when you're given both a Top and a Bottom, you may make them one garment, a Piece with category "one_piece" built on the Top's Brand, in place of the Top and the Bottom. The Bottom's Brand is then left out. Only do it when the Top's Brand plausibly makes such a garment and it fits the Outfit's line: a dress for womenswear, or a jumpsuit or overalls for menswear or womenswear. Prefer separates.
+Each why may describe the product you picked, and mention the Style Icon, the Photo Style, the person's hair and what they're already wearing. It never mentions their body size or shape, weight, skin colour, ethnicity, gender or age.
 
 Hairstyle: work from the Style Icon's name alone.
 - If you know the Style Icon's signature haircut, base the cut on it, and set unknownCut to false.
@@ -271,19 +267,34 @@ function tailoringRequest({ photoType, ageGroup, photoStyle, line, styleIconName
     `The Style Icon: ${styleIconName}.`,
     "",
     "The Pieces, in order:",
-    ...pieces.map((piece) => `- ${pieceRequest(piece)}`),
+    ...pieces.flatMap(pieceRequest),
   ].join("\n");
 }
 
-function pieceRequest(piece: TailoringPiece): string {
-  if (piece.category === "hairstyle") return `hairstyle (${CATEGORY_LABELS.hairstyle}): a haircut.`;
-  return `${piece.category} (${CATEGORY_LABELS[piece.category]}): ${brandRequest(piece.brand)}`;
+/** One Piece's lines: a clothing Piece's Brand and its candidates, by their words alone. */
+function pieceRequest(piece: TailoringPiece): string[] {
+  if (piece.category === "hairstyle") return [`- hairstyle (${CATEGORY_LABELS.hairstyle}): a haircut.`];
+  return [
+    `- ${piece.category} (${CATEGORY_LABELS[piece.category]}): from ${brandRequest(piece.brand)}. Its candidates:`,
+    ...piece.candidates.map(candidateRequest),
+  ];
 }
 
-function brandRequest({ name, categoryTags, priceRangeUsd }: TailoringBrand): string {
-  const makes = categoryTags.length > 0 ? `, which makes ${categoryTags.map((tag) => tag.replaceAll("_", " ")).join(", ")}` : "";
-  const price = priceRangeUsd ? ` Its prices run from ${priceRangeUsd.min} to ${priceRangeUsd.max} US dollars.` : "";
-  return `from ${name}${makes}.${price}`;
+function brandRequest({ name, categoryTags }: TailoringBrand): string {
+  return categoryTags.length > 0 ? `${name}, which makes ${categoryTags.map((tag) => tag.replaceAll("_", " ")).join(", ")}` : name;
+}
+
+/** A candidate on one line: its id, title, description and colours, as the product search gave them. */
+function candidateRequest({ id, title, description, colours }: TailoringCandidate): string {
+  const about = [`id: ${id}`, `title: ${oneLine(title)}`];
+  if (description) about.push(`description: ${oneLine(description)}`);
+  if (colours.length > 0) about.push(`colours: ${colours.join(", ")}`);
+  return `  - ${about.join(" | ")}`;
+}
+
+/** Text from a seller, its line breaks and runs of spaces made single spaces. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 /** What the Preview instruction calls each Piece. */

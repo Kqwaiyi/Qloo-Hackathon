@@ -9,6 +9,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -26,6 +27,7 @@ import {
 } from "../../config/consultations";
 import type { EmailKind } from "../../config/email";
 import { USAGE_KINDS } from "../../config/limits";
+import type { ProductSearchMarket } from "../../config/product-search";
 import {
   PREVIEW_REFUSAL_REASONS,
   PREVIEW_STATES,
@@ -35,6 +37,7 @@ import {
   STYLING_STAGES,
   STYLING_STATUSES,
 } from "../../config/stylings";
+import type { Candidate } from "../outfit-assembly/products";
 
 // Better Auth's own tables (user, session, account, verification, rate limit), plus the Qurator
 // fields on the user. Better Auth looks these up by the export names below.
@@ -287,6 +290,9 @@ export const styling = pgTable(
     tailoringFailures: integer("tailoring_failures").notNull(),
     failureReason: stylingFailureReasonEnum("failure_reason"),
     workflowRunId: text("workflow_run_id"),
+    // The market its Products come from, chosen from the user's Country as it started. Null only for
+    // a Styling started before Products existed.
+    market: text("market").$type<ProductSearchMarket>(),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
@@ -377,7 +383,11 @@ export const outfit = pgTable(
 
 export const categoryEnum = pgEnum("category", PIECE_CATEGORIES);
 
-/** One per Category an Outfit fills, or a One-Piece filling its Top and Bottom, tailored by the AI. */
+/**
+ * One per Category an Outfit fills, or a One-Piece filling its Top and Bottom, tailored by the AI.
+ * Every Top, Bottom and Shoes Piece is a Product (ADR-0008); those made before Products existed keep
+ * the item the AI described instead.
+ */
 export const piece = pgTable(
   "piece",
   {
@@ -386,10 +396,12 @@ export const piece = pgTable(
       .notNull()
       .references(() => outfit.id, { onDelete: "cascade" }),
     category: categoryEnum("category").notNull(),
-    // A card label of about 6 words; for the Hairstyle, the cut.
+    // A Product's title, as its seller gives it; for the Hairstyle, the cut; for an older Piece, a card
+    // label of about 6 words.
     item: text("item").notNull(),
-    // One sentence on colour, fabric, fit and cut, for the Preview. Never shown.
-    details: text("details").notNull(),
+    // For the Hairstyle and older Pieces, one sentence on colour, fabric, fit and cut, for the
+    // Preview. Never shown. A Product has none.
+    details: text("details"),
     // One line on why it suits the user.
     why: text("why").notNull(),
     // The Hairstyle only: the AI didn't know the Style Icon's signature cut, so based it on the Outfit.
@@ -401,6 +413,18 @@ export const piece = pgTable(
     brandOfficialSite: text("brand_official_site"),
     brandPriceUsdMin: doublePrecision("brand_price_usd_min"),
     brandPriceUsdMax: doublePrecision("brand_price_usd_max"),
+    // A Product Piece only: the Product by the product search's ID, its garment-only photo, the offer
+    // it links to (its page and shop), that offer's price in its own currency, the market it was found
+    // in, when the price was found or last checked, and whether it's still sold there.
+    productId: text("product_id"),
+    productPhotoUrl: text("product_photo_url"),
+    offerUrl: text("offer_url"),
+    offerShopDomain: text("offer_shop_domain"),
+    price: doublePrecision("price"),
+    currency: text("currency"),
+    market: text("market").$type<ProductSearchMarket>(),
+    pricedAt: timestamp("priced_at", { withTimezone: true }),
+    available: boolean("available"),
   },
   (table) => [
     unique("piece_outfit_id_category_unique").on(table.outfitId, table.category),
@@ -409,7 +433,39 @@ export const piece = pgTable(
       "piece_brand_unless_hairstyle",
       sql`(${table.category} = 'hairstyle') = (${table.brandEntityId} is null) and (${table.brandEntityId} is null) = (${table.brandName} is null)`,
     ),
+    // A Product Piece has every Product field and a Brand, and no hidden Preview description; any
+    // other Piece has none of them, and has its description.
+    check(
+      "piece_product_fields_together",
+      sql`num_nonnulls(${table.productId}, ${table.productPhotoUrl}, ${table.offerUrl}, ${table.offerShopDomain}, ${table.price}, ${table.currency}, ${table.market}, ${table.pricedAt}, ${table.available}) in (0, 9)
+        and (${table.productId} is null) = (${table.details} is not null)
+        and (${table.productId} is null or ${table.brandEntityId} is not null)`,
+    ),
   ],
+);
+
+/**
+ * The candidates of each Piece's search in a running Styling: up to CANDIDATES_PER_PIECE Products of
+ * the Piece's Brand that qualified, kept for its Outfit's tailoring, or none when none did. One row
+ * per search, by the Outfit's Style Icon, the Category and the Brand searched. Deleted when the
+ * Styling finishes, however it finishes: nothing is reused by a later Styling.
+ */
+export const pieceCandidates = pgTable(
+  "piece_candidates",
+  {
+    stylingId: text("styling_id")
+      .notNull()
+      .references(() => styling.id, { onDelete: "cascade" }),
+    styleIconId: text("style_icon_id")
+      .notNull()
+      .references(() => styleIcon.id, { onDelete: "cascade" }),
+    category: categoryEnum("category").notNull(),
+    brandEntityId: text("brand_entity_id").notNull(),
+    candidates: jsonb("candidates").notNull().$type<Candidate[]>(),
+    // When the search was made: the date each Product Piece's price is found.
+    searchedAt: timestamp("searched_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [primaryKey({ name: "piece_candidates_pk", columns: [table.stylingId, table.styleIconId, table.category, table.brandEntityId] })],
 );
 
 // The Qloo cache: every Qloo response, trimmed to the fields the app uses, for QLOO_CACHE_LIFETIME_DAYS.

@@ -1,3 +1,6 @@
+import { BRAND_CATEGORIES, type BrandCategory } from "@/config/consultations";
+import { CHANNEL3_CATEGORY_IDS, PRODUCT_SEARCH_MARKET_CURRENCIES, type ProductSearchMarket } from "@/config/product-search";
+
 import type { Channel3Transport } from "./channel3";
 
 /** A request as it left for Channel3, its JSON body parsed. */
@@ -41,16 +44,73 @@ function knowsNothing({ url }: RecordedChannel3Request): Response {
   return channel3NotFound();
 }
 
+/** A search, as Channel3's browse request carries it, read back into our terms. */
+export interface Channel3Search {
+  /** The Brand searched, by Channel3's ID. */
+  brandId: string;
+  /** Our Category for the request's category IDs, or null when they're none of ours. */
+  category: BrandCategory | null;
+  /** Channel3's gender for the line: `male` or `female`. */
+  gender: string;
+  /** The market, from the request's locale `config`. */
+  market: ProductSearchMarket;
+  /** The price filter, or null when the request sent none. */
+  priceRange: { min: number; max: number } | null;
+}
+
 /**
  * Channel3 knowing every Brand but those named in `except`, each under its own name: its Brand
- * lookup lists the one Brand with the name looked up. It knows no website or Product.
+ * lookup lists the one Brand with the name looked up, whose ID is `c3-` and the name in lower case.
+ * It sells each Brand what `products` gives for a search: by default a small catalogue of two
+ * Products in every Category and line, new and in stock in the market, priced in its currency within
+ * any price filter. It knows no website.
  */
-export function channel3KnowingEveryBrand({ except = [] }: { except?: readonly string[] } = {}) {
+export function channel3SellingEveryBrand({
+  except = [],
+  products = channel3SmallCatalogue,
+}: { except?: readonly string[]; products?: (search: Channel3Search) => readonly object[] } = {}) {
   return (request: RecordedChannel3Request): Response => {
-    if (request.url.pathname !== "/v1/brands/search") return knowsNothing(request);
-    const name = request.url.searchParams.get("query") ?? "";
-    return channel3Brands(except.includes(name) ? [] : [channel3Brand(`c3-${encodeURIComponent(name.toLowerCase())}`, name)]);
+    if (request.url.pathname === "/v1/brands/search") {
+      const name = request.url.searchParams.get("query") ?? "";
+      return channel3Brands(except.includes(name) ? [] : [channel3Brand(channel3BrandId(name), name)]);
+    }
+    if (request.url.pathname === "/v1/browse") return channel3Products(products(channel3Search(request)));
+    return knowsNothing(request);
   };
+}
+
+/** Channel3's ID for a Brand of this name, as `channel3SellingEveryBrand` knows it. */
+export function channel3BrandId(name: string): string {
+  return `c3-${encodeURIComponent(name.toLowerCase())}`;
+}
+
+/** The search a browse request makes. */
+export function channel3Search({ body }: RecordedChannel3Request): Channel3Search {
+  const { filters, config } = body as {
+    filters: { brand_ids: string[]; category_ids: string[]; gender: string; price?: { min_price: number; max_price: number } };
+    config: { country: ProductSearchMarket };
+  };
+  return {
+    brandId: filters.brand_ids[0] ?? "",
+    category: BRAND_CATEGORIES.find((category) => filters.category_ids.includes(CHANNEL3_CATEGORY_IDS[category][0]!)) ?? null,
+    gender: filters.gender,
+    market: config.country,
+    priceRange: filters.price ? { min: filters.price.min_price, max: filters.price.max_price } : null,
+  };
+}
+
+/**
+ * Two Products of the Brand searched, `<Brand ID>-<Category>-1` and `-2`, in the line searched, each
+ * new and in stock at shop.example for 45 in the market's currency, or the nearest price within the
+ * price filter.
+ */
+export function channel3SmallCatalogue({ brandId, category, gender, market, priceRange }: Channel3Search): object[] {
+  const price = priceRange ? Math.min(Math.max(45, priceRange.min), priceRange.max) : 45;
+  return [1, 2].map((n) => {
+    const id = `${brandId}-${category}-${n}`;
+    const offer = channel3Offer({ url: `https://shop.example/products/${id}`, price, currency: PRODUCT_SEARCH_MARKET_CURRENCIES[market] });
+    return channel3Product(id, { brandIds: [brandId], gender, offers: [offer] });
+  });
 }
 
 /** A Brand, as Channel3's Brand lookup sends it. */

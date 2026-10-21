@@ -13,7 +13,7 @@ import { signUp } from "@/server/operations/sign-up";
 import { createDemoAccount } from "@/server/operations/team";
 import { changePhotoStyle, showMoreOutfits } from "@/server/operations/stylings";
 import { readUsageSummary } from "@/server/operations/usage";
-import { qlooPerson, qlooResponse } from "@/server/qloo/fake";
+import { qlooBrand, qlooPerson, qlooResponse } from "@/server/qloo/fake";
 import { saveQlooLimitState } from "@/server/qloo/limit-state";
 import { recordUsage } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
@@ -26,6 +26,16 @@ const STYLE_ICONS = [
   qlooPerson("p-3", "Cleo Hart", 0.88),
   qlooPerson("p-4", "Dana Reed", 0.86),
   qlooPerson("p-5", "Esme Vale", 0.84),
+];
+
+// Made-up Brands, shaped like Qloo's Brand entities, for a body photo's Outfits: the first is Bolt,
+// Jeanery (denim, so the Bottom) and Stride, the second Dune, Bolt and Sole.
+const BRANDS = [
+  qlooBrand("b-stride", "Stride", { categories: ["footwear"], affinity: 0.97, price: [60, 180] }),
+  qlooBrand("b-bolt", "Bolt", { categories: ["apparel"], affinity: 0.95, price: [20, 120] }),
+  qlooBrand("b-sole", "Sole", { categories: ["footwear"], affinity: 0.93, price: [40, 90] }),
+  qlooBrand("b-dune", "Dune", { categories: ["apparel"], affinity: 0.9 }),
+  qlooBrand("b-jeanery", "Jeanery", { categories: ["apparel", "denim"], affinity: 0.88, price: [50, 110] }),
 ];
 
 const DEMO_PASSWORD = "the judges' shared password";
@@ -210,6 +220,30 @@ describe("Stylings on the Demo Account", () => {
     await harness.stylings.runPending();
     expect((await readConsultation(harness.context(judge), one))!.outfits).toHaveLength(4);
     expect((await readConsultation(harness.context(judge), other))!).toMatchObject({ photoStyle: ["edgy"], outfits: [{}, {}] });
+  });
+
+  it("build a body photo's Outfits from real Products, as anyone's are", async () => {
+    harness.qloo.respond = (request) =>
+      qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
+    const judge = await signedInJudge();
+    const started = await startConsultation(harness.context(judge), { photo: await jpeg(), photoType: "body_only", consent: BOTH_CONSENT_BOXES_TICKED });
+    if (!started.ok) throw new Error(`Couldn't start a Consultation: ${started.refusal}`);
+
+    await harness.stylings.runPending();
+
+    const { outfits } = (await readConsultation(harness.context(judge), started.consultationId))!;
+    expect(outfits.map((o) => o.pieces.map((p) => [p.category, p.brand?.name, p.product?.shopDomain]))).toEqual([
+      [
+        ["top", "Bolt", "shop.example"],
+        ["bottom", "Jeanery", "shop.example"],
+        ["shoes", "Stride", "shop.example"],
+      ],
+      [
+        ["top", "Dune", "shop.example"],
+        ["bottom", "Bolt", "shop.example"],
+        ["shoes", "Sole", "shop.example"],
+      ],
+    ]);
   });
 
   it("still run one Styling at a time on each Consultation, also when two judges press at once", async () => {

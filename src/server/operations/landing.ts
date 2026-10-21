@@ -1,10 +1,9 @@
 import type { StylePreference } from "@/config/accounts";
 import type { AgeGroup, BudgetTier, PhotoStyleWords, PhotoType } from "@/config/consultations";
 import { findCountry } from "@/config/countries";
-import type { OutfitCardContent, PieceView } from "@/server/operations/consultations";
+import { type OutfitCardContent, outfitTotal, type PieceView } from "@/server/operations/consultations";
 import type { OperationContext } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
-import { outfitPriceRange } from "@/server/outfit-assembly/brands";
 
 // The public landing page, which walks visitors through frozen sample Consultations. Visitors
 // never trigger a Qloo or AI call: the page shows only text and images that ship with it.
@@ -61,7 +60,7 @@ export async function readLandingPage(ctx: Pick<OperationContext, "auth" | "requ
     outfit: {
       position: 1,
       styleIconName: outfit.styleIconName,
-      priceRange: outfitPriceRange(outfit.pieces.map((pieceView) => pieceView.brand?.priceRange ?? null)),
+      total: outfitTotal(outfit.pieces),
       pieces: outfit.pieces,
     },
     photoUrl: images?.photoPath ?? null,

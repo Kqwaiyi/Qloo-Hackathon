@@ -27,6 +27,7 @@ import {
   BUDGET_TIER_BRAND_FILTERS,
   THIN_POOL_USABLE_BRANDS,
 } from "@/config/qloo";
+import type { ProductCategory } from "@/server/product-search/provider";
 import type { QlooBrand, QlooBrandQuery, QlooTagId } from "@/server/qloo/client";
 
 import { consultationCountry, lineGender, qlooAge } from "./signals";
@@ -170,12 +171,6 @@ export type BrandMatches = ReadonlyMap<string, string | null>;
 /** A Brand to look up in the product search: what the lookup sends, and the Qloo entity ID its match is kept by. */
 export type BrandToLookUp = Pick<PickedBrand, "entityId" | "name" | "officialSite">;
 
-/** The Brand a Piece is built on: its Category's pick, the Top's for a One-Piece, or none for the Hairstyle. */
-export function pieceBrand(category: PieceCategory, picks: BrandPicks): PickedBrand | null {
-  if (category === "one_piece") return picks.top;
-  return isBrandCategory(category) ? picks[category] : null;
-}
-
 /** The entity IDs of the Brands each Category already uses, across the Outfits that will be current together. */
 export type UsedBrands = Record<BrandCategory, ReadonlySet<string>>;
 
@@ -229,7 +224,22 @@ export interface StyleIconBrands {
   brands: readonly QlooBrand[];
 }
 
-/** Which Style Icons' Outfits get which Brands, which Style Icons can't complete one, and which Brands to look up first. */
+/** One Piece's search in the product search: the Brand its Outfit's Style Icon picked for its Category. */
+export interface PieceSearch {
+  styleIconId: string;
+  category: BrandCategory;
+  brand: PickedBrand;
+}
+
+/** Whether each Piece's search made so far found a Product that qualified, by `pieceSearchKey`. One missing here hasn't been made. */
+export type PieceSearches = ReadonlyMap<string, boolean>;
+
+/** What `PieceSearches` keeps a search by: its Style Icon, Category and Brand. */
+export function pieceSearchKey(styleIconId: string, category: ProductCategory, brandEntityId: string): string {
+  return JSON.stringify([styleIconId, category, brandEntityId]);
+}
+
+/** Which Style Icons' Outfits get which Brands, which Style Icons can't complete one, and what to look up or search first. */
 export interface OutfitBrandPlan {
   picked: { styleIconId: string; brands: BrandPicks }[];
   skipped: string[];
@@ -239,6 +249,12 @@ export interface OutfitBrandPlan {
    * change, so they're not to be used.
    */
   lookUpBrands: BrandToLookUp[];
+  /**
+   * The picks' Pieces not searched yet, in the order of the picks and then the Categories, once every
+   * pick's Brand is looked up: none before. Until they're searched, the picks may still change, so
+   * their Outfits are not to be tailored.
+   */
+  searches: PieceSearch[];
 }
 
 /**
@@ -248,7 +264,11 @@ export interface OutfitBrandPlan {
  * Outfits already built is skipped. One held back only by this plan's own picks is neither: those
  * picks are freed if their tailoring fails, so it waits for a later plan. Only Brands the product
  * search knows, by `matches`, are picked; the picks' Brands not looked up yet are to be looked up
- * before the picks are used, and a later plan picks again with what the lookups found.
+ * before the picks are used, and a later plan picks again with what the lookups found. Then each
+ * pick's Pieces are searched, by `searched`: a Style Icon one of whose Pieces' searches found no
+ * Product that qualified can't complete an Outfit either, so it's skipped, and the Style Icons after
+ * it are planned without its picks. That holds only until a missing Product falls back to the Style
+ * Icon's next Brand instead (ADR-0008).
  */
 export function planOutfitBrands(
   styleIcons: readonly StyleIconBrands[],
@@ -256,8 +276,9 @@ export function planOutfitBrands(
   wanted: number,
   used: UsedBrands,
   matches: BrandMatches,
+  searched: PieceSearches,
 ): OutfitBrandPlan {
-  const plan: OutfitBrandPlan = { picked: [], skipped: [], lookUpBrands: [] };
+  const plan: OutfitBrandPlan = { picked: [], skipped: [], lookUpBrands: [], searches: [] };
   const usedSoFar = { top: new Set(used.top), bottom: new Set(used.bottom), shoes: new Set(used.shoes) };
   for (const { styleIconId, line, brands } of styleIcons) {
     if (plan.picked.length >= wanted) break;
@@ -267,12 +288,25 @@ export function planOutfitBrands(
       if (!pickBrands(brands, line, budgetTier, used, matches)) plan.skipped.push(styleIconId);
       continue;
     }
+    const foundNothing = BRAND_CATEGORIES.some((category) => searched.get(pieceSearchKey(styleIconId, category, picks[category].entityId)) === false);
+    if (foundNothing) {
+      plan.skipped.push(styleIconId);
+      continue;
+    }
     plan.picked.push({ styleIconId, brands: picks });
     for (const category of BRAND_CATEGORIES) usedSoFar[category].add(picks[category].entityId);
     for (const { entityId, name, officialSite } of [picks.shoes, picks.top, picks.bottom]) {
       if (!matches.has(entityId) && !plan.lookUpBrands.some((brand) => brand.entityId === entityId)) plan.lookUpBrands.push({ entityId, name, officialSite });
     }
   }
+  if (plan.lookUpBrands.length > 0) return plan;
+  plan.searches = plan.picked.flatMap(({ styleIconId, brands }) =>
+    BRAND_CATEGORIES.filter((category) => !searched.has(pieceSearchKey(styleIconId, category, brands[category].entityId))).map((category) => ({
+      styleIconId,
+      category,
+      brand: brands[category],
+    })),
+  );
   return plan;
 }
 

@@ -69,6 +69,9 @@ export const PRODUCT_SEARCH_MARKET_CURRENCIES: Record<ProductSearchMarket, strin
  */
 export const PRODUCTS_PER_SEARCH = 30;
 
+/** A Piece's search keeps up to this many qualifying Products as its candidates, in the product search's order. */
+export const CANDIDATES_PER_PIECE = 8;
+
 /**
  * Whether the product search knows a Qloo Brand, found or not, is kept this long by the Brand's
  * Qloo entity ID, so Stylings don't keep looking up the same Brands.

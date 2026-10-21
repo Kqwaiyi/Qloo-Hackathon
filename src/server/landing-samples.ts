@@ -28,7 +28,8 @@ export const LANDING_SAMPLES: LandingSamples = {
           "category": "hairstyle",
           "item": "Messy textured short braid crop",
           "why": "This hairstyle channels Post Malone's signature look effortlessly while matching your casual photo style and current hair length.",
-          "brand": null
+          "brand": null,
+          "product": null
         },
         {
           "category": "top",
@@ -41,7 +42,8 @@ export const LANDING_SAMPLES: LandingSamples = {
               "max": 75
             },
             "visitUrl": null
-          }
+          },
+          "product": null
         },
         {
           "category": "bottom",
@@ -54,7 +56,8 @@ export const LANDING_SAMPLES: LandingSamples = {
               "max": 2500
             },
             "visitUrl": null
-          }
+          },
+          "product": null
         },
         {
           "category": "shoes",
@@ -67,7 +70,8 @@ export const LANDING_SAMPLES: LandingSamples = {
               "max": 500
             },
             "visitUrl": null
-          }
+          },
+          "product": null
         }
       ]
     },
@@ -97,7 +101,8 @@ export const LANDING_SAMPLES: LandingSamples = {
           "category": "hairstyle",
           "item": "Chin-length blunt bob",
           "why": "A blunt line gives the edgy style you went for a sharp finish.",
-          "brand": null
+          "brand": null,
+          "product": null
         }
       ]
     },
@@ -132,7 +137,8 @@ export const LANDING_SAMPLES: LandingSamples = {
               "max": 70
             },
             "visitUrl": null
-          }
+          },
+          "product": null
         },
         {
           "category": "shoes",
@@ -145,7 +151,8 @@ export const LANDING_SAMPLES: LandingSamples = {
               "max": 80
             },
             "visitUrl": null
-          }
+          },
+          "product": null
         }
       ]
     },

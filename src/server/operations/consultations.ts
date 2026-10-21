@@ -14,6 +14,7 @@ import {
   type PhotoStyleWords,
   type PhotoType,
   type PieceCategory,
+  type Price,
   type PriceRangeUsd,
   SIGNED_LINK_LIFETIME_SECONDS,
 } from "@/config/consultations";
@@ -30,6 +31,8 @@ import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
+import { productSearchMarket } from "@/server/outfit-assembly/markets";
+import { sumPrices } from "@/server/outfit-assembly/products";
 import { brandPriceRange, outfitPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
 import { isFromSupportedRegion } from "@/server/region-gate";
 import { hasCurrentStyleIconLeft } from "@/server/stylings/current-outfits";
@@ -159,6 +162,7 @@ export async function startConsultation(
         budgetTier,
         photoStyle: report.photoStyle,
         outfitsWanted: stylingStart.outfitsWanted,
+        market: productSearchMarket(user.countryCode),
         stage: "style_icons",
       });
     });
@@ -223,17 +227,21 @@ export interface OutfitView {
   /** Shown by name, never with Qloo's image. */
   styleIconName: string;
   preview: PreviewView;
-  /**
-   * The whole Outfit's price range, from its Brand Pieces' price data, or null when none has any. A
-   * One-Piece's left-out Bottom Brand isn't one of them.
-   */
-  priceRange: PriceRangeUsd | null;
+  /** "Whole Outfit about …", or null when there's nothing to add up. */
+  total: OutfitTotal | null;
   /** One row per Piece, in Category order, whether or not there's a Preview: a One-Piece is one row. */
   pieces: PieceView[];
 }
 
+/**
+ * What a whole Outfit costs: its Products' prices added up, in their currency; or for an older
+ * Outfit, the sums of its Brand Pieces' price ranges, in US dollars. A One-Piece's left-out Bottom
+ * Brand isn't one of them.
+ */
+export type OutfitTotal = { kind: "products"; price: Price } | { kind: "brand_ranges"; usdRange: PriceRangeUsd };
+
 /** What an Outfit's card shows beside its Preview. */
-export type OutfitCardContent = Pick<OutfitView, "position" | "styleIconName" | "priceRange" | "pieces">;
+export type OutfitCardContent = Pick<OutfitView, "position" | "styleIconName" | "total" | "pieces">;
 
 /** The Outfit's Preview: a signed link to it, valid for 1 hour from now, or why there's none. */
 export type PreviewView = { state: "ready"; url: string } | { state: "refused" | "failed" };
@@ -241,19 +249,38 @@ export type PreviewView = { state: "ready"; url: string } | { state: "refused" |
 /** A Piece's row. Its `details` are for the Preview, never shown. */
 export interface PieceView {
   category: PieceCategory;
-  /** For the Hairstyle, the cut. */
+  /** A Product's title; for the Hairstyle, the cut; for an older Piece, the item the AI described. */
   item: string;
   why: string;
   /** The Brand it's built on, or null for the Hairstyle, which isn't something to buy. */
   brand: BrandView | null;
+  /** The Product it is, or null for the Hairstyle and older Pieces. */
+  product: ProductView | null;
 }
 
 export interface BrandView {
   name: string;
-  /** Its `price_range_usd_min`–`max`, or null when Qloo has no price for it. */
+  /**
+   * An older Piece's price: its Brand's `price_range_usd_min`–`max`, or null when Qloo has no price
+   * for it. Null for a Product, which shows its own price.
+   */
   priceRange: PriceRangeUsd | null;
-  /** Where "Visit <Brand>" goes: its official site when that's an https URL, or null for no link. */
+  /**
+   * Where an older Piece's "Visit <Brand>" goes: its official site when that's an https URL, or null
+   * for no link. Null for a Product, which links to its own page.
+   */
   visitUrl: string | null;
+}
+
+/** What a Product Piece's row shows of its Product, beside its title: its price, dated, and where to buy it. */
+export interface ProductView {
+  /** Its offer's price, in the offer's own currency. */
+  price: Price;
+  /** The UTC date its price was found, as YYYY-MM-DD: "on 21 Oct". */
+  pricedOn: string;
+  /** Its offer's page, where "View at <shop domain>" goes. */
+  url: string;
+  shopDomain: string;
 }
 
 /** The columns of a Piece that its row shows. */
@@ -265,6 +292,11 @@ export const pieceViewColumns = {
   brandOfficialSite: piece.brandOfficialSite,
   brandPriceUsdMin: piece.brandPriceUsdMin,
   brandPriceUsdMax: piece.brandPriceUsdMax,
+  offerUrl: piece.offerUrl,
+  offerShopDomain: piece.offerShopDomain,
+  price: piece.price,
+  currency: piece.currency,
+  pricedAt: piece.pricedAt,
 };
 
 /** A Piece's row, from its `pieceViewColumns`. */
@@ -276,6 +308,11 @@ export function pieceView({
   brandOfficialSite,
   brandPriceUsdMin,
   brandPriceUsdMax,
+  offerUrl,
+  offerShopDomain,
+  price,
+  currency,
+  pricedAt,
 }: {
   category: PieceCategory;
   item: string;
@@ -284,16 +321,40 @@ export function pieceView({
   brandOfficialSite: string | null;
   brandPriceUsdMin: number | null;
   brandPriceUsdMax: number | null;
+  offerUrl: string | null;
+  offerShopDomain: string | null;
+  price: number | null;
+  currency: string | null;
+  pricedAt: Date | null;
 }): PieceView {
-  return {
-    category,
-    item,
-    why,
-    brand:
-      brandName === null
-        ? null
-        : { name: brandName, priceRange: brandPriceRange(brandPriceUsdMin, brandPriceUsdMax), visitUrl: visitUrl(brandOfficialSite) },
-  };
+  // The check constraint keeps a Product Piece's fields all set, and any other Piece's all empty.
+  const product: ProductView | null =
+    offerUrl === null || offerShopDomain === null || price === null || currency === null || pricedAt === null
+      ? null
+      : { price: { amount: price, currency }, pricedOn: pricedAt.toISOString().slice(0, 10), url: offerUrl, shopDomain: offerShopDomain };
+  let brand: BrandView | null = null;
+  if (brandName !== null) {
+    brand = product
+      ? { name: brandName, priceRange: null, visitUrl: null }
+      : { name: brandName, priceRange: brandPriceRange(brandPriceUsdMin, brandPriceUsdMax), visitUrl: visitUrl(brandOfficialSite) };
+  }
+  return { category, item, why, brand, product };
+}
+
+/**
+ * "Whole Outfit about …" for an Outfit's Pieces: its Products' prices added up, when it has
+ * Products, or else its Brand Pieces' price ranges. Null when there's nothing to add up, as for a
+ * Hairstyle-only Outfit, or until prices convert, when its Products are priced in different
+ * currencies.
+ */
+export function outfitTotal(pieces: readonly PieceView[]): OutfitTotal | null {
+  const productPrices = pieces.flatMap((pieceView) => (pieceView.product ? [pieceView.product.price] : []));
+  if (productPrices.length > 0) {
+    const price = sumPrices(productPrices);
+    return price && { kind: "products", price };
+  }
+  const usdRange = outfitPriceRange(pieces.map((pieceView) => pieceView.brand?.priceRange ?? null));
+  return usdRange && { kind: "brand_ranges", usdRange };
 }
 
 /** One of the signed-in user's own Consultations, or null for anyone else's or one that doesn't exist. */
@@ -344,7 +405,7 @@ export async function readConsultation(
         position,
         styleIconName,
         preview: await previewView(ctx.blob, previewState, previewPathname, linkValidUntil),
-        priceRange: outfitPriceRange(pieces.filter((pieceView) => pieceView.brand).map((pieceView) => pieceView.brand!.priceRange)),
+        total: outfitTotal(pieces),
         pieces,
       };
     }),

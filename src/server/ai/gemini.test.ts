@@ -13,6 +13,7 @@ import {
   type TailoringInput,
   UnretryableAiError,
 } from "./provider";
+import { checkTailoredPieces } from "./tailoring";
 
 // The Gemini adapter against a fake Gemini API: no test calls Gemini. The fake answers each
 // request with a small hand-written response shaped like Gemini's, and records what was sent.
@@ -122,7 +123,7 @@ const REPORT: PhotoCheckReport = {
   photoStyle: ["edgy", "chic"],
 };
 
-/** A Full-Body Photo's Outfit. The Style Icon and Brands are made up. */
+/** A Full-Body Photo's Outfit. The Style Icon, Brands and Products are made up. */
 const TAILORING: TailoringInput = {
   photo: PHOTO,
   photoType: "full_body",
@@ -132,9 +133,29 @@ const TAILORING: TailoringInput = {
   styleIconName: "Mira Vale",
   pieces: [
     { category: "hairstyle" },
-    { category: "top", brand: { name: "Northbound", categoryTags: ["apparel", "footwear"], priceRangeUsd: { min: 30, max: 250 } } },
-    { category: "bottom", brand: { name: "Field Denim", categoryTags: ["apparel", "denim"], priceRangeUsd: null } },
-    { category: "shoes", brand: { name: "Stride Works", categoryTags: ["footwear"], priceRangeUsd: { min: 60, max: 140 } } },
+    {
+      category: "top",
+      brand: { name: "Northbound", categoryTags: ["apparel", "footwear"] },
+      candidates: [
+        {
+          id: "nb-biker",
+          title: "Cropped Leather Biker Jacket",
+          description: "A black leather biker jacket,\ncropped at the waist, with silver zips.",
+          colours: ["#111111", "#c0c0c0"],
+        },
+        { id: "nb-tee", title: "Boxy Organic Tee", description: null, colours: [] },
+      ],
+    },
+    {
+      category: "bottom",
+      brand: { name: "Field Denim", categoryTags: ["apparel", "denim"] },
+      candidates: [{ id: "fd-straight", title: "High-Rise Straight Jean, Washed Black", description: "Straight-leg jeans in washed-black denim.", colours: ["#2b2b2b"] }],
+    },
+    {
+      category: "shoes",
+      brand: { name: "Stride Works", categoryTags: ["footwear"] },
+      candidates: [{ id: "sw-boot", title: "Lace-Up Ankle Boot", description: "Black leather boots on a chunky sole.", colours: ["#000000"] }],
+    },
   ],
 };
 
@@ -147,32 +168,22 @@ const TAILORED: TailoredPieces = {
       why: "Mira Vale's signature bob, cut from the length you have now to sharpen your edgy, chic style.",
       unknownCut: false,
     },
-    {
-      category: "top",
-      item: "Black cropped leather biker jacket",
-      details: "A black leather biker jacket, cropped at the waist, with silver zips and a fitted cut.",
-      why: "A biker jacket gives your edgy Photo Style its edge, worn the way Mira Vale layers hers.",
-    },
-    {
-      category: "bottom",
-      item: "Washed-black high-rise straight jeans",
-      details: "Washed-black denim jeans with a high rise, a straight leg and a clean hem.",
-      why: "Straight black jeans keep the Outfit sleek and easy, and go with what you're already wearing.",
-    },
-    {
-      category: "shoes",
-      item: "Black leather lace-up ankle boots",
-      details: "Black leather ankle boots with a lace-up front and a chunky rubber sole.",
-      why: "Chunky boots finish the Outfit with the attitude Mira Vale is known for.",
-    },
+    { category: "top", productId: "nb-biker", why: "This cropped biker jacket gives your edgy Photo Style its edge, worn the way Mira Vale layers hers." },
+    { category: "bottom", productId: "fd-straight", why: "Straight black jeans keep the Outfit sleek and easy, and go with what you're already wearing." },
+    { category: "shoes", productId: "sw-boot", why: "Chunky boots finish the Outfit with the attitude Mira Vale is known for." },
   ],
 };
 
-/** The Full-Body Photo's Outfit above, as its Preview is asked for: each Piece by its details. */
+/** The Full-Body Photo's Outfit above, as its Preview is asked for: the Hairstyle by its details, each Product by its title. */
 const PREVIEW: PreviewInput = {
   photo: PHOTO,
   photoType: "full_body",
-  pieces: TAILORED.pieces.map(({ category, details }) => ({ category, details })),
+  pieces: [
+    { category: "hairstyle", details: "A choppy chin-length bob with a soft side part, in your own hair colour." },
+    { category: "top", details: "Cropped Leather Biker Jacket" },
+    { category: "bottom", details: "High-Rise Straight Jean, Washed Black" },
+    { category: "shoes", details: "Lace-Up Ankle Boot" },
+  ],
 };
 
 /** The bytes stand in for the image Gemini drew. */
@@ -328,6 +339,42 @@ describe("tailoring", () => {
       expect(text).toContain(sent);
     }
   });
+
+  it("sends each Brand Piece's candidates as text, by their IDs, titles, descriptions and colours, with no image but the user's photo", async () => {
+    gemini.respond = () => geminiJson(TAILORED);
+
+    await ai.tailorPieces(TAILORING);
+
+    const [request] = gemini.requests;
+    expect(photoPartsOf(request!)).toEqual([{ inlineData: { mimeType: "image/jpeg", data: base64(PHOTO.bytes) } }]);
+    const text = textOf(request!);
+    for (const sent of [
+      "id: nb-biker | title: Cropped Leather Biker Jacket | description: A black leather biker jacket, cropped at the waist, with silver zips. | colours: #111111, #c0c0c0",
+      "id: nb-tee | title: Boxy Organic Tee",
+      "id: fd-straight | title: High-Rise Straight Jean, Washed Black | description: Straight-leg jeans in washed-black denim. | colours: #2b2b2b",
+      "id: sw-boot | title: Lace-Up Ankle Boot",
+    ]) {
+      expect(text).toContain(sent);
+    }
+    // Nothing tells it to invent items, and it's told no price.
+    expect(text).not.toMatch(/generic|US dollars/);
+  });
+
+  it("gets a reply our check accepts only when each Brand Piece is one of its own Category's listed candidates", async () => {
+    gemini.respond = () => geminiJson(TAILORED);
+    expect(checkTailoredPieces(await ai.tailorPieces(TAILORING), TAILORING.pieces)).toEqual([
+      expect.objectContaining({ category: "hairstyle", item: "Choppy chin-length bob" }),
+      expect.objectContaining({ category: "top", productId: "nb-biker" }),
+      expect.objectContaining({ category: "bottom", productId: "fd-straight" }),
+      expect.objectContaining({ category: "shoes", productId: "sw-boot" }),
+    ]);
+
+    for (const productId of ["nb-not-listed", "fd-straight", undefined]) {
+      gemini.respond = () => geminiJson({ pieces: TAILORED.pieces.map((piece) => (piece.category === "top" ? { ...piece, productId } : piece)) });
+
+      expect(checkTailoredPieces(await ai.tailorPieces(TAILORING), TAILORING.pieces)).toBeNull();
+    }
+  });
 });
 
 describe("Previews", () => {
@@ -356,7 +403,7 @@ describe("Previews", () => {
     const [request] = gemini.requests;
     expect(photoPartsOf(request!)).toEqual([{ inlineData: { mimeType: "image/jpeg", data: base64(PHOTO.bytes) } }]);
     const text = textOf(request!);
-    for (const { details } of TAILORED.pieces) expect(text).toContain(details);
+    for (const { details } of PREVIEW.pieces) expect(text).toContain(details);
   });
 
   it("comes back refused as blocked when Google blocks the request, without asking again", async () => {

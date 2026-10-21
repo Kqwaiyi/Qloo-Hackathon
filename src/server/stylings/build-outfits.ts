@@ -1,6 +1,6 @@
 import type { Line } from "@/config/accounts";
 import { PREVIEWS_AT_ONCE } from "@/config/stylings";
-import type { BrandPicks, BrandToLookUp } from "@/server/outfit-assembly/brands";
+import type { BrandPicks, BrandToLookUp, PieceSearch } from "@/server/outfit-assembly/brands";
 import type { QlooBrand, QlooPerson } from "@/server/qloo/client";
 
 // The "build Outfits" Styling, as the order of its steps. The Vercel Workflow runs each step as a
@@ -15,7 +15,8 @@ export type BrandsByStyleIcon = Record<string, QlooBrand[]>;
 
 /**
  * One Outfit to tailor: its position in the Styling, the Style Icon inspiring it and, for a body
- * photo, the Brands its Top, Bottom and Shoes are built on, picked before tailoring.
+ * photo, the Brands its Top, Bottom and Shoes are built on, picked before tailoring, whose Pieces'
+ * searches have found their candidate Products.
  */
 export interface OutfitTry {
   position: number;
@@ -24,14 +25,17 @@ export interface OutfitTry {
 }
 
 /**
- * What Building Outfits does next: fetch some Style Icons' Brands and look some Brands up in the
- * product search, or tailor some Outfits. None of these once it's done.
+ * What Building Outfits does next: fetch some Style Icons' Brands, look some Brands up in the
+ * product search and search some Pieces' Products, or tailor some Outfits. None of these once it's
+ * done.
  */
 export interface OutfitPlan {
   /** The IDs of the Style Icons whose Brands to fetch, all at once, before planning again. */
   fetchBrandsFor: string[];
   /** The Brands to look up in the product search, all at once, before planning again. */
   lookUpBrands: BrandToLookUp[];
+  /** The Pieces whose Products to search for, all at once, before planning again. */
+  searchProducts: PieceSearch[];
   tries: OutfitTry[];
 }
 
@@ -58,9 +62,10 @@ export interface BuildOutfitsSteps {
    * The Outfits to tailor next: one per position still open, each from the next unused Style Icon,
    * while substitutes for failed tailoring are left. For a body photo, each also gets its Brands
    * from `brandsByStyleIcon`, only those the product search knows, skipping Style Icons that can't
-   * complete an Outfit. When the Style Icons it needs haven't had their Brands fetched, or the
-   * Brands it would pick haven't been looked up in the product search, it asks for that instead.
-   * Nothing once every position is filled or nothing more can be tried.
+   * complete an Outfit, as when one of its Pieces' searches found no Product. When the Style Icons
+   * it needs haven't had their Brands fetched, the Brands it would pick haven't been looked up in
+   * the product search, or their Pieces haven't been searched, it asks for that instead. Nothing
+   * once every position is filled or nothing more can be tried.
    */
   planOutfits(stylingId: string, brandsByStyleIcon: BrandsByStyleIcon): Promise<OutfitPlan>;
   /** One Style Icon's Brand call. */
@@ -68,8 +73,14 @@ export interface BuildOutfitsSteps {
   /** One Brand's lookup in the product search, kept for the plans after it. None when it was looked up lately. */
   lookUpBrand(stylingId: string, brand: BrandToLookUp): Promise<void>;
   /**
-   * One AI call, the `attempt`th for this Outfit: tailors its Pieces and saves it. A bad reply is
-   * asked again once; when the last attempt is bad too, the Style Icon is skipped.
+   * One product-search call: the Products of one Piece's Brand in its Category, of which those that
+   * qualify are kept as its candidates, for the plans and tailoring after it.
+   */
+  searchProducts(stylingId: string, search: PieceSearch): Promise<void>;
+  /**
+   * One AI call, the `attempt`th for this Outfit: picks its Pieces from their candidates, tailors
+   * its Hairstyle, and saves it. A bad reply is asked again once; when the last attempt is bad too,
+   * the Style Icon is skipped.
    */
   tailorOutfit(stylingId: string, outfitTry: OutfitTry, attempt: number): Promise<TailoringOutcome>;
   /** The IDs of the Outfits the Styling made whose Previews are still to render, in order. */
@@ -101,17 +112,19 @@ export async function buildOutfits(stylingId: string, steps: BuildOutfitsSteps):
     }
     // Building Outfits: each round tailors the open positions at once, and a failed one's
     // substitute waits for the next round. A body photo's Style Icons need their Brands first,
-    // fetched as the plan asks, and the Brands it picks need looking up in the product search.
-    // Every try and every fetch uses up a Style Icon, and every lookup a Brand, so the rounds end.
+    // fetched as the plan asks, the Brands it picks need looking up in the product search, and
+    // their Pieces need searching for Products. Every try and every fetch uses up a Style Icon,
+    // every lookup a Brand and every search a Piece, so the rounds end.
     const brandsByStyleIcon: BrandsByStyleIcon = {};
     for (;;) {
       const plan = await steps.planOutfits(stylingId, brandsByStyleIcon);
-      if (plan.fetchBrandsFor.length > 0 || plan.lookUpBrands.length > 0) {
+      if (plan.fetchBrandsFor.length > 0 || plan.lookUpBrands.length > 0 || plan.searchProducts.length > 0) {
         await waitForAll([
           ...plan.fetchBrandsFor.map(async (styleIconId) => {
             brandsByStyleIcon[styleIconId] = await steps.fetchBrands(stylingId, styleIconId);
           }),
           ...plan.lookUpBrands.map((brand) => steps.lookUpBrand(stylingId, brand)),
+          ...plan.searchProducts.map((search) => steps.searchProducts(stylingId, search)),
         ]);
         continue;
       }

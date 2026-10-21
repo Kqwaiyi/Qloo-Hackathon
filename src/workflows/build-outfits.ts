@@ -1,7 +1,7 @@
 import type { Line } from "@/config/accounts";
 import { PRODUCT_SEARCH_STEP_MAX_RETRIES } from "@/config/product-search";
 import { QLOO_STEP_MAX_RETRIES } from "@/config/qloo";
-import type { BrandToLookUp } from "@/server/outfit-assembly/brands";
+import type { BrandToLookUp, PieceSearch } from "@/server/outfit-assembly/brands";
 import type { QlooBrand, QlooPerson } from "@/server/qloo/client";
 import {
   type BrandsByStyleIcon,
@@ -27,6 +27,7 @@ export async function buildOutfitsWorkflow(stylingId: string): Promise<void> {
     planOutfits,
     fetchBrands,
     lookUpBrand,
+    searchProducts,
     tailorOutfit,
     planPreviews,
     renderPreview,
@@ -81,6 +82,14 @@ async function lookUpBrand(stylingId: string, brand: BrandToLookUp): Promise<voi
   return runWorkflowStep((steps) => steps.lookUpBrand(stylingId, brand));
 }
 lookUpBrand.maxRetries = PRODUCT_SEARCH_STEP_MAX_RETRIES;
+
+/** One product-search call. */
+async function searchProducts(stylingId: string, search: PieceSearch): Promise<void> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.searchProducts(stylingId, search));
+}
+searchProducts.maxRetries = PRODUCT_SEARCH_STEP_MAX_RETRIES;
 
 /** One AI call. */
 async function tailorOutfit(stylingId: string, outfitTry: OutfitTry, attempt: number): Promise<TailoringOutcome> {

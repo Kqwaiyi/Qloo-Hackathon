@@ -12,7 +12,7 @@ import { type CookieToSet, forwardSetCookies, type ResponseCookies } from "@/ser
 import type { PhotoConsentTicks } from "@/server/operations/consultations";
 import type { OperationContext } from "@/server/operations/context";
 import { Channel3ProductSearch } from "@/server/product-search/channel3";
-import { channel3KnowingEveryBrand, FakeChannel3Transport } from "@/server/product-search/fake-channel3";
+import { channel3SellingEveryBrand, FakeChannel3Transport } from "@/server/product-search/fake-channel3";
 import { QlooClient } from "@/server/qloo/client";
 import { FakeQlooTransport } from "@/server/qloo/fake";
 import { InlineStylingRunner } from "@/server/stylings/inline-runner";
@@ -121,7 +121,7 @@ export interface TestHarness {
   qloo: FakeQlooTransport;
   /**
    * Channel3, the product search: until a test sets `respond`, it knows every Brand under its own
-   * name and finds nothing. It records every request.
+   * name and sells each a small catalogue, as `channel3SellingEveryBrand` does. It records every request.
    */
   channel3: FakeChannel3Transport;
   /** Cloudflare Turnstile, for the Bot Check: it passes every token until a test sets `answer`, and records every request. */
@@ -166,7 +166,7 @@ export async function createTestHarness({
   const qloo = new FakeQlooTransport();
   const qlooClient = new QlooClient({ db, clock, transport: qloo.send, apiUrl: "https://qloo.test", apiKey: "test-qloo-key" });
   const channel3 = new FakeChannel3Transport();
-  channel3.respond = channel3KnowingEveryBrand();
+  channel3.respond = channel3SellingEveryBrand();
   const productSearch = new Channel3ProductSearch({ transport: channel3.send, apiKey: "test-channel3-key" });
   const stylings = new InlineStylingRunner({ db, clock, qloo: qlooClient, ai, blob, productSearch });
   const emails = new CapturingEmailTransport();

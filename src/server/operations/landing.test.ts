@@ -34,24 +34,27 @@ const FULL_BODY: LandingSample = {
   outfit: {
     styleIconName: "Dev Rowe",
     pieces: [
-      { category: "hairstyle", item: "Textured crop with a low fade", why: "Dev Rowe's crop, kept easy.", brand: null },
+      { category: "hairstyle", item: "Textured crop with a low fade", why: "Dev Rowe's crop, kept easy.", brand: null, product: null },
       {
         category: "top",
         item: "Boxy heavyweight tee in sage",
         why: "A boxy tee for a relaxed look.",
         brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" },
+        product: null,
       },
       {
         category: "bottom",
         item: "Straight-leg jeans, mid wash",
         why: "Mid-wash denim grounds the tee.",
         brand: { name: "Jeanery", priceRange: { min: 50, max: 110 }, visitUrl: null },
+        product: null,
       },
       {
         category: "shoes",
         item: "Retro runners in grey suede",
         why: "Grey suede finishes it quietly.",
         brand: { name: "Stride", priceRange: { min: 60, max: 180 }, visitUrl: "https://stride.example/" },
+        product: null,
       },
     ],
   },
@@ -68,7 +71,7 @@ const FACE: LandingSample = {
   styleIcons: ["Ava Stone", "Bea Marsh"],
   outfit: {
     styleIconName: "Ava Stone",
-    pieces: [{ category: "hairstyle", item: "Chin-length blunt bob", why: "A blunt line for an edgy look.", brand: null }],
+    pieces: [{ category: "hairstyle", item: "Chin-length blunt bob", why: "A blunt line for an edgy look.", brand: null, product: null }],
   },
   images: { photoPath: "/landing/samples/face/photo.jpg", previewPath: "/landing/samples/face/preview.webp" },
 };
@@ -89,8 +92,9 @@ const BODY_ONLY: LandingSample = {
         item: "Navy belted shirt dress",
         why: "One easy piece.",
         brand: { name: "Ember", priceRange: { min: 15, max: 60 }, visitUrl: "https://ember.example/" },
+        product: null,
       },
-      { category: "shoes", item: "Canvas sneakers", why: "Clean canvas keeps it light.", brand: { name: "Pace", priceRange: null, visitUrl: null } },
+      { category: "shoes", item: "Canvas sneakers", why: "Clean canvas keeps it light.", brand: { name: "Pace", priceRange: null, visitUrl: null }, product: null },
     ],
   },
   images: { photoPath: "/landing/samples/body_only/photo.png", previewPath: "/landing/samples/body_only/preview.webp" },
@@ -113,7 +117,7 @@ describe("the landing page", () => {
       outfit: {
         position: 1,
         styleIconName: "Dev Rowe",
-        priceRange: { min: 130, max: 410 },
+        total: { kind: "brand_ranges", usdRange: { min: 130, max: 410 } },
         pieces: FULL_BODY.outfit.pieces,
       },
       photoUrl: "/landing/samples/full_body/photo.jpg",
@@ -121,13 +125,13 @@ describe("the landing page", () => {
     });
     expect(page.samples.face).toMatchObject({
       countryName: "Australia",
-      outfit: { position: 1, styleIconName: "Ava Stone", priceRange: null },
+      outfit: { position: 1, styleIconName: "Ava Stone", total: null },
       photoUrl: "/landing/samples/face/photo.jpg",
       previewUrl: "/landing/samples/face/preview.webp",
     });
     expect(page.samples.body_only).toMatchObject({
       countryName: "Germany",
-      outfit: { styleIconName: "Cleo Hart", priceRange: { min: 15, max: 60 } },
+      outfit: { styleIconName: "Cleo Hart", total: { kind: "brand_ranges", usdRange: { min: 15, max: 60 } } },
       photoUrl: "/landing/samples/body_only/photo.png",
     });
   });
@@ -169,6 +173,13 @@ describe("the team exporting a Demo Account Consultation as a landing page sampl
     const demo = await signedInUser({ email: "demo@example.com", stylePreference: "womenswear", countryCode: "GB" });
     const consultationId = await start(demo, "full_body");
     await harness.stylings.runPending();
+    // Each Product as the fake Channel3 sells it in the United Kingdom.
+    const product = (id: string) => ({
+      price: { amount: 45, currency: "GBP" },
+      pricedOn: "2026-10-16",
+      url: `https://shop.example/products/${id}`,
+      shopDomain: "shop.example",
+    });
 
     const result = await exportLandingSample(teamContext(), { email: "demo@example.com", consultationId });
 
@@ -190,24 +201,28 @@ describe("the team exporting a Demo Account Consultation as a landing page sampl
               item: "Casual textured cut with soft layers",
               why: "Ava Stone's signature cut, reworked so your current hair carries it with your casual Photo Style.",
               brand: null,
+              product: null,
             },
             {
               category: "top",
-              item: "Navy relaxed cotton overshirt",
-              why: "An easy layer in the spirit of Ava Stone, at home with your casual Photo Style.",
-              brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" },
+              item: "Product c3-bolt-top-1",
+              why: "An easy top layer in the spirit of Ava Stone, at home with your casual Photo Style.",
+              brand: { name: "Bolt", priceRange: null, visitUrl: null },
+              product: product("c3-bolt-top-1"),
             },
             {
               category: "bottom",
-              item: "Charcoal straight-leg cotton chinos",
-              why: "Straight-leg chinos Ava Stone would reach for, keeping your casual Outfit grounded.",
-              brand: { name: "Jeanery", priceRange: { min: 50, max: 110 }, visitUrl: null },
+              item: "Product c3-jeanery-bottom-1",
+              why: "A grounding Bottom in the spirit of Ava Stone, at home with your casual Photo Style.",
+              brand: { name: "Jeanery", priceRange: null, visitUrl: null },
+              product: product("c3-jeanery-bottom-1"),
             },
             {
               category: "shoes",
-              item: "White low-top leather trainers",
-              why: "Clean trainers that finish the Outfit the way Ava Stone does, and suit your casual style.",
-              brand: { name: "Stride", priceRange: { min: 60, max: 180 }, visitUrl: "https://stride.example/" },
+              item: "Product c3-stride-shoes-1",
+              why: "Shoes that finish the Outfit in the spirit of Ava Stone, at home with your casual Photo Style.",
+              brand: { name: "Stride", priceRange: null, visitUrl: null },
+              product: product("c3-stride-shoes-1"),
             },
           ],
         },
