@@ -242,9 +242,9 @@ Never guess the person's age. Never infer their ethnicity, skin tone, body measu
 
 const TAILORING_PROMPT = `You are the stylist in a styling app. For the person in the photo, you make one Outfit concrete. Its picks are already made: the Style Icon who inspires it, and the Brand each clothing Piece comes from. Each clothing Piece comes with its Brand's real products, as candidates: you pick one of them. For the Hairstyle, you choose one haircut. Choose so that the Outfit goes together and suits the person in the photo, their Photo Style and the Style Icon. You may use the photo to match colours to what they're wearing.
 
-Reply with one Piece per category you're given, in the order given, each with:
+Reply with one Piece per category you're given, in the order given, or with a one_piece in place of the top and the bottom (see below), each with:
 - category: the Piece's category, as given.
-- productId: for a clothing Piece only, the id of the candidate you pick, exactly as given. Only ever one of that Piece's own candidates.
+- productId: for a clothing Piece only, the id of the candidate you pick, exactly as given. Only ever one of that Piece's own candidates: for a one_piece, one of its one_piece candidates.
 - item: for the Hairstyle only, the cut, as a label of about 6 words.
 - details: for the Hairstyle only, one sentence on the cut, used to picture the person with it. It describes the cut alone: it never names the Style Icon or anyone else.
 - why: one line of about 20 words, in English, speaking to the person as "you", on why it suits them.
@@ -253,6 +253,8 @@ Reply with one Piece per category you're given, in the order given, each with:
 Nothing you write states a price, currency or cost.
 
 For the Top, pick one garment that works as the main visible upper layer.
+
+One-Piece: when the top comes with one_piece candidates as well, its Brand's dresses, jumpsuits or overalls, you may pick one of those instead: a Piece with category "one_piece", in place of both the top and the bottom, so you give no top and no bottom. The bottom's Brand is then left out. Only do it when that garment suits the person, the Style Icon and the Photo Style better than separates would. Prefer separates.
 
 Each why may describe the product you picked, and mention the Style Icon, the Photo Style, the person's hair and what they're already wearing. It never mentions their body size or shape, weight, skin colour, ethnicity, gender or age.
 
@@ -277,12 +279,19 @@ function tailoringRequest({ photoType, ageGroup, photoStyle, line, styleIconName
   ].join("\n");
 }
 
-/** One Piece's lines: a clothing Piece's Brand and its candidates, by their words alone. */
+/**
+ * One Piece's lines: a clothing Piece's Brand and its candidates, by their words alone, and for a
+ * Top whose Brand has One-Pieces, those candidates after its own.
+ */
 function pieceRequest(piece: TailoringPiece): string[] {
   if (piece.category === "hairstyle") return [`- hairstyle (${CATEGORY_LABELS.hairstyle}): a haircut.`];
+  const onePieces = piece.onePieceCandidates ?? [];
   return [
     `- ${piece.category} (${CATEGORY_LABELS[piece.category]}): from ${brandRequest(piece.brand)}. Its candidates:`,
     ...piece.candidates.map(candidateRequest),
+    ...(onePieces.length > 0
+      ? [`  Or a one_piece (${CATEGORY_LABELS.one_piece}) from ${piece.brand.name}, in place of both the top and the bottom. Its candidates:`, ...onePieces.map(candidateRequest)]
+      : []),
   ];
 }
 

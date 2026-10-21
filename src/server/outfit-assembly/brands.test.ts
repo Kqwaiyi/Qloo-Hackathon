@@ -645,6 +645,50 @@ describe("the searches for the Pieces of the Outfits a Styling builds", () => {
     ]);
   });
 
+  it("are each pick's One-Piece on its Top Brand, only once every pick's Top, Bottom and Shoes are found, which fixes their Brands", () => {
+    const firstFound: PieceSearches = [
+      { styleIconId: "icon-1", category: "top", brandEntityId: "b", found: true },
+      { styleIconId: "icon-1", category: "bottom", brandEntityId: "d", found: true },
+      { styleIconId: "icon-1", category: "shoes", brandEntityId: "s1", found: true },
+    ];
+    const allFound: PieceSearches = [
+      ...firstFound,
+      { styleIconId: "icon-2", category: "top", brandEntityId: "d", found: true },
+      { styleIconId: "icon-2", category: "bottom", brandEntityId: "b", found: true },
+      { styleIconId: "icon-2", category: "shoes", brandEntityId: "s2", found: true },
+    ];
+    const searches = (searched: PieceSearches) =>
+      planOutfitBrands(twoStyleIcons, "no_budget", 2, NOTHING_USED, allKnown, searched).searches.map(({ styleIconId, category, brand }) => [
+        styleIconId,
+        category,
+        brand.name,
+      ]);
+
+    // A search still to come could move a Top Brand.
+    expect(searches(firstFound)).toEqual([
+      ["icon-2", "top", "Dune"],
+      ["icon-2", "bottom", "Bolt"],
+      ["icon-2", "shoes", "Sole"],
+    ]);
+    expect(searches(allFound)).toEqual([
+      ["icon-1", "one_piece", "Bolt"],
+      ["icon-2", "one_piece", "Dune"],
+    ]);
+  });
+
+  it("leave every pick as it was whatever a One-Piece's search found, passing no Brand over", () => {
+    const allFound: PieceSearches = [
+      { styleIconId: "icon-1", category: "top", brandEntityId: "b", found: true },
+      { styleIconId: "icon-1", category: "bottom", brandEntityId: "d", found: true },
+      { styleIconId: "icon-1", category: "shoes", brandEntityId: "s1", found: true },
+      { styleIconId: "icon-1", category: "one_piece", brandEntityId: "b", found: false },
+    ];
+
+    const plan = planOutfitBrands([twoStyleIcons[0]!], "no_budget", 1, NOTHING_USED, allKnown, allFound);
+
+    expect(plan.picked.map(({ brands }) => pickedNames(brands))).toEqual([{ shoes: "Stride", top: "Bolt", bottom: "Dune" }]);
+    expect(plan.searches).toEqual([]);
+  });
 });
 
 describe("the Brands of the Outfits a Styling builds, once a Piece's search found nothing", () => {

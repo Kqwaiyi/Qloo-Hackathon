@@ -1,6 +1,7 @@
 import * as z from "zod";
 
 import { type Line, LINES } from "@/config/accounts";
+import type { ProductCategory } from "@/config/consultations";
 import {
   CHANNEL3_API_URL,
   CHANNEL3_BRANDS_PER_LOOKUP,
@@ -17,7 +18,6 @@ import {
   type BrandLookup,
   type BrandLookupResult,
   type CandidateProduct,
-  type ProductCategory,
   type ProductCheck,
   type ProductCheckResult,
   type ProductImage,

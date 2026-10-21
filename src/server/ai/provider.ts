@@ -5,9 +5,9 @@ import {
   type AgeGroup,
   type BrandCategory,
   PIECE_CATEGORIES,
-  type PieceCategory,
   type PhotoStyleWords,
   type PhotoType,
+  type ProductCategory,
 } from "@/config/consultations";
 import type { PreviewRefusalReason } from "@/config/stylings";
 
@@ -83,7 +83,16 @@ export interface TailoringCandidate {
  */
 export type TailoringPiece =
   | { category: "hairstyle" }
-  | { category: BrandCategory; brand: TailoringBrand; candidates: readonly TailoringCandidate[] };
+  | {
+      category: BrandCategory;
+      brand: TailoringBrand;
+      candidates: readonly TailoringCandidate[];
+      /**
+       * The Top only, in an Outfit with a Bottom, when its Brand has One-Pieces: those candidates,
+       * any one of which may take the place of the Top and the Bottom (ADR-0003).
+       */
+      onePieceCandidates?: readonly TailoringCandidate[];
+    };
 
 /**
  * What one Outfit's Pieces are tailored from. Never the Country or the Budget Tier: the Brands
@@ -104,15 +113,16 @@ export interface TailoringInput {
 }
 
 /**
- * The structured output a model is asked for: one Piece per Category it was given. A Brand Piece is
- * the candidate it picked, by ID; the Hairstyle is the cut it describes. Models don't always keep to
- * it, so our code checks every reply against it and our own rules.
+ * The structured output a model is asked for: one Piece per Category it was given, or one One-Piece
+ * in place of the Top and Bottom when the Top came with One-Piece candidates (ADR-0003). A Product
+ * Piece is the candidate it picked, by ID; the Hairstyle is the cut it describes.
+ * Models don't always keep to it, so our code checks every reply against it and our own rules.
  */
 export const tailoredPiecesSchema = z.object({
   pieces: z.array(
     z.object({
       category: z.enum(PIECE_CATEGORIES),
-      /** A Brand Piece only: the ID of the candidate Product picked, as given. */
+      /** A Product Piece only: the ID of the candidate Product picked, as given. */
       productId: z.string().optional(),
       /** The Hairstyle only: the cut, as a card label of about 6 words. */
       item: z.string().optional(),
@@ -133,7 +143,7 @@ export type TailoredPieces = z.infer<typeof tailoredPiecesSchema>;
  */
 export type PreviewPiece =
   | { category: "hairstyle"; details: string }
-  | { category: Exclude<PieceCategory, "hairstyle">; title: string; photo: Photo | null };
+  | { category: ProductCategory; title: string; photo: Photo | null };
 
 /** What one Preview is drawn from. Never the Style Icon's name or image. */
 export interface PreviewInput {
@@ -169,8 +179,9 @@ export interface AiProvider {
    *
    * Each Brand Piece is one of its candidates, real Products of its Brand (ADR-0008): the model picks
    * one per Category, by their words alone, so the Outfit goes together and suits the user, and says
-   * why. The "why" may describe the Product but never states a price. The Hairstyle is a cut it
-   * describes, as before.
+   * why. When the Top comes with One-Piece candidates, it may pick one of those in place of the Top
+   * and Bottom instead, though it prefers separates (ADR-0003). The "why" may describe the Product
+   * but never states a price. The Hairstyle is a cut it describes, as before.
    */
   tailorPieces(input: TailoringInput): Promise<unknown>;
   /**

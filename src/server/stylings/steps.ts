@@ -3,12 +3,12 @@ import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 
 import {
-  type BrandCategory,
   type BudgetTier,
   byCategoryOrder,
   CATEGORY_LABELS,
   isBrandCategory,
   type PieceCategory,
+  type ProductCategory,
 } from "@/config/consultations";
 import type { ProductSearchMarket } from "@/config/product-search";
 import {
@@ -48,6 +48,7 @@ import {
   type PickedBrand,
   type PieceSearchMade,
   planOutfitBrands,
+  productPieceBrand,
 } from "@/server/outfit-assembly/brands";
 import { outfitCategories, type PhotoCategoryFacts } from "@/server/outfit-assembly/categories";
 import { productSearchMarket } from "@/server/outfit-assembly/markets";
@@ -259,7 +260,8 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
 
     // The search is in the Styling's market, the Outfit's line and the Piece's Category, for the
     // Brand alone, new and in stock. It's never loosened: one that finds nothing, or still errors
-    // on the step's last try, passes the Brand over for the Category instead.
+    // on the step's last try, passes the Brand over for the Category instead, or for a One-Piece,
+    // leaves its Outfit to separates.
     async searchProducts(stylingId, { styleIconId, category, brand }) {
       const running = await readRunningStyling(ctx.db, stylingId);
       const [icon] = await ctx.db
@@ -278,8 +280,9 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
       } catch (error) {
         // A refused key fails the Styling at once; any other error is the step's to retry first.
         if (!lastTry || error instanceof UnretryableProductSearchError) throw error;
+        const outcome = category === "one_piece" ? "its Outfit is separates only" : "its Brand is passed over";
         console.warn(
-          `A ${CATEGORY_LABELS[category]} search still failed after its retries, so its Brand is passed over: ${error instanceof Error ? error.message : "unknown error"}`,
+          `A ${CATEGORY_LABELS[category]} search still failed after its retries, so ${outcome}: ${error instanceof Error ? error.message : "unknown error"}`,
         );
         candidates = null;
       }
@@ -299,11 +302,17 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
       const categories = outfitCategories(toTailor);
       if (needsBrands(categories) !== (brands !== null)) throw new Error("An Outfit's Brands don't match its Categories.");
       const searches = brands && (await readCandidates(ctx.db, stylingId, styleIconId, brands));
-      const asked: TailoringPiece[] = categories.map((category) =>
-        isBrandCategory(category)
-          ? { category, brand: tailoringBrand(brands![category]), candidates: searches![category].candidates.map(tailoringCandidate) }
-          : { category },
-      );
+      const asked: TailoringPiece[] = categories.map((category) => {
+        if (!isBrandCategory(category)) return { category };
+        // The Top Brand's One-Pieces come beside the Top's candidates, when it has any (ADR-0003).
+        const onePieces = category === "top" ? searches!.one_piece.candidates : [];
+        return {
+          category,
+          brand: tailoringBrand(brands![category]),
+          candidates: searches![category].candidates.map(tailoringCandidate),
+          ...(onePieces.length > 0 && { onePieceCandidates: onePieces.map(tailoringCandidate) }),
+        };
+      });
       const pieces = checkTailoredPieces(
         await ctx.ai.tailorPieces({
           photo: await readPhoto(ctx.blob, toTailor.photoPathname),
@@ -349,9 +358,10 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
               const { category, item, details, why, unknownCut } = tailored;
               return { id: randomUUID(), outfitId, category, item, details, why, unknownCut };
             }
-            // A Product Piece: the candidate picked, as its search found it in the Styling's market.
+            // A Product Piece: the candidate picked, as its search found it in the Styling's market. A
+            // One-Piece is the Top Brand's, and leaves the Bottom Brand out, still reserved (ADR-0003).
             const { category, productId, why } = tailored;
-            const brand = brands![category];
+            const brand = productPieceBrand(brands!, category);
             const { candidates, searchedAt } = searches![category];
             const product = candidates.find((candidate) => candidate.id === productId)!;
             return {
@@ -501,10 +511,17 @@ async function readPieceSearches(tx: Transaction, stylingId: string): Promise<(P
 }
 
 /**
- * Each Brand Piece's candidates, as its search for the Outfit's Brand found them, and when. Throws
- * for a Piece not yet searched, or whose search never answered.
+ * Each Product Piece's candidates, as its search for the Outfit's Brand found them, and when: the
+ * Top's, Bottom's and Shoes', and the One-Piece's on the Top Brand, which has none when its search
+ * never answered. Throws for a Piece not yet searched, or a Top, Bottom or Shoes whose search never
+ * answered.
  */
-async function readCandidates(db: Database, stylingId: string, styleIconId: string, brands: BrandPicks) {
+async function readCandidates(
+  db: Database,
+  stylingId: string,
+  styleIconId: string,
+  brands: BrandPicks,
+): Promise<Record<ProductCategory, { candidates: Candidate[]; searchedAt: Date }>> {
   const rows = await db
     .select({
       category: pieceCandidates.category,
@@ -514,12 +531,14 @@ async function readCandidates(db: Database, stylingId: string, styleIconId: stri
     })
     .from(pieceCandidates)
     .where(and(eq(pieceCandidates.stylingId, stylingId), eq(pieceCandidates.styleIconId, styleIconId)));
-  const searchFor = (category: BrandCategory) => {
-    const found = rows.find((row) => row.category === category && row.brandEntityId === brands[category].entityId);
-    if (!found?.candidates) throw new Error(`The ${category} of Style Icon ${styleIconId}'s Outfit hasn't been searched, or its search never answered.`);
-    return { candidates: found.candidates, searchedAt: found.searchedAt };
+  const searchFor = (category: ProductCategory) => {
+    const found = rows.find((row) => row.category === category && row.brandEntityId === productPieceBrand(brands, category).entityId);
+    // An Outfit with no One-Piece is separates only: its Top Brand isn't passed over.
+    const candidates = found?.candidates ?? (found && category === "one_piece" ? [] : null);
+    if (!found || !candidates) throw new Error(`The ${category} of Style Icon ${styleIconId}'s Outfit hasn't been searched, or its search never answered.`);
+    return { candidates, searchedAt: found.searchedAt };
   };
-  return { top: searchFor("top"), bottom: searchFor("bottom"), shoes: searchFor("shoes") };
+  return { top: searchFor("top"), bottom: searchFor("bottom"), shoes: searchFor("shoes"), one_piece: searchFor("one_piece") };
 }
 
 /** What tailoring is told about a picked Brand: never its entity ID, official site or prices. */

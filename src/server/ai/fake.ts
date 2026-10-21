@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 
-import type { BrandCategory, PhotoType } from "@/config/consultations";
+import type { PhotoType, ProductCategory } from "@/config/consultations";
 
 import type {
   AiProvider,
@@ -37,6 +37,7 @@ import type {
  *
  * Tailoring picks each Brand Piece's first candidate Product and makes the Hairstyle's cut known,
  * each `why` naming the Style Icon. Its scenarios pass every photo:
+ * - `one-piece`: the Top and Bottom become the Top Brand's first One-Piece, when it has any.
  * - `unknown-cut`: the Hairstyle's cut is marked unknown, based on the Outfit and Photo Style, and
  *   its `why` doesn't name the Style Icon.
  * - `tailoring-fails`: every reply breaks a rule, as a broken model's would: a price, an empty
@@ -59,13 +60,14 @@ export const FAKE_AI_SCENARIOS = [
   "hair-not-visible",
   "hair-covered",
   "check-errors",
+  "one-piece",
   "unknown-cut",
   "tailoring-fails",
   "preview-refused",
   "preview-fails",
 ] as const;
 export type FakeAiScenario = (typeof FAKE_AI_SCENARIOS)[number];
-export type FakeTailoringScenario = Extract<FakeAiScenario, "pass" | "unknown-cut" | "tailoring-fails">;
+export type FakeTailoringScenario = Extract<FakeAiScenario, "pass" | "one-piece" | "unknown-cut" | "tailoring-fails">;
 export type FakePreviewScenario = Extract<FakeAiScenario, "pass" | "preview-refused" | "preview-fails">;
 
 /** About as long as a real photo check, so local development feels like the real thing. */
@@ -132,7 +134,7 @@ export class FakeAiProvider implements AiProvider {
     this.tailoringRequests.push({ ...rest, photo: fingerprint(photo) });
     await this.wait("tailorPieces");
     const scenario = this.styleIconScenarios[input.styleIconName] ?? this.scenario;
-    const tailored = { pieces: input.pieces.map((piece) => fakePiece(piece, input, scenario !== "unknown-cut")) };
+    const tailored = { pieces: fakePieces(input, scenario) };
     if (scenario !== "tailoring-fails") return tailored;
     const breakRule = BROKEN_TAILORING[(this.tailoringRequests.length - 1) % BROKEN_TAILORING.length]!;
     return breakRule(tailored);
@@ -212,6 +214,7 @@ function reportFor(scenario: Exclude<FakeAiScenario, "blocked" | "check-errors">
       return { ...passing, visible: { ...NOTHING_VISIBLE, face: true } };
     case "hair-covered":
       return { ...passing, visible: { ...VISIBLE_BY_PHOTO_TYPE.full_body, hair: false }, hairCovered: true };
+    case "one-piece":
     case "unknown-cut":
     case "tailoring-fails":
     case "preview-refused":
@@ -220,17 +223,24 @@ function reportFor(scenario: Exclude<FakeAiScenario, "blocked" | "check-errors">
   }
 }
 
+/**
+ * The Pieces as the fake tailors them, one per Piece asked for, or in the `one-piece` scenario, with
+ * the Top Brand's first One-Piece in place of the Top and Bottom, when it has any.
+ */
+function fakePieces(input: TailoringInput, scenario: FakeAiScenario): TailoredPieces["pieces"] {
+  const onePiece = scenario === "one-piece" ? input.pieces.flatMap((piece) => (piece.category === "top" ? (piece.onePieceCandidates ?? []) : []))[0] : undefined;
+  return input.pieces.flatMap((piece) => {
+    if (!onePiece || (piece.category !== "top" && piece.category !== "bottom")) return [fakePiece(piece, input, scenario !== "unknown-cut")];
+    return piece.category === "top" ? [{ category: "one_piece", productId: onePiece.id, why: fakeWhy("one_piece", input) }] : [];
+  });
+}
+
 /** A Piece as the fake tailors it: a Brand Piece's first candidate Product, or the Hairstyle's cut. */
-function fakePiece(piece: TailoringPiece, { photoStyle, styleIconName }: TailoringInput, cutKnown: boolean): TailoredPieces["pieces"][number] {
+function fakePiece(piece: TailoringPiece, input: TailoringInput, cutKnown: boolean): TailoredPieces["pieces"][number] {
+  const { photoStyle, styleIconName } = input;
   const style = photoStyle[0];
   const styleWords = photoStyle.join(" and ");
-  if (piece.category !== "hairstyle") {
-    return {
-      category: piece.category,
-      productId: piece.candidates[0]?.id,
-      why: `${FAKE_WHY_OPENINGS[piece.category]} in the spirit of ${styleIconName}, at home with your ${styleWords} Photo Style.`,
-    };
-  }
+  if (piece.category !== "hairstyle") return { category: piece.category, productId: piece.candidates[0]?.id, why: fakeWhy(piece.category, input) };
   return cutKnown
     ? {
         category: "hairstyle",
@@ -248,10 +258,16 @@ function fakePiece(piece: TailoringPiece, { photoStyle, styleIconName }: Tailori
       };
 }
 
-/** How the fake's "why" for each Brand Piece begins. */
-const FAKE_WHY_OPENINGS: Record<BrandCategory, string> = {
+/** The fake's "why" for a Product Piece, naming the Style Icon. */
+function fakeWhy(category: ProductCategory, { photoStyle, styleIconName }: TailoringInput): string {
+  return `${FAKE_WHY_OPENINGS[category]} in the spirit of ${styleIconName}, at home with your ${photoStyle.join(" and ")} Photo Style.`;
+}
+
+/** How the fake's "why" for each Product Piece begins. */
+const FAKE_WHY_OPENINGS: Record<ProductCategory, string> = {
   top: "An easy top layer",
   bottom: "A grounding Bottom",
+  one_piece: "A one-and-done One-Piece",
   shoes: "Shoes that finish the Outfit",
 };
 

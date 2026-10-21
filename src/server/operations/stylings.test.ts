@@ -392,7 +392,7 @@ describe("each Outfit's Pieces", () => {
     expect(harness.ai.tailoringRequests).toHaveLength(8);
   });
 
-  it("are tailored from the photo itself and the Outfit, with each Brand Piece's Brand and candidate Products by their words alone, never the Country or the Budget Tier", async () => {
+  it("are tailored from the photo itself and the Outfit, with each Brand Piece's Brand and candidate Products by their words alone, the Top Brand's One-Pieces beside the Top's, never the Country or the Budget Tier", async () => {
     harness.qloo.respond = qlooAnswering({ male: [MEN[0]!] });
     const browser = await signedInUser({ stylePreference: "menswear", countryCode: "FR", birthDate: { day: "2", month: "2", year: "1992" } });
 
@@ -413,7 +413,12 @@ describe("each Outfit's Pieces", () => {
         styleIconName: "Dev Rowe",
         pieces: [
           { category: "hairstyle" },
-          { category: "top", brand: { name: "Bolt", categoryTags: ["apparel"] }, candidates: candidates("c3-bolt", "top") },
+          {
+            category: "top",
+            brand: { name: "Bolt", categoryTags: ["apparel"] },
+            candidates: candidates("c3-bolt", "top"),
+            onePieceCandidates: candidates("c3-bolt", "one_piece"),
+          },
           { category: "bottom", brand: { name: "Jeanery", categoryTags: ["apparel", "denim"] }, candidates: candidates("c3-jeanery", "bottom") },
           { category: "shoes", brand: { name: "Stride", categoryTags: ["footwear"] }, candidates: candidates("c3-stride", "shoes") },
         ],
@@ -925,10 +930,13 @@ describe("a body photo's Products", () => {
     await start(browser, "body_only");
     await harness.stylings.runPending();
 
+    // Each Outfit's One-Piece too, on its Top Brand: Bolt's and Dune's.
     expect(productSearchesSent().map(({ brandId, category, gender, market, priceRange }) => [brandId, category, gender, market, priceRange])).toEqual([
       ["c3-bolt", "bottom", "female", "US", { min: 20, max: 120 }],
+      ["c3-bolt", "one_piece", "female", "US", { min: 20, max: 120 }],
       ["c3-bolt", "top", "female", "US", { min: 20, max: 120 }],
-      // Dune has no price range, so its search has no price filter.
+      // Dune has no price range, so its searches have no price filter.
+      ["c3-dune", "one_piece", "female", "US", null],
       ["c3-dune", "top", "female", "US", null],
       ["c3-jeanery", "bottom", "female", "US", { min: 50, max: 110 }],
       ["c3-sole", "shoes", "female", "US", { min: 40, max: 90 }],
@@ -947,6 +955,7 @@ describe("a body photo's Products", () => {
     await harness.stylings.runPending();
 
     expect(productSearchesSent().map(({ market, priceRange }) => [market, priceRange])).toEqual([
+      ["GB", null],
       ["GB", null],
       ["GB", null],
       ["GB", null],
@@ -1091,8 +1100,11 @@ describe("a body photo's Products", () => {
     expect(productSearchesSent().map(({ brandId, category, gender, market, priceRange }) => [brandId, category, gender, market, priceRange])).toEqual([
       ["c3-bolt", "bottom", "female", "US", { min: 20, max: 120 }],
       ["c3-bolt", "top", "female", "US", { min: 20, max: 120 }],
+      // Each Outfit's One-Piece, on the Top Brand it ends up with.
+      ["c3-dune", "one_piece", "female", "US", null],
       ["c3-dune", "top", "female", "US", null],
       ["c3-jeanery", "bottom", "female", "US", { min: 50, max: 110 }],
+      ["c3-jeanery", "one_piece", "female", "US", { min: 50, max: 110 }],
       ["c3-jeanery", "top", "female", "US", { min: 50, max: 110 }],
       ["c3-pace", "shoes", "female", "US", { min: 30, max: 70 }],
       ["c3-sole", "shoes", "female", "US", { min: 40, max: 90 }],
@@ -1206,8 +1218,8 @@ describe("a body photo's Products", () => {
 
     await harness.stylings.runPending();
 
-    // A search for each of the two Outfits' Top, Bottom and Shoes.
-    expect(keptWhileTailoring).toEqual([6, 6]);
+    // A search for each of the two Outfits' Top, Bottom, Shoes and One-Piece.
+    expect(keptWhileTailoring).toEqual([8, 8]);
     expect(await candidatesOf(consultationId)).toEqual([]);
     harness.channel3.requests.length = 0;
 
@@ -1236,7 +1248,8 @@ describe("a body photo's Products", () => {
     await harness.stylings.runPending();
 
     expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "failed", failureReason: "something_broke" })]);
-    expect(browseRequests()).toHaveLength(3);
+    // Ava Stone's Top, Bottom, Shoes and One-Piece.
+    expect(browseRequests()).toHaveLength(4);
     expect(await candidatesOf(consultationId)).toEqual([]);
   });
 
@@ -1258,6 +1271,237 @@ describe("a body photo's Products", () => {
     expect(firstMarkets).toEqual(new Set(["US"]));
     expect(new Set(productSearchesSent().map(({ market }) => market))).toEqual(new Set(["DE"]));
     expect((await productPiecesOf(consultationId)).map(({ market }) => market)).toEqual(["US", "US", "US", "US", "US", "US", "DE", "DE", "DE", "DE", "DE", "DE"]);
+  });
+});
+
+describe("a body photo's One-Pieces", () => {
+  it.each([
+    ["womenswear", WOMEN, "female", ["dresses", "jumpsuits-rompers", "overalls"]],
+    ["menswear", MEN, "male", ["jumpsuits-rompers", "overalls"]],
+  ] as const)(
+    "are searched for once per %s Outfit, as its Top Brand's One-Pieces for the line, in the market, new and in stock, within the Brand's price range",
+    async (stylePreference, people, gender, categoryIds) => {
+      harness.qloo.respond = qlooAnswering({ [gender]: [people[0]] });
+      const browser = await signedInUser({ stylePreference, countryCode: "US" });
+
+      await start(browser, "body_only");
+      await harness.stylings.runPending();
+
+      // Bolt is the Top, at $20–$120.
+      expect(browseRequests().filter((request) => channel3Search(request).category === "one_piece").map(({ body }) => body)).toEqual([
+        {
+          filters: {
+            brand_ids: ["c3-bolt"],
+            category_ids: categoryIds,
+            gender,
+            age: ["adult"],
+            conditions: ["new"],
+            availability: ["InStock"],
+            price: { min_price: 20, max_price: 120 },
+          },
+          limit: 30,
+          config: { country: "US" },
+        },
+      ]);
+    },
+  );
+
+  it("are searched for on the Top Brand each Outfit ends up with, once its Top, Bottom and Shoes are found, never on a Brand its Top moved from", async () => {
+    // Bolt's tops are all shown on a model.
+    harness.channel3.respond = channel3SellingEveryBrand({
+      products: (search) =>
+        search.brandId === "c3-bolt" && search.category === "top"
+          ? [channel3Product("bolt-on-model", { brandIds: ["c3-bolt"], images: [{ url: "https://images.example/bolt.jpg", cleaned_url: null, shot_type: "on_model" }] })]
+          : channel3SmallCatalogue(search),
+    });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.pieces.map((p) => p.brand?.name))).toEqual([
+      ["Dune", "Jeanery", "Stride"],
+      ["Jeanery", "Bolt", "Sole"],
+    ]);
+    // Dune has no price range, so its search has no price filter.
+    expect(productSearchesSent().flatMap(({ brandId, category, priceRange }) => (category === "one_piece" ? [[brandId, priceRange]] : []))).toEqual([
+      ["c3-dune", null],
+      ["c3-jeanery", { min: 50, max: 110 }],
+    ]);
+  });
+
+  it("are offered to tailoring beside the Top's candidates only when they pass every filter a Top or Bottom would: the Brand, the line or unisex, a garment-only photo, and a new, in-stock offer within the price range", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    // Bolt is the Top, at $20–$120.
+    const boltOnePiece = (id: string, overrides: Parameters<typeof channel3Product>[1] = {}) =>
+      channel3Product(id, { brandIds: ["c3-bolt"], gender: "female", offers: [channel3Offer({ price: 60 })], ...overrides });
+    harness.channel3.respond = channel3SellingEveryBrand({
+      products: (search) =>
+        search.category === "one_piece"
+          ? [
+              boltOnePiece("linen-dress", { title: "Linen wrap midi dress", description: "A wrap midi dress in terracotta linen.", colors: ["#c0603f"] }),
+              boltOnePiece("menswear-jumpsuit", { gender: "male" }),
+              boltOnePiece("other-brand-dress", { brandIds: ["c3-someone-else"] }),
+              boltOnePiece("on-model-dress", { images: [{ url: "https://images.example/on-model.jpg", cleaned_url: null, shot_type: "on_model" }] }),
+              boltOnePiece("second-hand-dress", { offers: [channel3Offer({ price: 60, condition: "used" })] }),
+              boltOnePiece("sold-out-dress", { offers: [channel3Offer({ price: 60, availability: "OutOfStock" })] }),
+              boltOnePiece("pricey-dress", { offers: [channel3Offer({ price: 450 })] }),
+              boltOnePiece("unisex-overalls", { gender: null, images: [{ url: "https://images.example/overalls.jpg", cleaned_url: null, shot_type: "flat_lay" }] }),
+            ]
+          : channel3SmallCatalogue(search),
+    });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
+
+    await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(harness.ai.tailoringRequests.map(({ pieces }) => pieces.map((p) => (p.category === "hairstyle" ? null : (p.onePieceCandidates ?? null))))).toEqual([
+      [
+        [
+          { id: "linen-dress", title: "Linen wrap midi dress", description: "A wrap midi dress in terracotta linen.", colours: ["#c0603f"] },
+          { id: "unisex-overalls", title: "Product unisex-overalls", description: "About product unisex-overalls.", colours: ["#1f2a44"] },
+        ],
+        null,
+        null,
+      ],
+    ]);
+  });
+
+  it("make an Outfit one Product Piece in place of its Top and Bottom when tailoring picks one, which its card and Preview show as one", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    harness.ai.scenario = "one-piece";
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
+    const consultationId = await start(browser, "body_only");
+    harness.clock.set("2026-10-21T09:30:00Z");
+
+    await harness.stylings.runPending();
+
+    // The fake AI picks the Top Brand's first One-Piece: Bolt's.
+    expect(await productPiecesOf(consultationId)).toEqual([
+      {
+        category: "one_piece",
+        item: "Product c3-bolt-one_piece-1",
+        details: null,
+        brandName: "Bolt",
+        productId: "c3-bolt-one_piece-1",
+        productPhotoUrl: "https://cdn.channel3.test/c3-bolt-one_piece-1-cleaned.png",
+        offerUrl: "https://shop.example/products/c3-bolt-one_piece-1",
+        offerShopDomain: "shop.example",
+        price: 45,
+        currency: "USD",
+        market: "US",
+        pricedAt: new Date("2026-10-21T09:30:00Z"),
+        available: true,
+      },
+      expect.objectContaining({ category: "shoes", item: "Product c3-stride-shoes-1", brandName: "Stride", price: 60 }),
+    ]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toEqual([
+      expect.objectContaining({
+        styleIconName: "Ava Stone",
+        // 45 and 60 dollars.
+        total: { kind: "products", price: { amount: 105, currency: "USD" } },
+        pieces: [
+          {
+            category: "one_piece",
+            item: "Product c3-bolt-one_piece-1",
+            why: expect.stringContaining("Ava Stone"),
+            brand: { name: "Bolt", priceRange: null, visitUrl: null },
+            product: {
+              price: { amount: 45, currency: "USD" },
+              pricedOn: "2026-10-21",
+              url: "https://shop.example/products/c3-bolt-one_piece-1",
+              shopDomain: "shop.example",
+            },
+          },
+          expect.objectContaining({ category: "shoes", item: "Product c3-stride-shoes-1" }),
+        ],
+      }),
+    ]);
+    expect(harness.ai.previewRequests.map(({ pieces }) => pieces)).toEqual([
+      [
+        { category: "one_piece", title: "Product c3-bolt-one_piece-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-bolt-one_piece-1-cleaned.png") },
+        { category: "shoes", title: "Product c3-stride-shoes-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-stride-shoes-1-cleaned.png") },
+      ],
+    ]);
+  });
+
+  it.each<[string, () => object[]]>([
+    ["finds none that qualify", () => []],
+    [
+      "still errors after its retries",
+      () => {
+        throw new Error("Channel3 is failing.");
+      },
+    ],
+  ])("leave an Outfit to separates when its One-Piece search %s, keeping its Top Brand and searching no other Brand's One-Pieces", async (_, onePieces) => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    harness.ai.scenario = "one-piece";
+    harness.channel3.respond = channel3SellingEveryBrand({ products: (search) => (search.category === "one_piece" ? onePieces() : channel3SmallCatalogue(search)) });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.pieces.map((p) => [p.category, p.brand?.name]))).toEqual([
+      [
+        ["top", "Bolt"],
+        ["bottom", "Jeanery"],
+        ["shoes", "Stride"],
+      ],
+    ]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1, tailoringFailures: 0 })]);
+    expect(productSearchesSent().flatMap(({ brandId, category }) => (category === "one_piece" ? [brandId] : []))).toEqual(["c3-bolt"]);
+    // Tailoring is offered no One-Piece.
+    expect(harness.ai.tailoringRequests.flatMap(({ pieces }) => pieces.filter((p) => p.category !== "hairstyle" && p.onePieceCandidates))).toEqual([]);
+  });
+
+  it('keep a One-Piece Outfit\'s left-out Bottom Brand reserved, so "Show 2 more Outfits" never gets it as a Bottom', async () => {
+    // A fourth footwear Brand, so the later Outfits' Shoes needn't repeat.
+    const tread = qlooBrand("b-tread", "Tread", { categories: ["footwear"], affinity: 0.75, price: [35, 75] });
+    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN }, () => [...BRANDS, tread]);
+    harness.ai.styleIconScenarios = { "Ava Stone": "one-piece" };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    await showMoreOutfits(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => [p.category, p.brand?.name])])).toEqual([
+      // A One-Piece on Bolt, the Top Brand, which leaves out Jeanery, its Bottom Brand.
+      [
+        "Ava Stone",
+        [
+          ["one_piece", "Bolt"],
+          ["shoes", "Stride"],
+        ],
+      ],
+      [
+        "Bea Marsh",
+        [
+          ["top", "Dune"],
+          ["bottom", "Bolt"],
+          ["shoes", "Sole"],
+        ],
+      ],
+      // Jeanery, denim in Qloo's top 10, would be the Bottom if Ava Stone's Outfit hadn't kept it reserved.
+      [
+        "Cleo Hart",
+        [
+          ["top", "Jeanery"],
+          ["bottom", "Dune"],
+          ["shoes", "Pace"],
+        ],
+      ],
+      [
+        "Dana Reed",
+        [
+          ["top", "Ember"],
+          ["bottom", "Hem"],
+          ["shoes", "Tread"],
+        ],
+      ],
+    ]);
   });
 });
 

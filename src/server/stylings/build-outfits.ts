@@ -16,7 +16,7 @@ export type BrandsByStyleIcon = Record<string, QlooBrand[]>;
 /**
  * One Outfit to tailor: its position in the Styling, the Style Icon inspiring it and, for a body
  * photo, the Brands its Top, Bottom and Shoes are built on, picked before tailoring, whose Pieces'
- * searches have found their candidate Products.
+ * searches have found their candidate Products, and whose Top Brand's One-Pieces have been searched for.
  */
 export interface OutfitTry {
   position: number;

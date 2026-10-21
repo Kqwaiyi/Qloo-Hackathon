@@ -175,6 +175,31 @@ const TAILORED: TailoredPieces = {
   ],
 };
 
+/** The same Outfit, its Top Brand also having One-Pieces, which come beside the Top's candidates. */
+const TAILORING_WITH_ONE_PIECES: TailoringInput = {
+  ...TAILORING,
+  pieces: TAILORING.pieces.map((piece) =>
+    piece.category === "top"
+      ? {
+          ...piece,
+          onePieceCandidates: [
+            { id: "nb-slip", title: "Satin Slip Midi Dress", description: "A bias-cut midi slip dress\nin black satin.", colours: ["#0d0d0d"] },
+            { id: "nb-boiler", title: "Utility Boiler Suit", description: null, colours: [] },
+          ],
+        }
+      : piece,
+  ),
+};
+
+/** That Outfit tailored as a One-Piece, in place of its Top and Bottom. */
+const TAILORED_AS_ONE_PIECE: TailoredPieces = {
+  pieces: [
+    TAILORED.pieces[0]!,
+    { category: "one_piece", productId: "nb-slip", why: "A black slip dress carries your edgy, chic style in one easy piece, as Mira Vale would wear it." },
+    TAILORED.pieces[3]!,
+  ],
+};
+
 /** Each Product photo's bytes stand in for its seller's photo of the Product. */
 const TOP_PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a seller's photo of a cropped biker jacket"), mediaType: "image/png" };
 const BOTTOM_PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a seller's photo of straight black jeans"), mediaType: "image/webp" };
@@ -394,6 +419,55 @@ describe("tailoring", () => {
       gemini.respond = () => geminiJson({ pieces: TAILORED.pieces.map((piece) => (piece.category === "top" ? { ...piece, productId } : piece)) });
 
       expect(checkTailoredPieces(await ai.tailorPieces(TAILORING), TAILORING.pieces)).toBeNull();
+    }
+  });
+
+  it("sends the Top Brand's One-Piece candidates as text beside the Top's, telling it a One-Piece may take the place of the Top and Bottom though separates come first", async () => {
+    gemini.respond = () => geminiJson(TAILORED);
+
+    await ai.tailorPieces(TAILORING_WITH_ONE_PIECES);
+
+    const [request] = gemini.requests;
+    expect(photoPartsOf(request!)).toEqual([{ inlineData: { mimeType: "image/jpeg", data: base64(PHOTO.bytes) } }]);
+    const lines = textOf(request!).split("\n");
+    const topLine = lines.findIndex((line) => line.startsWith("- top (Top): from Northbound"));
+    const bottomLine = lines.findIndex((line) => line.startsWith("- bottom (Bottom)"));
+    // After the Top's own candidates, before the Bottom.
+    expect(lines.slice(topLine + 3, bottomLine)).toEqual([
+      expect.stringMatching(/one_piece.*in place of both the top and the bottom/i),
+      "  - id: nb-slip | title: Satin Slip Midi Dress | description: A bias-cut midi slip dress in black satin. | colours: #0d0d0d",
+      "  - id: nb-boiler | title: Utility Boiler Suit",
+    ]);
+    expect(textOf(request!)).toMatch(/prefer separates/i);
+  });
+
+  it("gets a reply our check accepts with a One-Piece only in place of the Top and Bottom, as one of the Top Brand's One-Piece candidates", async () => {
+    gemini.respond = () => geminiJson(TAILORED_AS_ONE_PIECE);
+    expect(checkTailoredPieces(await ai.tailorPieces(TAILORING_WITH_ONE_PIECES), TAILORING_WITH_ONE_PIECES.pieces)).toEqual([
+      expect.objectContaining({ category: "hairstyle" }),
+      { category: "one_piece", productId: "nb-slip", why: expect.stringContaining("slip dress") },
+      expect.objectContaining({ category: "shoes", productId: "sw-boot" }),
+    ]);
+    // Separates still pass.
+    gemini.respond = () => geminiJson(TAILORED);
+    expect(checkTailoredPieces(await ai.tailorPieces(TAILORING_WITH_ONE_PIECES), TAILORING_WITH_ONE_PIECES.pieces)).toHaveLength(4);
+
+    const [hairstyle, top, bottom, shoes] = TAILORED.pieces;
+    const onePiece = TAILORED_AS_ONE_PIECE.pieces[1]!;
+    for (const [pieces, asked] of [
+      // Without One-Piece candidates.
+      [[hairstyle, onePiece, shoes], TAILORING.pieces],
+      // A Top candidate, or none listed.
+      [[hairstyle, { ...onePiece, productId: "nb-biker" }, shoes], TAILORING_WITH_ONE_PIECES.pieces],
+      [[hairstyle, { ...onePiece, productId: "nb-not-listed" }, shoes], TAILORING_WITH_ONE_PIECES.pieces],
+      // Beside the Top or the Bottom, rather than in place of both.
+      [[hairstyle, onePiece, bottom, shoes], TAILORING_WITH_ONE_PIECES.pieces],
+      [[hairstyle, top, onePiece, shoes], TAILORING_WITH_ONE_PIECES.pieces],
+      [[hairstyle, top, bottom, onePiece, shoes], TAILORING_WITH_ONE_PIECES.pieces],
+    ] as const) {
+      gemini.respond = () => geminiJson({ pieces });
+
+      expect(checkTailoredPieces(await ai.tailorPieces(TAILORING_WITH_ONE_PIECES), asked)).toBeNull();
     }
   });
 });

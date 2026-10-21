@@ -44,6 +44,9 @@ export interface Price {
 export const PIECE_CATEGORIES = ["hairstyle", "top", "bottom", "one_piece", "shoes"] as const;
 export type PieceCategory = (typeof PIECE_CATEGORIES)[number];
 
+/** What a Product can be in an Outfit: a Top, Bottom or Shoes Piece, or a One-Piece. */
+export type ProductCategory = Exclude<PieceCategory, "hairstyle">;
+
 /** Sorts Pieces into card order: Hairstyle, Top, Bottom (or a One-Piece in their place), Shoes. */
 export function byCategoryOrder(a: { category: PieceCategory }, b: { category: PieceCategory }): number {
   return PIECE_CATEGORIES.indexOf(a.category) - PIECE_CATEGORIES.indexOf(b.category);

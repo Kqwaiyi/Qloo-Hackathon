@@ -1,5 +1,10 @@
-import { BRAND_CATEGORIES, type BrandCategory } from "@/config/consultations";
-import { CHANNEL3_CATEGORY_IDS, PRODUCT_SEARCH_MARKET_CURRENCIES, type ProductSearchMarket } from "@/config/product-search";
+import { BRAND_CATEGORIES, type ProductCategory } from "@/config/consultations";
+import {
+  CHANNEL3_CATEGORY_IDS,
+  CHANNEL3_ONE_PIECE_CATEGORY_IDS,
+  PRODUCT_SEARCH_MARKET_CURRENCIES,
+  type ProductSearchMarket,
+} from "@/config/product-search";
 
 import type { Channel3Transport } from "./channel3";
 
@@ -48,8 +53,8 @@ function knowsNothing({ url }: RecordedChannel3Request): Response {
 export interface Channel3Search {
   /** The Brand searched, by Channel3's ID. */
   brandId: string;
-  /** Our Category for the request's category IDs, or null when they're none of ours. */
-  category: BrandCategory | null;
+  /** Our Category for the request's category IDs, a One-Piece's for any kind of One-Piece, or null when they're none of ours. */
+  category: ProductCategory | null;
   /** Channel3's gender for the line: `male` or `female`. */
   gender: string;
   /** The market, from the request's locale `config`. */
@@ -62,7 +67,7 @@ export interface Channel3Search {
  * Channel3 knowing every Brand but those named in `except`, each under its own name: its Brand
  * lookup lists the one Brand with the name looked up, whose ID is `c3-` and the name in lower case.
  * It sells each Brand what `products` gives for a search: by default a small catalogue of two
- * Products in every Category and line, new and in stock in the market, priced in its currency within
+ * Products in every Category and line, One-Pieces included, new and in stock in the market, priced in its currency within
  * any price filter. It knows no website.
  */
 export function channel3SellingEveryBrand({
@@ -90,9 +95,10 @@ export function channel3Search({ body }: RecordedChannel3Request): Channel3Searc
     filters: { brand_ids: string[]; category_ids: string[]; gender: string; price?: { min_price: number; max_price: number } };
     config: { country: ProductSearchMarket };
   };
+  const isOnePiece = Object.values(CHANNEL3_ONE_PIECE_CATEGORY_IDS).some((ids) => ids.some((id) => filters.category_ids.includes(id)));
   return {
     brandId: filters.brand_ids[0] ?? "",
-    category: BRAND_CATEGORIES.find((category) => filters.category_ids.includes(CHANNEL3_CATEGORY_IDS[category][0]!)) ?? null,
+    category: isOnePiece ? "one_piece" : (BRAND_CATEGORIES.find((category) => filters.category_ids.includes(CHANNEL3_CATEGORY_IDS[category][0]!)) ?? null),
     gender: filters.gender,
     market: config.country,
     priceRange: filters.price ? { min: filters.price.min_price, max: filters.price.max_price } : null,

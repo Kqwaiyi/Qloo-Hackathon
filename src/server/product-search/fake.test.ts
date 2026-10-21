@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { LINES } from "@/config/accounts";
+import type { ProductCategory } from "@/config/consultations";
 
 import { FakeProductSearch } from "./fake";
-import type { ProductCategory } from "./provider";
 
 // The fake is what local development and the browser tests run on, so it must always have
 // something to offer, whatever Brand, Category, line and market they ask for.

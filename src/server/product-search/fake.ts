@@ -1,6 +1,7 @@
 import sharp from "sharp";
 
 import type { Line } from "@/config/accounts";
+import type { ProductCategory } from "@/config/consultations";
 import { PRODUCT_SEARCH_MARKET_CURRENCIES, type ProductSearchMarket } from "@/config/product-search";
 import type { ProductPhotoTransport } from "@/server/product-photos/photos";
 
@@ -9,7 +10,6 @@ import type {
   BrandLookupResult,
   CandidateProduct,
   PriceRange,
-  ProductCategory,
   ProductCheck,
   ProductCheckResult,
   ProductOffer,

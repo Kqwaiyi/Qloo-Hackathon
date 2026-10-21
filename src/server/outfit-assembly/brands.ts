@@ -8,6 +8,7 @@ import {
   isBrandCategory,
   type PieceCategory,
   type PriceRangeUsd,
+  type ProductCategory,
 } from "@/config/consultations";
 import { OFF_CATEGORY_DENYLIST, RETAILER_DENYLIST } from "@/config/denylists";
 import {
@@ -27,7 +28,6 @@ import {
   BUDGET_TIER_BRAND_FILTERS,
   THIN_POOL_USABLE_BRANDS,
 } from "@/config/qloo";
-import type { ProductCategory } from "@/server/product-search/provider";
 import type { QlooBrand, QlooBrandQuery, QlooTagId } from "@/server/qloo/client";
 
 import { consultationCountry, lineGender, qlooAge } from "./signals";
@@ -162,6 +162,11 @@ export interface PickedBrand {
  */
 export type BrandPicks = Record<BrandCategory, PickedBrand>;
 
+/** The Brand a Product Piece is built on: its Category's pick, or for a One-Piece, the Top's (ADR-0003). */
+export function productPieceBrand(picks: BrandPicks, category: ProductCategory): PickedBrand {
+  return picks[category === "one_piece" ? "top" : category];
+}
+
 /**
  * What the product search said of each Brand looked up in it lately, by Qloo entity ID: its own ID
  * for the Brand, or null when it doesn't know the Brand. A Brand missing here hasn't been looked up.
@@ -224,10 +229,13 @@ export interface StyleIconBrands {
   brands: readonly QlooBrand[];
 }
 
-/** One Piece's search in the product search: the Brand its Outfit's Style Icon picked for its Category. */
+/**
+ * One Piece's search in the product search: the Brand its Outfit's Style Icon picked for its
+ * Category, or for a One-Piece, the Top Brand (ADR-0003).
+ */
 export interface PieceSearch {
   styleIconId: string;
-  category: BrandCategory;
+  category: ProductCategory;
   brand: PickedBrand;
 }
 
@@ -256,7 +264,8 @@ export interface OutfitBrandPlan {
   /**
    * The picks' Pieces not searched yet, in the order of the picks and then the Categories, once every
    * pick's Brand is looked up: none before. Until they're searched, the picks may still change, so
-   * their Outfits are not to be tailored.
+   * their Outfits are not to be tailored. Then, once every pick's Top, Bottom and Shoes have been
+   * found, which fixes its Brands, each pick's One-Piece search on its Top Brand.
    */
   searches: PieceSearch[];
 }
@@ -274,6 +283,9 @@ export interface OutfitBrandPlan {
  * already used in it (ADR-0008): the Category takes the Style Icon's next usable Brand under the same
  * pick rules, which may move its other Categories too, and a Style Icon left with none can't
  * complete an Outfit, so it's skipped. A Brand is never searched twice for one Style Icon's Category.
+ * Once every pick's Top, Bottom and Shoes have been found, fixing their Brands, each pick's
+ * One-Piece is searched for on its Top Brand (ADR-0003). Whatever that search finds, it moves no
+ * pick and passes no Brand over: an Outfit whose Top Brand has no One-Piece is separates only.
  */
 export function planOutfitBrands(
   styleIcons: readonly StyleIconBrands[],
@@ -311,15 +323,17 @@ export function planOutfitBrands(
     }
   }
   if (plan.lookUpBrands.length > 0) return plan;
-  const isSearched = (styleIconId: string, category: BrandCategory, brand: PickedBrand) =>
-    searched.some((search) => search.styleIconId === styleIconId && search.category === category && search.brandEntityId === brand.entityId);
-  plan.searches = plan.picked.flatMap(({ styleIconId, brands }) =>
-    BRAND_CATEGORIES.filter((category) => !isSearched(styleIconId, category, brands[category])).map((category) => ({
-      styleIconId,
-      category,
-      brand: brands[category],
-    })),
-  );
+  const notSearched = ({ styleIconId, category, brand }: PieceSearch) =>
+    !searched.some((search) => search.styleIconId === styleIconId && search.category === category && search.brandEntityId === brand.entityId);
+  const separates = plan.picked
+    .flatMap(({ styleIconId, brands }) => BRAND_CATEGORIES.map((category) => ({ styleIconId, category, brand: brands[category] })))
+    .filter(notSearched);
+  // A One-Piece's search moves no pick, so it waits until none can move: no search is spent on a
+  // Top Brand that a later search moves.
+  plan.searches =
+    separates.length > 0
+      ? separates
+      : plan.picked.map(({ styleIconId, brands }): PieceSearch => ({ styleIconId, category: "one_piece", brand: productPieceBrand(brands, "one_piece") })).filter(notSearched);
   return plan;
 }
 

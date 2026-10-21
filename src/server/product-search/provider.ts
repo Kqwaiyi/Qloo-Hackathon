@@ -1,5 +1,5 @@
 import type { Line } from "@/config/accounts";
-import type { PieceCategory } from "@/config/consultations";
+import type { ProductCategory } from "@/config/consultations";
 import type { ProductSearchMarket } from "@/config/product-search";
 
 // Our own product-search interface (spec: "Product search interface", ADR-0008). The domain depends
@@ -7,9 +7,6 @@ import type { ProductSearchMarket } from "@/config/product-search";
 // Brand's name and official site, the provider's own Brand and Product IDs, a Category, a line, a
 // market and a price range. Never a user ID, username, email, photo, Style Icon, or anything that
 // links two calls to one user.
-
-/** What a Product can be in an Outfit: a Top, Bottom or Shoes Piece, or a One-Piece. */
-export type ProductCategory = Exclude<PieceCategory, "hairstyle">;
 
 /** A Qloo Brand to find in the product search. */
 export interface BrandLookup {
