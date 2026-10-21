@@ -127,17 +127,21 @@ export const tailoredPiecesSchema = z.object({
 });
 export type TailoredPieces = z.infer<typeof tailoredPiecesSchema>;
 
+/**
+ * One Piece a Preview draws: the Hairstyle by its details, or a Product by its seller's own photo
+ * (ADR-0008), or by its title alone when its photo couldn't be fetched.
+ */
+export type PreviewPiece =
+  | { category: "hairstyle"; details: string }
+  | { category: Exclude<PieceCategory, "hairstyle">; title: string; photo: Photo | null };
+
 /** What one Preview is drawn from. Never the Style Icon's name or image. */
 export interface PreviewInput {
   photo: Photo;
   /** A Face Photo's Preview changes only the hair; a Body-Only Preview never invents a face. */
   photoType: PhotoType;
-  /**
-   * The Pieces the user is shown wearing, each by its `details`: only these change. A Product,
-   * which has no hidden description, is drawn from its title, until Previews are drawn from Product
-   * photos (ADR-0008).
-   */
-  pieces: readonly { category: PieceCategory; details: string }[];
+  /** The Pieces the user is shown wearing, in Category order: only these change. */
+  pieces: readonly PreviewPiece[];
 }
 
 /** The image the model drew, in whatever format it sent, or its refusal and why. */

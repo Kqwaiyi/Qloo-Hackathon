@@ -10,9 +10,13 @@ import { QlooError, QlooRateLimitedError } from "@/server/qloo/client";
 import type { BuildOutfitsSteps } from "./build-outfits";
 import { StylingNotRunningError, stylingSteps } from "./steps";
 
-/** Runs one "build Outfits" step for the Workflow: on the app's services, telling the Workflow which failures to retry. */
-export async function runWorkflowStep<T>(step: (steps: BuildOutfitsSteps) => Promise<T>): Promise<T> {
-  const steps = stylingSteps(await getServices());
+/**
+ * Runs one "build Outfits" step for the Workflow: on the app's services, telling the Workflow which
+ * failures to retry. A step given its `maxRetries` learns whether this try is its last.
+ */
+export async function runWorkflowStep<T>(step: (steps: BuildOutfitsSteps) => Promise<T>, { maxRetries }: { maxRetries?: number } = {}): Promise<T> {
+  const lastTry = maxRetries === undefined ? undefined : getStepMetadata().attempt > maxRetries;
+  const steps = stylingSteps(await getServices(), { lastTry });
   try {
     return await step(steps);
   } catch (error) {

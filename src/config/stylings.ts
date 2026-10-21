@@ -45,6 +45,12 @@ export type PreviewRefusalReason = (typeof PREVIEW_REFUSAL_REASONS)[number];
 /** A Styling renders this many Previews at once, each its own step. */
 export const PREVIEWS_AT_ONCE = 2;
 
+/**
+ * A Preview step that throws is tried again this many times, as the Workflow's default retries it.
+ * A Product photo that still can't be fetched on its last try is drawn from its title instead.
+ */
+export const PREVIEW_STEP_MAX_RETRIES = 3;
+
 /** A Styling makes up to this many Outfits, one per top unused Style Icon. */
 export const OUTFITS_PER_STYLING = 2;
 

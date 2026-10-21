@@ -29,6 +29,7 @@ import {
   type PhotoCheckInput,
   type PhotoCheckResult,
   type PreviewInput,
+  type PreviewPiece,
   type PreviewResult,
   tailoredPiecesSchema,
   type TailoringBrand,
@@ -113,8 +114,13 @@ export class GeminiAiProvider implements AiProvider {
       const reply = await generateText({
         model: this.previewModel,
         // The instruction goes before the photo in one message, with no system instruction, as
-        // the Preview bake-off sent it.
-        messages: [{ role: "user", content: [{ type: "text", text: previewInstruction(input) }, photoPart(input.photo)] }],
+        // the Preview bake-off sent it. Each Product's photo follows the user's, in Piece order.
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: previewInstruction(input) }, photoPart(input.photo), ...productPhotos(input.pieces).map(photoPart)],
+          },
+        ],
         providerOptions: { google: PREVIEW_OPTIONS },
         maxRetries: 0,
       });
@@ -303,12 +309,27 @@ const PREVIEW_PIECE_LABELS: Record<PieceCategory, string> = {
   one_piece: `${CATEGORY_LABELS.one_piece}, in place of both the top and the bottom`,
 };
 
+/** The Product photos a Preview sends after the user's photo, in Piece order: image 2 onwards. */
+function productPhotos(pieces: readonly PreviewPiece[]): Photo[] {
+  return pieces.flatMap((piece) => (piece.category !== "hairstyle" && piece.photo ? [piece.photo] : []));
+}
+
 /**
- * The instruction for one Preview: change only the Pieces, each by its details, and keep
+ * The instruction for one Preview: change only the Pieces, the Hairstyle by its details and each
+ * Product by its seller's photo, named by its image, or by its title when it has none. Keep
  * everything else. It never names the Style Icon, which the Preview isn't told.
  */
 function previewInstruction({ photoType, pieces }: PreviewInput): string {
   const changesHair = pieces.some(({ category }) => category === "hairstyle");
+  // The user's photo is image 1; the Product photos follow it, as the request sends them.
+  const photos = productPhotos(pieces);
+  const withProductPhotos = photos.length > 0;
+  const changes = pieces.map((piece) => {
+    const label = PREVIEW_PIECE_LABELS[piece.category];
+    if (piece.category === "hairstyle") return `- ${label}: ${piece.details}`;
+    const title = oneLine(piece.title);
+    return piece.photo ? `- ${label}: the garment in image ${photos.indexOf(piece.photo) + 2}, "${title}"` : `- ${label}: ${title}`;
+  });
   const kept = [
     "the person's face and identity",
     "their body shape and size: never slim, reshape or beautify them",
@@ -325,8 +346,16 @@ function previewInstruction({ photoType, pieces }: PreviewInput): string {
   return [
     photoType === "face"
       ? "Edit this photo of a person. Change only their hair, to this:"
-      : "Edit this photo so the person is wearing the outfit below. Change only these items:",
-    ...pieces.map(({ category, details }) => `- ${PREVIEW_PIECE_LABELS[category]}: ${details}`),
+      : withProductPhotos
+        ? "Image 1 is a photo of a person. Edit it so the person is wearing the outfit below. Change only these items:"
+        : "Edit this photo so the person is wearing the outfit below. Change only these items:",
+    ...changes,
+    ...(withProductPhotos
+      ? [
+          "",
+          "Each image after image 1 is a seller's photo of one of these garments. Take only the garment from it: its shape, colour, fabric and details. Ignore any person, mannequin or other clothing in it, and never take anyone's face, body, skin or hair from it.",
+        ]
+      : []),
     "",
     "Keep everything else exactly as it is:",
     ...kept.map((keep) => `- ${keep}`),

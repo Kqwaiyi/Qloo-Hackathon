@@ -86,8 +86,10 @@ export interface BuildOutfitsSteps {
   /** The IDs of the Outfits the Styling made whose Previews are still to render, in order. */
   planPreviews(stylingId: string): Promise<string[]>;
   /**
-   * One AI call: renders the Outfit's Preview and saves it, or saves its refusal, which is final.
-   * Throws on errors worth retrying, leaving the Preview pending.
+   * One AI call: fetches the Outfit's Product photos, then renders its Preview and saves it, or
+   * saves its refusal, which is final. Throws on errors worth retrying, leaving the Preview pending,
+   * as when a Product photo can't be fetched before the step's last try; on that last try, its
+   * Product is drawn from its title instead.
    */
   renderPreview(stylingId: string, outfitId: string): Promise<void>;
   /**

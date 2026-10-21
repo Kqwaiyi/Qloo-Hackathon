@@ -1,10 +1,11 @@
-import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
+import { inspect, isDeepStrictEqual } from "node:util";
 import sharp from "sharp";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type BudgetTier, byCategoryOrder, type PhotoType } from "@/config/consultations";
+import { PRODUCT_PHOTO_MAX_BYTES } from "@/config/product-search";
 import type { StylingKind } from "@/config/stylings";
 import type { AiProvider } from "@/server/ai/provider";
 import { brandMatch, consultation, outfit, piece, pieceCandidates, qlooCache, styleIcon, styling, usageRecord, user } from "@/server/db/schema";
@@ -22,6 +23,7 @@ import {
 } from "@/server/operations/stylings";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { readUsageSummary } from "@/server/operations/usage";
+import { neverAnswering, type ProductPhotoFormat, productPhoto, productPhotoBytes } from "@/server/product-photos/fake";
 import {
   channel3Offer,
   channel3Product,
@@ -86,10 +88,17 @@ beforeEach(async () => {
   harness.channel3.requests.length = 0;
   harness.channel3.respond = channel3SellingEveryBrand();
   harness.channel3.duringRequest = undefined;
+  harness.productPhotos.requests.length = 0;
+  harness.productPhotos.respond = (url) => productPhoto(url);
+  harness.stylings.previewRetries = 0;
   await harness.db.delete(qlooCache);
   await harness.db.delete(brandMatch);
   // The app-wide caps count every user's Outfits, so each test starts with none made.
   await harness.db.delete(usageRecord);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("a new Consultation's first Styling", () => {
@@ -1221,7 +1230,7 @@ describe("each Outfit's Preview", () => {
     expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", stage: "previews", outfitsMade: 2 })]);
   });
 
-  it("is drawn from the photo, the Photo Type, the Hairstyle's details and each Product's title, never the Style Icon", async () => {
+  it("is drawn from the photo, the Photo Type, the Hairstyle's details and each Product's title and Product photo, never the Style Icon", async () => {
     harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
@@ -1237,13 +1246,139 @@ describe("each Outfit's Preview", () => {
         photoType: "full_body",
         pieces: [
           { category: "hairstyle", details: hairstyle!.details },
-          { category: "top", details: "Product c3-bolt-top-1" },
-          { category: "bottom", details: "Product c3-jeanery-bottom-1" },
-          { category: "shoes", details: "Product c3-stride-shoes-1" },
+          { category: "top", title: "Product c3-bolt-top-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-bolt-top-1-cleaned.png") },
+          { category: "bottom", title: "Product c3-jeanery-bottom-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-jeanery-bottom-1-cleaned.png") },
+          { category: "shoes", title: "Product c3-stride-shoes-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-stride-shoes-1-cleaned.png") },
         ],
       },
     ]);
     expect(JSON.stringify(harness.ai.previewRequests)).not.toContain("Ava Stone");
+  });
+
+  it.each<[string, (url: URL, signal: AbortSignal) => Response | Promise<Response>]>([
+    ["can't be reached", () => Promise.reject(new TypeError("fetch failed"))],
+    ["answers with an error", () => new Response("Not found", { status: 404 })],
+    ["isn't an image, whatever its content type says", () => new Response("<html>Sold out</html>", { headers: { "content-type": "image/png" } })],
+    ["answers too late", (_url, signal) => neverAnswering(signal)],
+    ["is too big", (url) => new Response(new Uint8Array([...productPhotoBytes(url), ...new Uint8Array(PRODUCT_PHOTO_MAX_BYTES)]))],
+  ])("draws a Product from its title when its photo %s, the Product staying real on the card", async (_how, respond) => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const topPhoto = "https://cdn.channel3.test/c3-bolt-top-1-cleaned.png";
+    harness.productPhotos.respond = (url, signal) => (String(url) === topPhoto ? respond(url, signal) : productPhoto(url));
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(harness.ai.previewRequests.map(({ pieces }) => pieces)).toEqual([
+      [
+        { category: "top", title: "Product c3-bolt-top-1", photo: null },
+        { category: "bottom", title: "Product c3-jeanery-bottom-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-jeanery-bottom-1-cleaned.png") },
+        { category: "shoes", title: "Product c3-stride-shoes-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-stride-shoes-1-cleaned.png") },
+      ],
+    ]);
+    const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(outfits).toMatchObject([
+      {
+        preview: { state: "ready" },
+        pieces: [
+          { category: "top", item: "Product c3-bolt-top-1", product: { url: "https://shop.example/products/c3-bolt-top-1", shopDomain: "shop.example" } },
+          { category: "bottom", item: "Product c3-jeanery-bottom-1" },
+          { category: "shoes", item: "Product c3-stride-shoes-1" },
+        ],
+      },
+    ]);
+  });
+
+  it("is tried again when a Product photo fails on a try the step will retry, without asking the image model", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    harness.stylings.previewRetries = 3;
+    const topPhoto = "https://cdn.channel3.test/c3-bolt-top-1-cleaned.png";
+    let topTries = 0;
+    harness.productPhotos.respond = (url) => (String(url) === topPhoto && ++topTries === 1 ? new Response("Busy", { status: 503 }) : productPhoto(url));
+
+    await start(await signedInUser({ stylePreference: "womenswear" }), "body_only");
+    await harness.stylings.runPending();
+
+    expect(topTries).toBe(2);
+    expect(harness.ai.previewRequests.map(({ pieces }) => pieces)).toEqual([
+      [
+        { category: "top", title: "Product c3-bolt-top-1", photo: productPhotoFingerprint(topPhoto) },
+        { category: "bottom", title: "Product c3-jeanery-bottom-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-jeanery-bottom-1-cleaned.png") },
+        { category: "shoes", title: "Product c3-stride-shoes-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-stride-shoes-1-cleaned.png") },
+      ],
+    ]);
+  });
+
+  it("draws a Product from its title only once the step's last try still can't fetch its photo", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    harness.stylings.previewRetries = 3;
+    const topPhoto = "https://cdn.channel3.test/c3-bolt-top-1-cleaned.png";
+    let topTries = 0;
+    harness.productPhotos.respond = (url) => (String(url) === topPhoto && ++topTries ? new Response("Busy", { status: 503 }) : productPhoto(url));
+
+    const consultationId = await start(await signedInUser({ stylePreference: "womenswear" }), "body_only");
+    await harness.stylings.runPending();
+
+    expect(topTries).toBe(4);
+    expect(harness.ai.previewRequests.map(({ pieces }) => pieces[0])).toEqual([{ category: "top", title: "Product c3-bolt-top-1", photo: null }]);
+    expect(await previewsOf(consultationId)).toEqual([expect.objectContaining({ previewState: "ready" })]);
+  });
+
+  it("takes a Product photo as a JPEG, PNG or WebP image by its first bytes, whatever its content type says", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    const formats: Record<string, ProductPhotoFormat> = { top: "jpeg", bottom: "webp", shoes: "png" };
+    harness.productPhotos.respond = (url) =>
+      productPhoto(url, { format: formats[/-(top|bottom|shoes)-/.exec(url.pathname)![1]!], contentType: "application/octet-stream" });
+
+    await start(await signedInUser({ stylePreference: "womenswear" }), "body_only");
+    await harness.stylings.runPending();
+
+    expect(harness.ai.previewRequests.map(({ pieces }) => pieces)).toEqual([
+      [
+        { category: "top", title: "Product c3-bolt-top-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-bolt-top-1-cleaned.png", "jpeg") },
+        { category: "bottom", title: "Product c3-jeanery-bottom-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-jeanery-bottom-1-cleaned.png", "webp") },
+        { category: "shoes", title: "Product c3-stride-shoes-1", photo: productPhotoFingerprint("https://cdn.channel3.test/c3-stride-shoes-1-cleaned.png", "png") },
+      ],
+    ]);
+  });
+
+  it("never keeps a Product photo: nothing of it reaches Blob, the database or the logs, even from a try that failed", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    // The first try of the Preview fails after fetching the photos, so its error goes by too.
+    harness.stylings.previewRetries = 1;
+    harness.ai.previewScenarios = ["preview-fails"];
+    const logs = (["log", "info", "warn", "error"] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => {}));
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    const photos = harness.productPhotos.requests.map((url) => productPhotoBytes(url));
+    expect(photos).toHaveLength(6);
+    const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+    const [preview] = await previewsOf(consultationId);
+    expect(preview).toMatchObject({ previewState: "ready" });
+    expect([...harness.blob.objects.keys()].toSorted()).toEqual([stored!.photoPathname, preview!.previewPathname].toSorted());
+    for (const { bytes } of harness.blob.objects.values()) {
+      for (const photo of photos) expect(Buffer.from(bytes).includes(Buffer.from(photo))).toBe(false);
+    }
+    const everywhere = [await everyRowAsText(), ...logs.flatMap((log) => log.mock.calls.map((args) => inspect(args, { depth: Infinity })))].join("\n");
+    for (const photo of photos) {
+      for (const encoding of ["base64", "hex", "utf8"] as const) expect(everywhere).not.toContain(Buffer.from(photo).toString(encoding));
+    }
+    expect(everywhere).not.toContain("the bytes of the Product photo");
+  });
+
+  it("fetches each Product's photo by the URL its Piece saved", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    const consultationId = await start(await signedInUser({ stylePreference: "womenswear" }), "body_only");
+
+    await harness.stylings.runPending();
+
+    const saved = (await productPiecesOf(consultationId)).map(({ productPhotoUrl }) => productPhotoUrl);
+    expect(saved).toHaveLength(3);
+    expect(harness.productPhotos.requests.map(String).toSorted()).toEqual(saved.toSorted());
   });
 
   it("is a placeholder when the image model declines, which is final, with every Piece still shown", async () => {
@@ -3030,6 +3165,27 @@ async function previewsOf(consultationId: string) {
 
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** Every row of every table in the database, each as its JSON text. */
+async function everyRowAsText(): Promise<string> {
+  const { rows: tables } = (await harness.db.execute(
+    sql`select table_name as name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'`,
+  )) as unknown as { rows: { name: string }[] };
+  expect(tables.map(({ name }) => name)).toEqual(expect.arrayContaining(["piece", "outfit", "consultation"]));
+  const texts: string[] = [];
+  for (const { name } of tables) {
+    const { rows } = (await harness.db.execute(sql`select row_to_json(t)::text as row from ${sql.identifier(name)} t`)) as unknown as {
+      rows: { row: string }[];
+    };
+    texts.push(...rows.map(({ row }) => row));
+  }
+  return texts.join("\n");
+}
+
+/** The fingerprint of the Product photo a seller serves at `url`, as the fake image model records it. */
+function productPhotoFingerprint(url: string, format: ProductPhotoFormat = "png") {
+  return { mediaType: `image/${format}`, sha256: sha256(productPhotoBytes(url, format)) };
 }
 
 let userCount = 0;

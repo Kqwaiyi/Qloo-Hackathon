@@ -1,14 +1,23 @@
-import { buildOutfits } from "./build-outfits";
+import { UnretryableAiError } from "@/server/ai/provider";
+
+import { type BuildOutfitsSteps, buildOutfits } from "./build-outfits";
 import type { StylingRunner } from "./runner";
-import { type StylingContext, stylingSteps } from "./steps";
+import { type StylingContext, StylingNotRunningError, stylingSteps } from "./steps";
 
 /**
  * Stylings in tests: the "build Outfits" Workflow's own steps, in its order, run in this process
- * with no retries. A started Styling waits until `runPending()`, so a test can look at it running.
+ * with no retries unless a test asks for the Preview step's. A started Styling waits until
+ * `runPending()`, so a test can look at it running.
  */
 export class InlineStylingRunner implements StylingRunner {
   /** The Stylings started and not yet run, oldest first. */
   readonly pending: string[] = [];
+  /**
+   * How many times a Preview step that throws is tried again, as the Workflow retries it, each try
+   * knowing whether it's the last: the one step whose last try behaves differently. None unless a
+   * test says.
+   */
+  previewRetries = 0;
   /** The IDs of the runs cancelled, oldest first. */
   readonly cancelled: string[] = [];
   /** Makes `cancel` throw, as it does when the Workflow can't be reached. */
@@ -43,7 +52,27 @@ export class InlineStylingRunner implements StylingRunner {
   /** Runs every pending Styling to its finish, one after another. */
   async runPending(): Promise<void> {
     for (let stylingId = this.pending.shift(); stylingId !== undefined; stylingId = this.pending.shift()) {
-      await buildOutfits(stylingId, stylingSteps(this.ctx));
+      await buildOutfits(stylingId, this.steps());
     }
+  }
+
+  /**
+   * The steps, the Preview step tried again up to `previewRetries` times, except after the failures
+   * the Workflow never retries it for: its Styling stopped, or an AI call failed for good.
+   */
+  private steps(): BuildOutfitsSteps {
+    return {
+      ...stylingSteps(this.ctx),
+      renderPreview: async (stylingId, outfitId) => {
+        for (let attempt = 1; ; attempt += 1) {
+          const lastTry = attempt > this.previewRetries;
+          try {
+            return await stylingSteps(this.ctx, { lastTry }).renderPreview(stylingId, outfitId);
+          } catch (error) {
+            if (lastTry || error instanceof StylingNotRunningError || error instanceof UnretryableAiError) throw error;
+          }
+        }
+      },
+    };
   }
 }

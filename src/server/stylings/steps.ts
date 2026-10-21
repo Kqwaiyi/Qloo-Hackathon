@@ -2,7 +2,14 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 
-import { type BrandCategory, type BudgetTier, byCategoryOrder, isBrandCategory } from "@/config/consultations";
+import {
+  type BrandCategory,
+  type BudgetTier,
+  byCategoryOrder,
+  CATEGORY_LABELS,
+  isBrandCategory,
+  type PieceCategory,
+} from "@/config/consultations";
 import type { ProductSearchMarket } from "@/config/product-search";
 import {
   addsToCurrentOutfits,
@@ -20,6 +27,7 @@ import {
   type AiProvider,
   isPhotoMediaType,
   type Photo,
+  type PreviewPiece,
   type TailoringBrand,
   type TailoringCandidate,
   type TailoringPiece,
@@ -46,6 +54,7 @@ import { outfitCategories, type PhotoCategoryFacts } from "@/server/outfit-assem
 import { productSearchMarket } from "@/server/outfit-assembly/markets";
 import { type Candidate, qualifyingCandidates, searchPriceFilter } from "@/server/outfit-assembly/products";
 import { rankStyleIcons, styleIconLines, styleIconQuery } from "@/server/outfit-assembly/style-icons";
+import type { ProductPhotos } from "@/server/product-photos/photos";
 import { lookUpBrandMatch, readBrandMatches } from "@/server/product-search/brand-matches";
 import type { ProductSearch } from "@/server/product-search/provider";
 import type { QlooBrand, QlooClient } from "@/server/qloo/client";
@@ -63,6 +72,8 @@ export interface StylingContext {
   /** Where the Consultation's photo and Previews are kept. Steps pass their pathnames, never their bytes. */
   blob: BlobStore;
   productSearch: ProductSearch;
+  /** Where each Preview step fetches its Products' photos, which are never kept. */
+  productPhotos: ProductPhotos;
 }
 
 /** The Styling has finished, been cancelled or deleted, so its steps stop without saving. */
@@ -73,8 +84,18 @@ export class StylingNotRunningError extends Error {
   }
 }
 
-/** The "build Outfits" steps, running on `ctx`. */
-export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
+/** How a step is being tried. */
+export interface StepTry {
+  /**
+   * Whether this is the step's last try, so that throwing now leaves it failed rather than tried
+   * again. Only the Preview step reads it, and its runner says. Unsaid, every try counts as the
+   * last, as when tests' inline runner retries nothing.
+   */
+  lastTry?: boolean;
+}
+
+/** The "build Outfits" steps, running on `ctx`, as this try of them. */
+export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = {}): BuildOutfitsSteps {
   return {
     async ranksStyleIcons(stylingId) {
       const { stage } = await readRunningStyling(ctx.db, stylingId);
@@ -361,15 +382,34 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
       // A retry after the save went through has nothing left to do.
       if (toRender.previewState !== "pending") return;
       const pieces = await ctx.db
-        .select({ category: piece.category, item: piece.item, details: piece.details })
+        .select({ category: piece.category, item: piece.item, details: piece.details, productPhotoUrl: piece.productPhotoUrl })
         .from(piece)
         .where(eq(piece.outfitId, outfitId));
-      // Never the Style Icon: only what the user is shown wearing. A Product, which has no hidden
-      // description, is drawn from its title, until Previews are drawn from Product photos (ADR-0008).
+      // Each Product's photo is fetched here, inside the step, so no image passes between steps,
+      // and goes to the model inline. One that can't be fetched fails a try the step will retry,
+      // before the model is asked, as it may come then; on the last try, its Product is drawn from
+      // its title instead.
+      const productPhoto = async (category: PieceCategory, url: string): Promise<Photo | null> => {
+        try {
+          return await ctx.productPhotos.fetch(url);
+        } catch (error) {
+          const failure = `The ${CATEGORY_LABELS[category]}'s Product photo couldn't be fetched: ${error instanceof Error ? error.message : "unknown error"}`;
+          if (!lastTry) throw new Error(failure);
+          console.warn(`${failure} It's drawn from its title.`);
+          return null;
+        }
+      };
+      const drawn = await Promise.all(
+        pieces.toSorted(byCategoryOrder).map(async ({ category, item, details, productPhotoUrl }): Promise<PreviewPiece> => {
+          if (category === "hairstyle") return { category, details: details ?? item };
+          return { category, title: item, photo: productPhotoUrl ? await productPhoto(category, productPhotoUrl) : null };
+        }),
+      );
+      // Never the Style Icon: only what the user is shown wearing.
       const preview = await ctx.ai.renderPreview({
         photo: await readPhoto(ctx.blob, toRender.photoPathname),
         photoType: toRender.photoType,
-        pieces: pieces.toSorted(byCategoryOrder).map(({ category, item, details }) => ({ category, details: details ?? item })),
+        pieces: drawn,
       });
       if (preview.refused) {
         await savePreview(ctx.db, stylingId, outfitId, { previewState: "refused", previewRefusalReason: preview.reason });

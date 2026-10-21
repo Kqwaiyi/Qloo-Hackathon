@@ -11,6 +11,8 @@ import { createEmailSender, type EmailSender } from "@/server/email/send-email";
 import { type CookieToSet, forwardSetCookies, type ResponseCookies } from "@/server/http/cookies";
 import type { PhotoConsentTicks } from "@/server/operations/consultations";
 import type { OperationContext } from "@/server/operations/context";
+import { FakeProductPhotoTransport } from "@/server/product-photos/fake";
+import { ProductPhotos } from "@/server/product-photos/photos";
 import { Channel3ProductSearch } from "@/server/product-search/channel3";
 import { channel3SellingEveryBrand, FakeChannel3Transport } from "@/server/product-search/fake-channel3";
 import { QlooClient } from "@/server/qloo/client";
@@ -124,6 +126,8 @@ export interface TestHarness {
    * name and sells each a small catalogue, as `channel3SellingEveryBrand` does. It records every request.
    */
   channel3: FakeChannel3Transport;
+  /** The sellers' servers Product photos are fetched from: they serve every photo until a test sets `respond`, and record every request. */
+  productPhotos: FakeProductPhotoTransport;
   /** Cloudflare Turnstile, for the Bot Check: it passes every token until a test sets `answer`, and records every request. */
   turnstile: FakeTurnstileTransport;
   /** Runs started Stylings when the test calls `runPending()`, through the real Qloo client and cache. */
@@ -168,7 +172,17 @@ export async function createTestHarness({
   const channel3 = new FakeChannel3Transport();
   channel3.respond = channel3SellingEveryBrand();
   const productSearch = new Channel3ProductSearch({ transport: channel3.send, apiKey: "test-channel3-key" });
-  const stylings = new InlineStylingRunner({ db, clock, qloo: qlooClient, ai, blob, productSearch });
+  const productPhotos = new FakeProductPhotoTransport();
+  const stylings = new InlineStylingRunner({
+    db,
+    clock,
+    qloo: qlooClient,
+    ai,
+    blob,
+    productSearch,
+    // A photo that never answers is given up on soon, so its test doesn't wait the real timeout.
+    productPhotos: new ProductPhotos({ transport: productPhotos.send, timeoutMs: 250 }),
+  });
   const emails = new CapturingEmailTransport();
   const emailSender = createEmailSender({ db, clock, transport: emails });
   const turnstile = new FakeTurnstileTransport();
@@ -193,6 +207,7 @@ export async function createTestHarness({
     blob,
     qloo,
     channel3,
+    productPhotos,
     turnstile,
     stylings,
     emailSender,

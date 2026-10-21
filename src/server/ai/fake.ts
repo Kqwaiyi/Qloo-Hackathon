@@ -12,6 +12,7 @@ import type {
   PhotoMediaType,
   PhotoVisibility,
   PreviewInput,
+  PreviewPiece,
   PreviewResult,
   TailoredPieces,
   TailoringInput,
@@ -79,8 +80,13 @@ export interface PhotoFingerprint {
 /** A tailoring the fake was asked for, with the photo as its fingerprint. */
 export type FakeTailoringRequest = Omit<TailoringInput, "photo"> & { photo: PhotoFingerprint };
 
-/** A Preview the fake was asked for, with the photo as its fingerprint. */
-export type FakePreviewRequest = Omit<PreviewInput, "photo"> & { photo: PhotoFingerprint };
+/** A Piece of a Preview the fake was asked for, with any Product photo as its fingerprint. */
+export type FakePreviewPiece =
+  | Extract<PreviewPiece, { category: "hairstyle" }>
+  | (Omit<Exclude<PreviewPiece, { category: "hairstyle" }>, "photo"> & { photo: PhotoFingerprint | null });
+
+/** A Preview the fake was asked for, with every photo as its fingerprint. */
+export type FakePreviewRequest = Omit<PreviewInput, "photo" | "pieces"> & { photo: PhotoFingerprint; pieces: FakePreviewPiece[] };
 
 export interface FakeAiOptions {
   scenario?: FakeAiScenario;
@@ -133,8 +139,8 @@ export class FakeAiProvider implements AiProvider {
   }
 
   async renderPreview(input: PreviewInput): Promise<PreviewResult> {
-    const { photo, ...rest } = input;
-    this.previewRequests.push({ ...rest, photo: fingerprint(photo) });
+    const { photo, pieces, ...rest } = input;
+    this.previewRequests.push({ ...rest, photo: fingerprint(photo), pieces: pieces.map(fingerprintedPiece) });
     const scenario = this.previewScenarios.shift() ?? this.scenario;
     await this.wait("renderPreview");
     if (scenario === "preview-fails") throw new Error("The fake Preview failed, as its scenario asks.");
@@ -150,6 +156,11 @@ export class FakeAiProvider implements AiProvider {
 
 function fingerprint(photo: Photo): PhotoFingerprint {
   return { mediaType: photo.mediaType, sha256: createHash("sha256").update(photo.bytes).digest("hex") };
+}
+
+function fingerprintedPiece(piece: PreviewPiece): FakePreviewPiece {
+  if (piece.category === "hairstyle") return piece;
+  return { ...piece, photo: piece.photo && fingerprint(piece.photo) };
 }
 
 /** The photo with a "Fake Preview" banner across its foot, as a PNG, as image models send. */

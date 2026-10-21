@@ -81,6 +81,17 @@ export const BRAND_MATCH_LIFETIME_DAYS = 30;
 /** A Styling retries each product-search call this many times, backing off longer each time on "too many requests". */
 export const PRODUCT_SEARCH_STEP_MAX_RETRIES = 5;
 
+// Product photos, which each Preview step fetches from their sellers and never keeps.
+
+/** A Product photo that hasn't fully arrived this long after it was asked for doesn't count. */
+export const PRODUCT_PHOTO_TIMEOUT_MS = 5_000;
+
+/**
+ * A Product photo bigger than this doesn't count. With the user's photo (2 MB at most) and up to
+ * three Product photos, a Preview request stays well within Gemini's 20 MB for images sent inline.
+ */
+export const PRODUCT_PHOTO_MAX_BYTES = 3 * 1024 * 1024;
+
 /** The kinds of One-Piece (ADR-0003). */
 export type OnePieceKind = "dress" | "jumpsuit" | "overalls";
 

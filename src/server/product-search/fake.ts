@@ -1,5 +1,8 @@
+import sharp from "sharp";
+
 import type { Line } from "@/config/accounts";
 import { PRODUCT_SEARCH_MARKET_CURRENCIES, type ProductSearchMarket } from "@/config/product-search";
+import type { ProductPhotoTransport } from "@/server/product-photos/photos";
 
 import type {
   BrandLookup,
@@ -109,6 +112,21 @@ export class FakeProductSearch implements ProductSearch {
     return catalogued ? { gone: false, offers: [offer(catalogued, market, null)] } : { gone: true };
   }
 }
+
+/**
+ * The photos of the fake's catalogue, as their sellers' servers would answer: each Product's photo
+ * is a plain swatch of its main colour, a PNG for the background-removed photo and a JPEG for the
+ * other. Anything else isn't found. Local development fetches Product photos from here, not the web.
+ */
+export const fakeCatalogueProductPhotos: ProductPhotoTransport = async (request) => {
+  const url = new URL(request.url);
+  const [, key, ending] = /^\/images\/(.+?)(-cutout\.png|\.jpg)$/.exec(url.pathname) ?? [];
+  const catalogued = url.hostname === FAKE_SHOP && key ? BY_KEY.get(key) : undefined;
+  if (!catalogued) return new Response("Not found", { status: 404 });
+  const swatch = sharp({ create: { width: 480, height: 640, channels: 3, background: catalogued.colours[0] ?? "#808080" } });
+  const [image, contentType] = ending === ".jpg" ? [swatch.jpeg(), "image/jpeg"] : [swatch.png(), "image/png"];
+  return new Response(new Uint8Array(await image.toBuffer()), { headers: { "content-type": contentType } });
+};
 
 function entry(key: string, title: string, description: string, colours: string[], price: number): CatalogueEntry {
   return { key, title, description, colours, price };

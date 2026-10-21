@@ -9,6 +9,7 @@ import {
   type PhotoCheckInput,
   type PhotoCheckReport,
   type PreviewInput,
+  type PreviewPiece,
   type TailoredPieces,
   type TailoringInput,
   UnretryableAiError,
@@ -174,17 +175,37 @@ const TAILORED: TailoredPieces = {
   ],
 };
 
-/** The Full-Body Photo's Outfit above, as its Preview is asked for: the Hairstyle by its details, each Product by its title. */
+/** Each Product photo's bytes stand in for its seller's photo of the Product. */
+const TOP_PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a seller's photo of a cropped biker jacket"), mediaType: "image/png" };
+const BOTTOM_PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a seller's photo of straight black jeans"), mediaType: "image/webp" };
+const SHOES_PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a seller's photo of ankle boots"), mediaType: "image/jpeg" };
+
+/**
+ * The Full-Body Photo's Outfit above, as its Preview is asked for: the Hairstyle by its details,
+ * each Product by its title and its seller's photo.
+ */
 const PREVIEW: PreviewInput = {
   photo: PHOTO,
   photoType: "full_body",
   pieces: [
     { category: "hairstyle", details: "A choppy chin-length bob with a soft side part, in your own hair colour." },
-    { category: "top", details: "Cropped Leather Biker Jacket" },
-    { category: "bottom", details: "High-Rise Straight Jean, Washed Black" },
-    { category: "shoes", details: "Lace-Up Ankle Boot" },
+    { category: "top", title: "Cropped Leather Biker Jacket", photo: TOP_PHOTO },
+    { category: "bottom", title: "High-Rise Straight Jean, Washed Black", photo: BOTTOM_PHOTO },
+    { category: "shoes", title: "Lace-Up Ankle Boot", photo: SHOES_PHOTO },
   ],
 };
+
+/** The photo, inline, as Gemini receives it. */
+function inline({ bytes, mediaType }: Photo): GeminiPart {
+  return { inlineData: { mimeType: mediaType, data: base64(bytes) } };
+}
+
+/** The request's text line that changes the Piece with this Category label, such as "Top". */
+function changeLine(request: RecordedGeminiRequest, label: string): string | undefined {
+  return textOf(request)
+    .split("\n")
+    .find((line) => line.startsWith(`- ${label}:`));
+}
 
 /** The bytes stand in for the image Gemini drew. */
 const DRAWN = new TextEncoder().encode("the bytes of the photo with the Outfit drawn on");
@@ -395,15 +416,61 @@ describe("Previews", () => {
     expect(gemini.requests[0]!.body.generationConfig).toEqual({ responseModalities: ["IMAGE"], thinkingConfig: { thinkingLevel: "minimal" } });
   });
 
-  it("sends the photo inline, with each Piece's details", async () => {
+  it("sends the user's photo first, then each Product's photo, all inline in one request, in Piece order", async () => {
+    gemini.respond = () => geminiImage(DRAWN);
+
+    await ai.renderPreview(PREVIEW);
+
+    expect(gemini.requests).toHaveLength(1);
+    expect(photoPartsOf(gemini.requests[0]!)).toEqual([inline(PHOTO), inline(TOP_PHOTO), inline(BOTTOM_PHOTO), inline(SHOES_PHOTO)]);
+  });
+
+  it("names each Product photo by its position and Category, with the Product's title, and the Hairstyle by its details", async () => {
     gemini.respond = () => geminiImage(DRAWN);
 
     await ai.renderPreview(PREVIEW);
 
     const [request] = gemini.requests;
-    expect(photoPartsOf(request!)).toEqual([{ inlineData: { mimeType: "image/jpeg", data: base64(PHOTO.bytes) } }]);
-    const text = textOf(request!);
-    for (const { details } of PREVIEW.pieces) expect(text).toContain(details);
+    expect(textOf(request!)).toMatch(/image 1 is a photo of a person/i);
+    expect(changeLine(request!, "Hairstyle")).toBe("- Hairstyle: A choppy chin-length bob with a soft side part, in your own hair colour.");
+    expect(changeLine(request!, "Top")).toBe('- Top: the garment in image 2, "Cropped Leather Biker Jacket"');
+    expect(changeLine(request!, "Bottom")).toBe('- Bottom: the garment in image 3, "High-Rise Straight Jean, Washed Black"');
+    expect(changeLine(request!, "Shoes")).toBe('- Shoes: the garment in image 4, "Lace-Up Ankle Boot"');
+  });
+
+  it("tells the model to take only the garment from each Product photo, keeping everything else as it is", async () => {
+    gemini.respond = () => geminiImage(DRAWN);
+
+    await ai.renderPreview(PREVIEW);
+
+    const text = textOf(gemini.requests[0]!);
+    expect(text).toMatch(/take only the garment/i);
+    expect(text).toMatch(/ignore any person, mannequin or other clothing/i);
+    expect(text).toContain("Keep everything else exactly as it is:\n- the person's face and identity");
+  });
+
+  it("draws a Product whose photo couldn't be fetched from its title, numbering the photos after it in turn", async () => {
+    gemini.respond = () => geminiImage(DRAWN);
+    const [hairstyle, top, bottom, shoes] = PREVIEW.pieces;
+
+    await ai.renderPreview({ ...PREVIEW, pieces: [hairstyle!, { ...top!, photo: null } as PreviewPiece, bottom!, shoes!] });
+
+    const [request] = gemini.requests;
+    expect(photoPartsOf(request!)).toEqual([inline(PHOTO), inline(BOTTOM_PHOTO), inline(SHOES_PHOTO)]);
+    expect(changeLine(request!, "Top")).toBe("- Top: Cropped Leather Biker Jacket");
+    expect(changeLine(request!, "Bottom")).toBe('- Bottom: the garment in image 2, "High-Rise Straight Jean, Washed Black"');
+    expect(changeLine(request!, "Shoes")).toBe('- Shoes: the garment in image 3, "Lace-Up Ankle Boot"');
+  });
+
+  it("keeps a Body-Only Photo's rule against adding a face beside the Product photos", async () => {
+    gemini.respond = () => geminiImage(DRAWN);
+    const [, ...products] = PREVIEW.pieces;
+
+    await ai.renderPreview({ ...PREVIEW, photoType: "body_only", pieces: products });
+
+    const text = textOf(gemini.requests[0]!);
+    expect(text).toContain("Never add a face or a head that isn't in the photo.");
+    expect(text).toContain("- their hair, and anything covering it");
   });
 
   it("comes back refused as blocked when Google blocks the request, without asking again", async () => {
@@ -454,7 +521,7 @@ describe("Previews", () => {
   });
 
   it.each([429, 500, 503])(
-    "throws Gemini's %d after one try, as an error worth retrying that carries nothing of the photo",
+    "throws Gemini's %d after one try, as an error worth retrying that carries nothing of the photo or the Product photos",
     async (status) => {
       gemini.respond = () => geminiError(status);
 
@@ -462,7 +529,7 @@ describe("Previews", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect(error).not.toBeInstanceOf(UnretryableAiError);
-      expect(inspect(error, { depth: Infinity })).not.toContain(base64(PHOTO.bytes));
+      for (const photo of [PHOTO, TOP_PHOTO, BOTTOM_PHOTO, SHOES_PHOTO]) expect(inspect(error, { depth: Infinity })).not.toContain(base64(photo.bytes));
       expect(gemini.requests).toHaveLength(1);
     },
   );
