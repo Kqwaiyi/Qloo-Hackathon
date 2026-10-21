@@ -3,7 +3,8 @@ import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { closeDatabase } from "@/server/db/connect";
-import { consultation, emailLog, qlooCache, usageRecord } from "@/server/db/schema";
+import { consultation, emailLog, exchangeRate, qlooCache, usageRecord } from "@/server/db/schema";
+import { fawazahmed0Rates, frankfurterRates } from "@/server/exchange-rates/fake";
 import { startConsultation } from "@/server/operations/consultations";
 import { runDailySweep } from "@/server/operations/daily-sweep";
 import { requestPasswordReset } from "@/server/operations/password-reset";
@@ -320,6 +321,99 @@ describe("purges", () => {
   });
 });
 
+describe("exchange rates", () => {
+  it("are refreshed from Frankfurter: each currency's rate to the US dollar, with when it was fetched", async () => {
+    harness.clock.set("2026-10-21T12:00:00Z");
+    harness.exchangeRates.respond = (url) => (url.hostname === "api.frankfurter.dev" ? frankfurterRates({ EUR: 0.89166, IDR: 17986, USD: 1 }) : notFound());
+
+    expect(await runDailySweep(harness)).toMatchObject({ exchangeRatesFrom: "frankfurter" });
+
+    const fetchedAt = new Date("2026-10-21T12:00:00Z");
+    expect(await storedRates()).toEqual([
+      { currency: "EUR", ratePerUsd: 0.89166, fetchedAt },
+      { currency: "IDR", ratePerUsd: 17986, fetchedAt },
+      { currency: "USD", ratePerUsd: 1, fetchedAt },
+    ]);
+    expect(harness.exchangeRates.requests.map(({ url }) => url.href)).toEqual(["https://api.frankfurter.dev/v2/rates?base=USD"]);
+  });
+
+  it("replace the day before's, keeping any currency the day's source leaves out", async () => {
+    harness.clock.set("2026-10-20T12:00:00Z");
+    harness.exchangeRates.respond = () => frankfurterRates({ EUR: 0.89, IDR: 17900 });
+    await runDailySweep(harness);
+    harness.clock.set("2026-10-21T12:00:00Z");
+    harness.exchangeRates.respond = () => frankfurterRates({ EUR: 0.89166 });
+
+    await runDailySweep(harness);
+
+    expect(await storedRates()).toEqual([
+      { currency: "EUR", ratePerUsd: 0.89166, fetchedAt: new Date("2026-10-21T12:00:00Z") },
+      { currency: "IDR", ratePerUsd: 17900, fetchedAt: new Date("2026-10-20T12:00:00Z") },
+    ]);
+  });
+
+  it.each([
+    ["answers with an error", () => new Response("Service unavailable", { status: 503 })],
+    ["can't be reached", () => Promise.reject(new TypeError("fetch failed"))],
+    ["answers with something that isn't its rates", () => Response.json({ message: "Not found" })],
+  ])("fall back to fawazahmed0's currency API when Frankfurter %s", async (_, frankfurter) => {
+    harness.clock.set("2026-10-21T12:00:00Z");
+    harness.exchangeRates.respond = (url) =>
+      url.hostname === "api.frankfurter.dev" ? frankfurter() : fawazahmed0Rates({ eur: 0.88999126, idr: 17989.00401192, usd: 1 });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    expect(await runDailySweep(harness)).toMatchObject({ exchangeRatesFrom: "fawazahmed0" });
+
+    const fetchedAt = new Date("2026-10-21T12:00:00Z");
+    expect(await storedRates()).toEqual([
+      { currency: "EUR", ratePerUsd: 0.88999126, fetchedAt },
+      { currency: "IDR", ratePerUsd: 17989.00401192, fetchedAt },
+      { currency: "USD", ratePerUsd: 1, fetchedAt },
+    ]);
+    expect(harness.exchangeRates.requests.map(({ url }) => url.href)).toEqual([
+      "https://api.frankfurter.dev/v2/rates?base=USD",
+      "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json",
+    ]);
+  });
+
+  it("keep the day before's when both sources fail, and say so", async () => {
+    harness.clock.set("2026-10-20T12:00:00Z");
+    harness.exchangeRates.respond = () => frankfurterRates({ EUR: 0.89 });
+    await runDailySweep(harness);
+    harness.clock.set("2026-10-21T12:00:00Z");
+    harness.exchangeRates.respond = () => new Response("Bad gateway", { status: 502 });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runDailySweep(harness)).toMatchObject({ exchangeRatesFrom: null });
+
+    expect(await storedRates()).toEqual([{ currency: "EUR", ratePerUsd: 0.89, fetchedAt: new Date("2026-10-20T12:00:00Z") }]);
+    expect(errors).toHaveBeenCalledTimes(1);
+  });
+
+  it("are fetched with nothing about any user: a plain request for every currency's rates", async () => {
+    harness.clock.set("2026-10-16T12:00:00Z");
+    const browser = await signedUpUser({ username: "Vee.Lark", email: "vee@example.com", countryCode: "ID" });
+    await start(browser);
+    await harness.stylings.runPending();
+    harness.exchangeRates.respond = (url) => (url.hostname === "api.frankfurter.dev" ? notFound() : fawazahmed0Rates({ idr: 17989 }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await runDailySweep(harness);
+
+    // The same two addresses whoever the users are, asked with no body and no headers.
+    expect(harness.exchangeRates.requests.map(({ url }) => url.href)).toEqual([
+      "https://api.frankfurter.dev/v2/rates?base=USD",
+      "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json",
+    ]);
+    for (const request of harness.exchangeRates.requests) {
+      expect(request.method).toBe("GET");
+      expect(request.body).toBe("");
+      expect([...request.headers.keys()]).toEqual([]);
+    }
+  });
+});
+
 /** Sets the clock and, while a test fakes it, Date. */
 function setTime(time: string): void {
   vi.setSystemTime(new Date(time));
@@ -371,6 +465,16 @@ async function emailLogTimes(): Promise<Date[]> {
 async function qlooCacheTimes(): Promise<Date[]> {
   const rows = await harness.db.select({ at: qlooCache.fetchedAt }).from(qlooCache).orderBy(asc(qlooCache.fetchedAt));
   return rows.map(({ at }) => at);
+}
+
+/** Every stored exchange rate, by currency. */
+function storedRates() {
+  return harness.db.select().from(exchangeRate).orderBy(asc(exchangeRate.currency));
+}
+
+/** A rate source that doesn't have what was asked for. */
+function notFound(): Response {
+  return new Response("Not found", { status: 404 });
 }
 
 /** The inactivity warnings sent to this address, oldest first. */

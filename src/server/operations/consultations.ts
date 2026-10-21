@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import * as z from "zod";
 
 import { PHOTO_NOTICE_VERSION } from "@/config/accounts";
+import { countryCurrency } from "@/config/currencies";
 import {
   BUDGET_TIERS,
   type BudgetTier,
@@ -28,12 +29,13 @@ import { deleteConsultationOf } from "@/server/consultations/deletion";
 import { judgePhotoCheck, type PhotoRejection } from "@/server/consultations/photo-check";
 import { readPhotoFile } from "@/server/consultations/photo-file";
 import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
+import { readExchangeRates } from "@/server/exchange-rates/rates";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
 import { productSearchMarket } from "@/server/outfit-assembly/markets";
-import { sumPrices } from "@/server/outfit-assembly/products";
-import { brandPriceRange, outfitPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
+import { brandPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
+import { outfitTotalText, type PriceViewer, priceText } from "@/server/outfit-assembly/prices";
 import { isFromSupportedRegion } from "@/server/region-gate";
 import { hasCurrentStyleIconLeft } from "@/server/stylings/current-outfits";
 import { type LatestFailedStyling, readLatestFailedStyling } from "@/server/stylings/failed";
@@ -227,18 +229,16 @@ export interface OutfitView {
   /** Shown by name, never with Qloo's image. */
   styleIconName: string;
   preview: PreviewView;
-  /** "Whole Outfit about …", or null when there's nothing to add up. */
-  total: OutfitTotal | null;
+  /**
+   * What "Whole Outfit about" is followed by: its Products' prices added up, any Piece priced only by
+   * its Brand's range adding that range, in the viewer's Country's currency as `PieceView`'s prices
+   * are. Null when there's nothing to add up, as for a Hairstyle-only Outfit. A One-Piece's left-out
+   * Bottom Brand isn't one of them.
+   */
+  total: string | null;
   /** One row per Piece, in Category order, whether or not there's a Preview: a One-Piece is one row. */
   pieces: PieceView[];
 }
-
-/**
- * What a whole Outfit costs: its Products' prices added up, in their currency; or for an older
- * Outfit, the sums of its Brand Pieces' price ranges, in US dollars. A One-Piece's left-out Bottom
- * Brand isn't one of them.
- */
-export type OutfitTotal = { kind: "products"; price: Price } | { kind: "brand_ranges"; usdRange: PriceRangeUsd };
 
 /** What an Outfit's card shows beside its Preview. */
 export type OutfitCardContent = Pick<OutfitView, "position" | "styleIconName" | "total" | "pieces">;
@@ -246,7 +246,11 @@ export type OutfitCardContent = Pick<OutfitView, "position" | "styleIconName" | 
 /** The Outfit's Preview: a signed link to it, valid for 1 hour from now, or why there's none. */
 export type PreviewView = { state: "ready"; url: string } | { state: "refused" | "failed" };
 
-/** A Piece's row. Its `details` are for the Preview, never shown. */
+/**
+ * A Piece's row, as its viewer is shown it: every price in whole units of the currency of the
+ * viewer's Country, marked "≈" when it was converted from another, or in its own when no rate is
+ * stored for either. Its `details` are for the Preview, never shown.
+ */
 export interface PieceView {
   category: PieceCategory;
   /** A Product's title; for the Hairstyle, the cut; for an older Piece, the item the AI described. */
@@ -261,10 +265,10 @@ export interface PieceView {
 export interface BrandView {
   name: string;
   /**
-   * An older Piece's price: its Brand's `price_range_usd_min`–`max`, or null when Qloo has no price
-   * for it. Null for a Product, which shows its own price.
+   * An older Piece's price: its Brand's Qloo price range, such as "≈ Rp 359,720–Rp 2,158,320", or
+   * null when Qloo has no price for it. Null for a Product, which shows its own price.
    */
-  priceRange: PriceRangeUsd | null;
+  priceRange: string | null;
   /**
    * Where an older Piece's "Visit <Brand>" goes: its official site when that's an https URL, or null
    * for no link. Null for a Product, which links to its own page.
@@ -274,8 +278,8 @@ export interface BrandView {
 
 /** What a Product Piece's row shows of its Product, beside its title: its price, dated, and where to buy it. */
 export interface ProductView {
-  /** Its offer's price, in the offer's own currency. */
-  price: Price;
+  /** Its offer's price, such as "≈ Rp 809,370" or "€45". */
+  price: string;
   /** The UTC date its price was found, as YYYY-MM-DD: "on 21 Oct". */
   pricedOn: string;
   /** Its offer's page, where "View at <shop domain>" goes. */
@@ -283,8 +287,17 @@ export interface ProductView {
   shopDomain: string;
 }
 
+/**
+ * A Piece as it's stored, its prices as they were found: a Product's in its offer's own currency, an
+ * older Piece's Brand range in US dollars. The landing page's samples are frozen in this form.
+ */
+export interface StoredPiece extends Omit<PieceView, "brand" | "product"> {
+  brand: (Omit<BrandView, "priceRange"> & { priceRange: PriceRangeUsd | null }) | null;
+  product: (Omit<ProductView, "price"> & { price: Price }) | null;
+}
+
 /** The columns of a Piece that its row shows. */
-export const pieceViewColumns = {
+export const storedPieceColumns = {
   category: piece.category,
   item: piece.item,
   why: piece.why,
@@ -299,8 +312,8 @@ export const pieceViewColumns = {
   pricedAt: piece.pricedAt,
 };
 
-/** A Piece's row, from its `pieceViewColumns`. */
-export function pieceView({
+/** A Piece as it's stored, from its `storedPieceColumns`. */
+export function storedPiece({
   category,
   item,
   why,
@@ -326,13 +339,13 @@ export function pieceView({
   price: number | null;
   currency: string | null;
   pricedAt: Date | null;
-}): PieceView {
+}): StoredPiece {
   // The check constraint keeps a Product Piece's fields all set, and any other Piece's all empty.
-  const product: ProductView | null =
+  const product: StoredPiece["product"] =
     offerUrl === null || offerShopDomain === null || price === null || currency === null || pricedAt === null
       ? null
       : { price: { amount: price, currency }, pricedOn: pricedAt.toISOString().slice(0, 10), url: offerUrl, shopDomain: offerShopDomain };
-  let brand: BrandView | null = null;
+  let brand: StoredPiece["brand"] = null;
   if (brandName !== null) {
     brand = product
       ? { name: brandName, priceRange: null, visitUrl: null }
@@ -341,23 +354,22 @@ export function pieceView({
   return { category, item, why, brand, product };
 }
 
-/**
- * "Whole Outfit about …" for an Outfit's Pieces: its Products' prices added up, when it has
- * Products, or else its Brand Pieces' price ranges. Null when there's nothing to add up, as for a
- * Hairstyle-only Outfit, or until prices convert, when its Products are priced in different
- * currencies.
- */
-export function outfitTotal(pieces: readonly PieceView[]): OutfitTotal | null {
-  const productPrices = pieces.flatMap((pieceView) => (pieceView.product ? [pieceView.product.price] : []));
-  if (productPrices.length > 0) {
-    const price = sumPrices(productPrices);
-    return price && { kind: "products", price };
-  }
-  const usdRange = outfitPriceRange(pieces.map((pieceView) => pieceView.brand?.priceRange ?? null));
-  return usdRange && { kind: "brand_ranges", usdRange };
+/** An Outfit's Pieces as `viewer` is shown them, every price as `priceText` writes it, and their total. */
+export function piecesAsShown(pieces: readonly StoredPiece[], viewer: PriceViewer): Pick<OutfitView, "total" | "pieces"> {
+  return {
+    total: outfitTotalText(pieces.flatMap(({ brand, product }) => product?.price ?? brand?.priceRange ?? []), viewer),
+    pieces: pieces.map(({ brand, product, ...shown }) => ({
+      ...shown,
+      brand: brand && { ...brand, priceRange: brand.priceRange && priceText(brand.priceRange, viewer) },
+      product: product && { ...product, price: priceText(product.price, viewer) },
+    })),
+  };
 }
 
-/** One of the signed-in user's own Consultations, or null for anyone else's or one that doesn't exist. */
+/**
+ * One of the signed-in user's own Consultations, or null for anyone else's or one that doesn't
+ * exist. Its prices are in the currency of the user's Country as it is now.
+ */
 export async function readConsultation(
   ctx: Pick<OperationContext, "auth" | "db" | "blob" | "clock" | "requestHeaders">,
   consultationId: string,
@@ -386,7 +398,7 @@ export async function readConsultation(
     outfitRows.length === 0
       ? []
       : await ctx.db
-          .select({ outfitId: piece.outfitId, ...pieceViewColumns })
+          .select({ outfitId: piece.outfitId, ...storedPieceColumns })
           .from(piece)
           .where(
             inArray(
@@ -394,21 +406,27 @@ export async function readConsultation(
               outfitRows.map((outfitRow) => outfitRow.id),
             ),
           );
+  // Prices are shown in the currency of the user's Country now, whichever it was in when they were found.
+  const viewer: PriceViewer = {
+    countryCode: user.countryCode,
+    rates: await readExchangeRates(ctx.db, [countryCurrency(user.countryCode), ...pieceRows.flatMap(({ currency }) => currency ?? [])]),
+  };
   const outfits = await Promise.all(
-    outfitRows.map(async ({ id, position, styleIconName, previewState, previewPathname }): Promise<OutfitView> => {
-      const pieces = pieceRows
-        .filter((pieceRow) => pieceRow.outfitId === id)
-        .toSorted(byCategoryOrder)
-        .map(pieceView);
-      return {
+    outfitRows.map(
+      async ({ id, position, styleIconName, previewState, previewPathname }): Promise<OutfitView> => ({
         id,
         position,
         styleIconName,
         preview: await previewView(ctx.blob, previewState, previewPathname, linkValidUntil),
-        total: outfitTotal(pieces),
-        pieces,
-      };
-    }),
+        ...piecesAsShown(
+          pieceRows
+            .filter((pieceRow) => pieceRow.outfitId === id)
+            .toSorted(byCategoryOrder)
+            .map(storedPiece),
+          viewer,
+        ),
+      }),
+    ),
   );
   return {
     id: row.id,

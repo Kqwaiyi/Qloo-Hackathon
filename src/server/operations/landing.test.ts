@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { PhotoType } from "@/config/consultations";
 import { qlooCache, usageRecord } from "@/server/db/schema";
+import { refreshExchangeRates } from "@/server/exchange-rates/rates";
 import { type ConsultationView, deleteConsultation, readConsultation, startConsultation } from "@/server/operations/consultations";
 import { type LandingSample, type LandingSamples, readLandingPage } from "@/server/operations/landing";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
@@ -114,11 +115,17 @@ describe("the landing page", () => {
       budgetTier: "medium",
       photoStyle: ["streetwear", "casual"],
       styleIcons: ["Dev Rowe", "Eli Frost", "Finn Ash"],
+      // Its Brands' price ranges as Qloo gave them, in US dollars, written as the United Kingdom writes them.
       outfit: {
         position: 1,
         styleIconName: "Dev Rowe",
-        total: { kind: "brand_ranges", usdRange: { min: 130, max: 410 } },
-        pieces: FULL_BODY.outfit.pieces,
+        total: "US$130–US$410",
+        pieces: [
+          FULL_BODY.outfit.pieces[0],
+          { ...FULL_BODY.outfit.pieces[1], brand: { name: "Bolt", priceRange: "US$20–US$120", visitUrl: "https://bolt.example/" } },
+          { ...FULL_BODY.outfit.pieces[2], brand: { name: "Jeanery", priceRange: "US$50–US$110", visitUrl: null } },
+          { ...FULL_BODY.outfit.pieces[3], brand: { name: "Stride", priceRange: "US$60–US$180", visitUrl: "https://stride.example/" } },
+        ],
       },
       photoUrl: "/landing/samples/full_body/photo.jpg",
       previewUrl: "/landing/samples/full_body/preview.webp",
@@ -131,7 +138,7 @@ describe("the landing page", () => {
     });
     expect(page.samples.body_only).toMatchObject({
       countryName: "Germany",
-      outfit: { styleIconName: "Cleo Hart", total: { kind: "brand_ranges", usdRange: { min: 15, max: 60 } } },
+      outfit: { styleIconName: "Cleo Hart", total: "US$15–US$60" },
       photoUrl: "/landing/samples/body_only/photo.png",
     });
   });
@@ -167,6 +174,8 @@ describe("the team exporting a Demo Account Consultation as a landing page sampl
     harness.ai.scenario = "pass";
     harness.qloo.respond = (request) =>
       qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
+    // The British market's searches hold its Brands' price ranges in pounds, at the stored rates.
+    await refreshExchangeRates(harness);
   });
 
   it("exports its Photo Style, its first ranked Style Icons, and, unless told otherwise, its first Outfit's Brands and Pieces", async () => {
@@ -295,7 +304,8 @@ describe("the team exporting a Demo Account Consultation as a landing page sampl
       ok: true,
       sample: {
         styleIcons: ["Ava Stone", "Bea Marsh", "Cleo Hart", "Dana Reed", "Esme Vale"],
-        outfit: { styleIconName: second.styleIconName, pieces: second.pieces },
+        // Its Pieces as stored, which the page shows as the card does.
+        outfit: { styleIconName: second.styleIconName, pieces: second.pieces.map(({ category, item, why }) => expect.objectContaining({ category, item, why })) },
       },
     });
     expect(second.styleIconName).not.toBe("Ava Stone");

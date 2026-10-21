@@ -4,6 +4,7 @@ import { FatalError, getStepMetadata, RetryableError } from "workflow";
 
 import { UnretryableAiError } from "@/server/ai/provider";
 import { getServices } from "@/server/app/services";
+import { NoExchangeRateError } from "@/server/outfit-assembly/products";
 import { ProductSearchRateLimitedError, UnretryableProductSearchError } from "@/server/product-search/provider";
 import { QlooError, QlooRateLimitedError } from "@/server/qloo/client";
 
@@ -39,7 +40,8 @@ function asWorkflowError(error: unknown): unknown {
   if (error instanceof QlooError && error.status >= 400 && error.status < 500) return new FatalError(error.message);
   // Nor will an AI call that failed for good, such as a request Gemini rejects.
   if (error instanceof UnretryableAiError) return new FatalError(error.message);
-  // Nor will the product search refusing the API key.
-  if (error instanceof UnretryableProductSearchError) return new FatalError(error.message);
+  // Nor will the product search refusing the API key, or a market's currency with no rate stored
+  // until the next daily sweep.
+  if (error instanceof UnretryableProductSearchError || error instanceof NoExchangeRateError) return new FatalError(error.message);
   return error;
 }

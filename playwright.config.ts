@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { SMOKE_CRON_SECRET } from "./e2e/cron-secret";
+
 const PORT = 3100;
 
 // Browser smoke tests against local development: a fresh in-memory database per run.
@@ -31,6 +33,8 @@ export default defineConfig({
       // verify call. Both need internet access.
       TURNSTILE_SITE_KEY: "1x00000000000000000000AA",
       TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA",
+      // So the tests can run the daily sweep, which stores the exchange rates.
+      CRON_SECRET: SMOKE_CRON_SECRET,
     },
   },
 });

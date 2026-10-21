@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CandidateProduct, ProductImage, ProductOffer } from "@/server/product-search/provider";
 
-import { chosenOffer, type PieceSearchRules, qualifyingCandidates, sumPrices } from "./products";
+import { chosenOffer, type PieceSearchRules, qualifyingCandidates } from "./products";
 
 // Which of a search's Products may be a Piece, and which of a Product's offers its Piece links to
 // (spec: "Candidates", "Choosing the offer"). Small hand-written Products, decisions out.
@@ -159,21 +159,6 @@ describe("the offer a Piece links to", () => {
     expect(chosenOffer([linked], RULES)?.url).toBe("https://shop.example/products/p-1?colour=navy");
   });
 });
-
-describe("a whole Outfit's Products' prices", () => {
-  it("add up in their currency", () => {
-    expect(sumPrices([price(45, "EUR"), price(59.9, "EUR"), price(120, "EUR")])).toEqual({ amount: 224.9, currency: "EUR" });
-  });
-
-  it("add up to nothing when they're in different currencies, until prices convert", () => {
-    expect(sumPrices([price(45, "EUR"), price(40, "GBP")])).toBeNull();
-    expect(sumPrices([])).toBeNull();
-  });
-});
-
-function price(amount: number, currency: string) {
-  return { amount, currency };
-}
 
 /** A Product of the matched Brand in the line, with a hero photo and one new, in-stock offer at 45 dollars, unless overridden. */
 function product(id: string, overrides: Partial<CandidateProduct> = {}): CandidateProduct {

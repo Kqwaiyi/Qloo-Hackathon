@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 
 import { textLink } from "@/components/ui";
-import { CATEGORY_LABELS, type Price, type PriceRangeUsd } from "@/config/consultations";
+import { CATEGORY_LABELS } from "@/config/consultations";
 import { COPY } from "@/config/copy";
-import type { OutfitCardContent, OutfitTotal, PieceView, ProductView } from "@/server/operations/consultations";
+import type { OutfitCardContent, PieceView, ProductView } from "@/server/operations/consultations";
 
 // The Outfit card, as the results page shows it and the landing page reuses it.
 
@@ -22,7 +22,7 @@ export function OutfitCard({ outfit, preview }: { outfit: OutfitCardContent; pre
           <h2 className="text-lg font-semibold">
             Outfit {outfit.position} · Inspired by {outfit.styleIconName}
           </h2>
-          {outfit.total && <p className="text-sm text-stone-600">Whole Outfit about {outfitTotalText(outfit.total)}</p>}
+          {outfit.total && <p className="text-sm text-stone-600">Whole Outfit about {outfit.total}</p>}
           {outfit.pieces.length > 0 && (
             <ul aria-label="Pieces" className="mt-3">
               {outfit.pieces.map((piece) => (
@@ -51,7 +51,8 @@ export function AiGeneratedBadge({ className = "top-2 left-2" }: { className?: s
  * A Piece's row. A Product Piece names its Product, by its title, and its Brand, with its dated price
  * and a "View at <shop domain>" link to its page. An older Piece names its Brand, with the Brand's
  * price range and a "Visit <Brand>" link when it has them. The Hairstyle names its Style Icon
- * instead, with no price or link: it isn't something to buy.
+ * instead, with no price or link: it isn't something to buy. Every price comes written for the
+ * viewer, in their Country's currency.
  */
 function PieceRow({ piece, styleIconName }: { piece: PieceView; styleIconName: string }) {
   const { brand, product } = piece;
@@ -72,7 +73,7 @@ function PieceRow({ piece, styleIconName }: { piece: PieceView; styleIconName: s
         brand &&
         (brand.priceRange || brand.visitUrl) && (
           <div className="col-start-2 text-sm @sm:col-start-auto @sm:text-right">
-            {brand.priceRange && <div className="font-medium">{usdRange(brand.priceRange)}</div>}
+            {brand.priceRange && <div className="font-medium">{brand.priceRange}</div>}
             {brand.visitUrl && <NewTabLink href={brand.visitUrl}>Visit {brand.name}</NewTabLink>}
           </div>
         )
@@ -98,31 +99,9 @@ export function builtOn(piece: PieceView, styleIconName: string): string {
   return piece.brand ? piece.brand.name : `Style Icon: ${styleIconName}`;
 }
 
-/** A price range in whole US dollars, such as "$20–$120". */
-export function usdRange({ min, max }: PriceRangeUsd): string {
-  const usd = (amount: number) => `$${Math.round(amount).toLocaleString("en-US")}`;
-  return min === max ? usd(min) : `${usd(min)}–${usd(max)}`;
-}
-
-/** What "Whole Outfit about" is followed by: a Product Outfit's price, or an older Outfit's range. */
-export function outfitTotalText(total: OutfitTotal): string {
-  return total.kind === "products" ? priceText(total.price) : usdRange(total.usdRange);
-}
-
-/** A Product's price and the day it was found, such as "€45 on 21 Oct". */
+/** A Product's price and the day it was found, such as "≈ Rp 809,370 on 21 Oct" or "€45 on 21 Oct". */
 export function productPriceText({ price, pricedOn }: ProductView): string {
-  return `${priceText(price)} on ${dayText(pricedOn)}`;
-}
-
-/**
- * A price in whole units of its own currency, such as "€45" or "£1,250": the fraction digits are
- * set, so it doesn't depend on the currency's defaults. A currency code Intl can't read is written
- * after the amount.
- */
-export function priceText({ amount, currency }: Price): string {
-  const whole = Math.round(amount);
-  if (!/^[A-Z]{3}$/.test(currency)) return `${whole.toLocaleString("en-US")} ${currency}`;
-  return new Intl.NumberFormat("en-US", { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(whole);
+  return `${price} on ${dayText(pricedOn)}`;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

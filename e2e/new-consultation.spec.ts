@@ -1,10 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-import { consentSheet, plainPhoto, signUpVerifiedUser } from "./support";
+import { consentSheet, plainPhoto, runDailySweep, signUpVerifiedUser } from "./support";
 
-test("a new Consultation asks for photo consent, then shows the Styling checklist, then its two Outfits together", async ({ page }) => {
+test("a new Consultation asks for photo consent, then shows the Styling checklist, then its two Outfits together", async ({ page, request }) => {
   // Its Style Icons come from live Qloo, and in development each page compiles on its first visit.
   test.setTimeout(120_000);
+  // The user is in the United Kingdom, whose searches need the pound's rate.
+  await runDailySweep(request);
   await signUpVerifiedUser(page);
 
   await expect(page.getByRole("radio", { name: /Full-Body Photo/ })).toBeChecked();

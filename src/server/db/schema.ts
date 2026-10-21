@@ -490,6 +490,21 @@ export const brandMatch = pgTable("brand_match", {
   lookedUpAt: timestamp("looked_up_at", { withTimezone: true }).notNull(),
 });
 
+// The exchange rates: each currency's rate to the US dollar, as the daily sweep last fetched it. A
+// day whose sources didn't give a currency's rate keeps the one before.
+
+export const exchangeRate = pgTable(
+  "exchange_rate",
+  {
+    // An ISO 4217 code, such as `EUR`.
+    currency: text("currency").primaryKey(),
+    // How many units of the currency a US dollar bought.
+    ratePerUsd: doublePrecision("rate_per_usd").notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [check("exchange_rate_positive", sql`${table.ratePerUsd} > 0`)],
+);
+
 // The Qloo limit state: what Qloo last reported of this month's calls, which the Qloo backstop reads.
 
 export const qlooLimitState = pgTable(

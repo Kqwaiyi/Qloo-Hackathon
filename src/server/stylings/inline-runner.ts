@@ -1,4 +1,5 @@
 import { UnretryableAiError } from "@/server/ai/provider";
+import { NoExchangeRateError } from "@/server/outfit-assembly/products";
 import { UnretryableProductSearchError } from "@/server/product-search/provider";
 
 import { type BuildOutfitsSteps, buildOutfits } from "./build-outfits";
@@ -74,7 +75,8 @@ export class InlineStylingRunner implements StylingRunner {
 
   /**
    * A step tried again up to `retries` times, except after the failures the Workflow never retries
-   * a step for: its Styling stopped, an AI call failed for good, or the product search refused the key.
+   * a step for: its Styling stopped, an AI call failed for good, the product search refused the key,
+   * or no rate is stored for the market's currency.
    */
   private async retried(retries: number, step: (steps: BuildOutfitsSteps) => Promise<void>): Promise<void> {
     for (let attempt = 1; ; attempt += 1) {
@@ -82,7 +84,13 @@ export class InlineStylingRunner implements StylingRunner {
       try {
         return await step(stylingSteps(this.ctx, { lastTry }));
       } catch (error) {
-        if (lastTry || error instanceof StylingNotRunningError || error instanceof UnretryableAiError || error instanceof UnretryableProductSearchError) {
+        if (
+          lastTry ||
+          error instanceof StylingNotRunningError ||
+          error instanceof UnretryableAiError ||
+          error instanceof UnretryableProductSearchError ||
+          error instanceof NoExchangeRateError
+        ) {
           throw error;
         }
       }

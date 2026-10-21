@@ -8,6 +8,8 @@ import type { Database } from "@/server/db/database";
 import { openPgliteDatabase } from "@/server/db/pglite";
 import { CapturingEmailTransport } from "@/server/email/capturing";
 import { createEmailSender, type EmailSender } from "@/server/email/send-email";
+import { FakeExchangeRateTransport } from "@/server/exchange-rates/fake";
+import type { ExchangeRateTransport } from "@/server/exchange-rates/rates";
 import { type CookieToSet, forwardSetCookies, type ResponseCookies } from "@/server/http/cookies";
 import type { PhotoConsentTicks } from "@/server/operations/consultations";
 import type { OperationContext } from "@/server/operations/context";
@@ -130,6 +132,13 @@ export interface TestHarness {
   productPhotos: FakeProductPhotoTransport;
   /** Cloudflare Turnstile, for the Bot Check: it passes every token until a test sets `answer`, and records every request. */
   turnstile: FakeTurnstileTransport;
+  /**
+   * The exchange-rate sources the daily sweep fetches from: Frankfurter gives a few currencies' rates
+   * until a test sets `respond`, and every request is recorded.
+   */
+  exchangeRates: FakeExchangeRateTransport;
+  /** `exchangeRates`, as the daily sweep's context sends its requests through it. */
+  exchangeRateTransport: ExchangeRateTransport;
   /** Runs started Stylings when the test calls `runPending()`, through the real Qloo client and cache. */
   stylings: InlineStylingRunner;
   /** The send-email function every email goes through, Better Auth's included. */
@@ -151,12 +160,12 @@ export interface TestHarness {
 /**
  * A fresh database with the real migrations, Better Auth running for real against it, a clock the
  * test controls (starting at 2026-10-16 12:00 UTC), the fake AI adapter, an in-memory Blob store,
- * a fake Qloo, a fake Channel3, Stylings run inline and email captured. Create one per test file.
- * Better Auth's rate limits are off, as in local development, unless `rateLimit` turns them on. The
- * Bot Check is on, through a fake Cloudflare, unless `botCheck` is false, as with no Turnstile
- * secret configured; it may also set the hostnames a token must come from, as on Production. The
- * team's address, whose `+demo` plus-address is the Demo Account's, is team@example.test unless
- * `teamEmail` says otherwise.
+ * a fake Qloo, a fake Channel3, fake exchange-rate sources, Stylings run inline and email captured.
+ * Create one per test file. Better Auth's rate limits are off, as in local development, unless
+ * `rateLimit` turns them on. The Bot Check is on, through a fake Cloudflare, unless `botCheck` is
+ * false, as with no Turnstile secret configured; it may also set the hostnames a token must come
+ * from, as on Production. The team's address, whose `+demo` plus-address is the Demo Account's, is
+ * team@example.test unless `teamEmail` says otherwise.
  */
 export async function createTestHarness({
   rateLimit = false,
@@ -186,6 +195,7 @@ export async function createTestHarness({
   const emails = new CapturingEmailTransport();
   const emailSender = createEmailSender({ db, clock, transport: emails });
   const turnstile = new FakeTurnstileTransport();
+  const exchangeRates = new FakeExchangeRateTransport();
   const auth = createAuth({
     db,
     clock,
@@ -209,6 +219,8 @@ export async function createTestHarness({
     channel3,
     productPhotos,
     turnstile,
+    exchangeRates,
+    exchangeRateTransport: exchangeRates.send,
     stylings,
     emailSender,
     emails,

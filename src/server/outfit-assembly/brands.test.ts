@@ -12,7 +12,6 @@ import {
   fullestPool,
   isThinPool,
   needsBrands,
-  outfitPriceRange,
   pickBrands,
   type PieceSearches,
   planOutfitBrands,
@@ -795,19 +794,6 @@ describe("price ranges", () => {
     expect(brandPriceRange(20, null)).toBeNull();
     expect(brandPriceRange(null, 120)).toBeNull();
     expect(brandPriceRange(null, null)).toBeNull();
-  });
-
-  it("sum an Outfit's Brand Pieces' minimums and maximums", () => {
-    expect(outfitPriceRange([{ min: 20, max: 120 }, { min: 60, max: 180 }, { min: 10, max: 40 }])).toEqual({ min: 90, max: 340 });
-  });
-
-  it("leave a Piece with no price data out of the Outfit's sum", () => {
-    expect(outfitPriceRange([{ min: 20, max: 120 }, null, { min: 10, max: 40 }])).toEqual({ min: 30, max: 160 });
-  });
-
-  it("give an Outfit none when none of its Pieces has price data", () => {
-    expect(outfitPriceRange([null, null])).toBeNull();
-    expect(outfitPriceRange([])).toBeNull();
   });
 });
 

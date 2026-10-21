@@ -1,4 +1,4 @@
-import { builtOn, outfitTotalText, usdRange } from "@/components/outfit-card";
+import { builtOn } from "@/components/outfit-card";
 import { BUDGET_TIER_LABELS, BUDGET_TIERS, CATEGORY_LABELS } from "@/config/consultations";
 import { OUTFITS_PER_STYLING } from "@/config/stylings";
 import type { LandingSampleView } from "@/server/operations/landing";
@@ -33,7 +33,7 @@ export function ReadyToShop({ sample }: { sample: LandingSampleView }) {
           <h3 data-reveal="rise" className="text-title">
             Outfit {outfit.position} · Inspired by {outfit.styleIconName}
           </h3>
-          {outfit.total && <p className="mt-3 text-body text-mute">Whole Outfit about {outfitTotalText(outfit.total)}</p>}
+          {outfit.total && <p className="mt-3 text-body text-mute">Whole Outfit about {outfit.total}</p>}
           <ul data-reveal="stagger" aria-label="Pieces" className="mt-8 border-t border-ink/12">
             {outfit.pieces.map((piece) => (
               <li key={piece.category} className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 border-b border-ink/12 py-4 sm:grid-cols-[6rem_1fr_auto]">
@@ -44,7 +44,7 @@ export function ReadyToShop({ sample }: { sample: LandingSampleView }) {
                 </div>
                 {piece.brand && (piece.brand.priceRange || piece.brand.visitUrl) && (
                   <div className="col-start-2 text-body sm:col-start-auto sm:text-right">
-                    {piece.brand.priceRange && <p>{usdRange(piece.brand.priceRange)}</p>}
+                    {piece.brand.priceRange && <p>{piece.brand.priceRange}</p>}
                     {piece.brand.visitUrl && (
                       <a href={piece.brand.visitUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-4 hover:text-mute">
                         Visit {piece.brand.name}

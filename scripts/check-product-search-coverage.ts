@@ -238,7 +238,8 @@ async function lookUp(brand: QlooBrand): Promise<LookupOutcome> {
 
 /**
  * One search for a pick, in its market, within its Brand's price range when the market prices in
- * US dollars, as Pieces will be searched until prices are converted.
+ * US dollars. The check reads no exchange rate, so a search in any other market goes without the
+ * range that a Styling would convert into its currency.
  */
 async function searchFor(pick: BrandPick, brandId: string): Promise<SearchResult> {
   const { brand, line, category, market } = pick;

@@ -342,20 +342,6 @@ export function brandPriceRange(min: number | null, max: number | null): PriceRa
   return min === null || max === null ? null : { min, max };
 }
 
-/**
- * The whole Outfit's price range: the sums of its Brand Pieces' minimums and maximums, leaving out
- * any Piece with no price data. Null when none has any, as for a Hairstyle-only Outfit.
- */
-export function outfitPriceRange(pieceRanges: readonly (PriceRangeUsd | null)[]): PriceRangeUsd | null {
-  const priced = pieceRanges.filter((range) => range !== null);
-  if (priced.length === 0) return null;
-  return { min: sum(priced.map((range) => range.min)), max: sum(priced.map((range) => range.max)) };
-}
-
-function sum(values: readonly number[]): number {
-  return values.reduce((total, value) => total + value, 0);
-}
-
 /** Where "Visit <Brand>" goes: the Brand's official site when it's an https URL. Otherwise the row has no link. */
 export function visitUrl(officialSite: string | null): string | null {
   if (!officialSite || !URL.canParse(officialSite)) return null;

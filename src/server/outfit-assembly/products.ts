@@ -1,9 +1,9 @@
 import type { Line } from "@/config/accounts";
-import type { Price } from "@/config/consultations";
 import { CANDIDATES_PER_PIECE, PRODUCT_SEARCH_MARKET_CURRENCIES, type ProductSearchMarket } from "@/config/product-search";
 import type { CandidateProduct, PriceRange, ProductImage, ProductOffer } from "@/server/product-search/provider";
 
 import { brandPriceRange, type PickedBrand } from "./brands";
+import { convertRange, type ExchangeRates } from "./prices";
 
 // Which of a search's Products may be a Piece, and which offer its Piece links to (spec:
 // "Candidates", "Choosing the offer", ADR-0008). Pure: the caller searches and saves.
@@ -85,27 +85,31 @@ export function chosenOffer(offers: readonly ProductOffer[], { priceFilter, offi
   return buyable.find((offer) => brandHost !== null && withoutWww(offer.shopDomain) === brandHost) ?? buyable[0] ?? null;
 }
 
+/** No rate is stored for a market's currency, so a search there can't be held to its Brand's price range. */
+export class NoExchangeRateError extends Error {
+  constructor(readonly currency: string) {
+    super(`No exchange rate is stored for ${currency}, so a search can't be held to its Brand's price range. The daily sweep stores them.`);
+    this.name = "NoExchangeRateError";
+  }
+}
+
 /**
- * A Piece's search's price filter: its Brand's Qloo price range, in US dollars, or null for none.
- * Until prices are converted, only a market priced in US dollars gets one; any other gets none, and
- * so does a Brand without a range.
+ * A Piece's search's price filter: its Brand's Qloo price range, converted from US dollars into the
+ * market's currency with the stored rates, out to the whole units around it; or null for a Brand
+ * without a range. Throws a NoExchangeRateError when no rate is stored for the market's currency:
+ * a search is never sent beyond its Brand's range.
  */
 export function searchPriceFilter(
   { priceRangeUsdMin, priceRangeUsdMax }: Pick<PickedBrand, "priceRangeUsdMin" | "priceRangeUsdMax">,
   market: ProductSearchMarket,
+  rates: ExchangeRates,
 ): PriceFilter | null {
   const range = brandPriceRange(priceRangeUsdMin, priceRangeUsdMax);
-  return range && PRODUCT_SEARCH_MARKET_CURRENCIES[market] === "USD" ? { ...range, currency: "USD" } : null;
-}
-
-/**
- * Products' prices added up, when they're all in one currency, as one Styling's offers are in its
- * market's. Null for none, or for prices in different currencies, until prices convert.
- */
-export function sumPrices(prices: readonly Price[]): Price | null {
-  const [first] = prices;
-  if (!first || prices.some(({ currency }) => currency !== first.currency)) return null;
-  return { amount: prices.reduce((total, { amount }) => total + amount, 0), currency: first.currency };
+  if (!range) return null;
+  const currency = PRODUCT_SEARCH_MARKET_CURRENCIES[market];
+  const converted = convertRange(range, "USD", currency, rates);
+  if (!converted) throw new NoExchangeRateError(currency);
+  return { min: Math.floor(converted.min), max: Math.ceil(converted.max), currency };
 }
 
 /** The first hero or flat-lay photo on the web: its background-removed version when there is one. */

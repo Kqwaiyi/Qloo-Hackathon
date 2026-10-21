@@ -8,7 +8,7 @@ import { judgeAge, parseIsoBirthDate, storeBirthYearAndMonth } from "@/server/ac
 import { type AccountDeletionContext, deleteAccountOf } from "@/server/accounts/deletion";
 import { checkProfile, usernameProblem } from "@/server/accounts/profile";
 import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
-import { pieceView, pieceViewColumns } from "@/server/operations/consultations";
+import { storedPiece, storedPieceColumns } from "@/server/operations/consultations";
 import type { OperationContext, Result } from "@/server/operations/context";
 import type { LandingSample } from "@/server/operations/landing";
 
@@ -160,7 +160,7 @@ export async function exportLandingSample(
     .orderBy(asc(styleIcon.position))
     // Down to the shown Outfit's Style Icon, when it ranks below the first few.
     .limit(Math.max(LANDING_STYLE_ICONS, shown.styleIconRank));
-  const pieces = await ctx.db.select(pieceViewColumns).from(piece).where(eq(piece.outfitId, shown.id));
+  const pieces = await ctx.db.select(storedPieceColumns).from(piece).where(eq(piece.outfitId, shown.id));
   const folder = `${LANDING_SAMPLES_FOLDER}/${row.photoType}`;
   // The photo keeps the name it was stored under, for its format.
   const photo = { path: `${folder}/${row.photoPathname.split("/").at(-1)!}`, bytes: (await ctx.blob.get(row.photoPathname)).bytes };
@@ -175,7 +175,7 @@ export async function exportLandingSample(
       budgetTier: row.budgetTier,
       photoStyle: row.photoStyle,
       styleIcons: styleIcons.map(({ name }) => name),
-      outfit: { styleIconName: shown.styleIconName, pieces: pieces.toSorted(byCategoryOrder).map(pieceView) },
+      outfit: { styleIconName: shown.styleIconName, pieces: pieces.toSorted(byCategoryOrder).map(storedPiece) },
       images: { photoPath: photo.path, previewPath: preview.path },
     },
     images: [photo, preview],

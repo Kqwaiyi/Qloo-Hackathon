@@ -10,7 +10,7 @@ import {
   type PieceCategory,
   type ProductCategory,
 } from "@/config/consultations";
-import type { ProductSearchMarket } from "@/config/product-search";
+import { PRODUCT_SEARCH_MARKET_CURRENCIES, type ProductSearchMarket } from "@/config/product-search";
 import {
   addsToCurrentOutfits,
   BRAND_FETCHES_UP_FRONT,
@@ -38,6 +38,7 @@ import type { Clock } from "@/server/clock";
 import { previewPathnameFor } from "@/server/consultations/blob-pathnames";
 import type { Database, Transaction } from "@/server/db/database";
 import { consultation, outfit, piece, pieceCandidates, styleIcon, styling } from "@/server/db/schema";
+import { readExchangeRates } from "@/server/exchange-rates/rates";
 import {
   type BrandPicks,
   brandQueries,
@@ -259,9 +260,10 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
     },
 
     // The search is in the Styling's market, the Outfit's line and the Piece's Category, for the
-    // Brand alone, new and in stock. It's never loosened: one that finds nothing, or still errors
-    // on the step's last try, passes the Brand over for the Category instead, or for a One-Piece,
-    // leaves its Outfit to separates.
+    // Brand alone, new and in stock, within the Brand's price range in the market's currency at the
+    // stored rates. It's never loosened: one that finds nothing, or still errors on the step's last
+    // try, passes the Brand over for the Category instead, or for a One-Piece, leaves its Outfit to
+    // separates. With no rate stored for the market's currency, none is sent: the Styling breaks.
     async searchProducts(stylingId, { styleIconId, category, brand }) {
       const running = await readRunningStyling(ctx.db, stylingId);
       const [icon] = await ctx.db
@@ -272,7 +274,7 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
       const brandId = (await readBrandMatches(ctx.db, ctx.clock.now(), [brand.entityId])).get(brand.entityId);
       if (!brandId) throw new Error(`The product search doesn't know Brand ${brand.entityId}, or it hasn't been looked up.`);
       const market = stylingMarket(running);
-      const priceFilter = searchPriceFilter(brand, market);
+      const priceFilter = searchPriceFilter(brand, market, await readExchangeRates(ctx.db, [PRODUCT_SEARCH_MARKET_CURRENCIES[market]]));
       let candidates: Candidate[] | null;
       try {
         const products = await ctx.productSearch.searchProducts({ brandId, category, line: icon.line, market, priceRange: priceFilter });

@@ -8,7 +8,10 @@ import { type BudgetTier, byCategoryOrder, type PhotoType } from "@/config/consu
 import { PRODUCT_PHOTO_MAX_BYTES } from "@/config/product-search";
 import type { StylingKind } from "@/config/stylings";
 import type { AiProvider } from "@/server/ai/provider";
-import { brandMatch, consultation, outfit, piece, pieceCandidates, qlooCache, styleIcon, styling, usageRecord, user } from "@/server/db/schema";
+import { brandMatch, consultation, exchangeRate, outfit, piece, pieceCandidates, qlooCache, styleIcon, styling, usageRecord, user } from "@/server/db/schema";
+import { frankfurterRates } from "@/server/exchange-rates/fake";
+import { refreshExchangeRates } from "@/server/exchange-rates/rates";
+import { updateProfile } from "@/server/operations/account";
 import { listConsultations, readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
 import {
@@ -95,6 +98,8 @@ beforeEach(async () => {
   harness.stylings.searchRetries = 0;
   await harness.db.delete(qlooCache);
   await harness.db.delete(brandMatch);
+  // No exchange rate is stored until a test stores some.
+  await harness.db.delete(exchangeRate);
   // The app-wide caps count every user's Outfits, so each test starts with none made.
   await harness.db.delete(usageRecord);
 });
@@ -394,6 +399,7 @@ describe("each Outfit's Pieces", () => {
 
   it("are tailored from the photo itself and the Outfit, with each Brand Piece's Brand and candidate Products by their words alone, the Top Brand's One-Pieces beside the Top's, never the Country or the Budget Tier", async () => {
     harness.qloo.respond = qlooAnswering({ male: [MEN[0]!] });
+    await storeExchangeRates({ EUR: 0.89166 });
     const browser = await signedInUser({ stylePreference: "menswear", countryCode: "FR", birthDate: { day: "2", month: "2", year: "1992" } });
 
     const consultationId = await start(browser, "full_body");
@@ -619,6 +625,7 @@ describe("the Brand calls", () => {
     harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] }, (_, query) =>
       query.get("filter.tags")!.includes("key_market") ? BRANDS.filter((b) => ["Stride", "Bolt"].includes(b.name)) : BRANDS,
     );
+    await storeExchangeRates({ GBP: 0.74925 });
     const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "GB", birthDate: { day: "2", month: "2", year: "2004" } });
 
     const consultationId = await start(browser, "body_only");
@@ -643,6 +650,7 @@ describe("the Brand calls", () => {
       return query.get("filter.popularity.min") === "0.98" ? ["Stride", "Bolt", "Sole", "Dune", "Jeanery"] : ["Sole", "Dune"];
     };
     harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] }, (_, query) => BRANDS.filter((b) => found(query).includes(b.name)));
+    await storeExchangeRates({ GBP: 0.74925 });
     const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "GB", birthDate: { day: "2", month: "2", year: "1992" } });
 
     const consultationId = await start(browser, "body_only");
@@ -879,28 +887,28 @@ describe("a body photo's Products", () => {
         styleIconName: "Ava Stone",
         preview: { state: "ready", url: expect.any(String) },
         // 45, 50 and 60 dollars.
-        total: { kind: "products", price: { amount: 155, currency: "USD" } },
+        total: "$155",
         pieces: [
           {
             category: "top",
             item: "Product c3-bolt-top-1",
             why: expect.stringContaining("Ava Stone"),
             brand: { name: "Bolt", priceRange: null, visitUrl: null },
-            product: { price: { amount: 45, currency: "USD" }, pricedOn: "2026-10-21", url: "https://shop.example/products/c3-bolt-top-1", shopDomain: "shop.example" },
+            product: { price: "$45", pricedOn: "2026-10-21", url: "https://shop.example/products/c3-bolt-top-1", shopDomain: "shop.example" },
           },
           {
             category: "bottom",
             item: "Product c3-jeanery-bottom-1",
             why: expect.stringContaining("Ava Stone"),
             brand: { name: "Jeanery", priceRange: null, visitUrl: null },
-            product: { price: { amount: 50, currency: "USD" }, pricedOn: "2026-10-21", url: "https://shop.example/products/c3-jeanery-bottom-1", shopDomain: "shop.example" },
+            product: { price: "$50", pricedOn: "2026-10-21", url: "https://shop.example/products/c3-jeanery-bottom-1", shopDomain: "shop.example" },
           },
           {
             category: "shoes",
             item: "Product c3-stride-shoes-1",
             why: expect.stringContaining("Ava Stone"),
             brand: { name: "Stride", priceRange: null, visitUrl: null },
-            product: { price: { amount: 60, currency: "USD" }, pricedOn: "2026-10-21", url: "https://shop.example/products/c3-stride-shoes-1", shopDomain: "shop.example" },
+            product: { price: "$60", pricedOn: "2026-10-21", url: "https://shop.example/products/c3-stride-shoes-1", shopDomain: "shop.example" },
           },
         ],
       },
@@ -947,24 +955,59 @@ describe("a body photo's Products", () => {
     }
   });
 
-  it("are searched for with no price filter in a market priced in another currency, until prices convert, keeping that market and their offers' currency", async () => {
+  it("are searched for in a market priced in another currency within the Brand's price range converted into it with the day's rates, in whole units around it, keeping that market and their offers' currency", async () => {
     harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    await storeExchangeRates({ GBP: 0.74925, EUR: 0.89166 });
     const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "GB" });
 
     const consultationId = await start(browser, "body_only");
     await harness.stylings.runPending();
 
-    expect(productSearchesSent().map(({ market, priceRange }) => [market, priceRange])).toEqual([
-      ["GB", null],
-      ["GB", null],
-      ["GB", null],
-      ["GB", null],
+    // Bolt's 20–120 dollars are 14.99–89.91 pounds, Jeanery's 50–110 are 37.46–82.42, and Stride's 60–180 are 44.96–134.87.
+    expect(productSearchesSent().map(({ brandId, category, market, priceRange }) => [brandId, category, market, priceRange])).toEqual([
+      ["c3-bolt", "one_piece", "GB", { min: 14, max: 90 }],
+      ["c3-bolt", "top", "GB", { min: 14, max: 90 }],
+      ["c3-jeanery", "bottom", "GB", { min: 37, max: 83 }],
+      ["c3-stride", "shoes", "GB", { min: 44, max: 135 }],
     ]);
+    // The fake Channel3 prices each Product at 45 within the filter.
     expect((await productPiecesOf(consultationId)).map(({ market, price, currency }) => [market, price, currency])).toEqual([
       ["GB", 45, "GBP"],
       ["GB", 45, "GBP"],
       ["GB", 45, "GBP"],
     ]);
+  });
+
+  it("are searched for in the euro-wide market within the Brand's price range in euros", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    await storeExchangeRates({ EUR: 0.89166 });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "LU" });
+
+    await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    // Bolt's 20–120 dollars are 17.83–106.9992 euros.
+    expect(productSearchesSent().find(({ brandId, category }) => brandId === "c3-bolt" && category === "top")).toMatchObject({
+      market: "EU",
+      priceRange: { min: 17, max: 107 },
+    });
+  });
+
+  it("break the Styling, sending no search, when no rate is stored for the market's currency, rather than search beyond the Brand's price range", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    await storeExchangeRates({ EUR: 0.89166 });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "GB" });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      state: "no_outfits",
+      failedStyling: { kind: "first", reason: "something_broke" },
+    });
+    expect(productSearchesSent()).toEqual([]);
+    expect(JSON.stringify(errors.mock.calls)).toContain("GBP");
   });
 
   it("link to the Brand's own store when it sells them, by Qloo's official site, and otherwise to their first new, in-stock offer", async () => {
@@ -1257,6 +1300,7 @@ describe("a body photo's Products", () => {
     // A fourth footwear Brand, so the later Outfits' Shoes needn't repeat.
     const tread = qlooBrand("b-tread", "Tread", { categories: ["footwear"], affinity: 0.75, price: [35, 75] });
     harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN }, () => [...BRANDS, tread]);
+    await storeExchangeRates({ EUR: 0.89166 });
     const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
     const userId = (await readSignedInUser(harness.context(browser)))!.id;
     const consultationId = await start(browser, "body_only");
@@ -1399,19 +1443,14 @@ describe("a body photo's One-Pieces", () => {
       expect.objectContaining({
         styleIconName: "Ava Stone",
         // 45 and 60 dollars.
-        total: { kind: "products", price: { amount: 105, currency: "USD" } },
+        total: "$105",
         pieces: [
           {
             category: "one_piece",
             item: "Product c3-bolt-one_piece-1",
             why: expect.stringContaining("Ava Stone"),
             brand: { name: "Bolt", priceRange: null, visitUrl: null },
-            product: {
-              price: { amount: 45, currency: "USD" },
-              pricedOn: "2026-10-21",
-              url: "https://shop.example/products/c3-bolt-one_piece-1",
-              shopDomain: "shop.example",
-            },
+            product: { price: "$45", pricedOn: "2026-10-21", url: "https://shop.example/products/c3-bolt-one_piece-1", shopDomain: "shop.example" },
           },
           expect.objectContaining({ category: "shoes", item: "Product c3-stride-shoes-1" }),
         ],
@@ -1520,14 +1559,14 @@ describe("a Consultation made before Products", () => {
         styleIconName: "Ava Stone",
         preview: { state: "ready", url: expect.any(String) },
         // Stride 60–180, Bolt 20–120 and Jeanery 50–110.
-        total: { kind: "brand_ranges", usdRange: { min: 130, max: 410 } },
+        total: "$130–$410",
         pieces: [
           { category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone"), brand: null, product: null },
           {
             category: "top",
             item: "Navy relaxed cotton overshirt",
             why: expect.any(String),
-            brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" },
+            brand: { name: "Bolt", priceRange: "$20–$120", visitUrl: "https://bolt.example/" },
             product: null,
           },
           // Jeanery has no official site, so no Visit link.
@@ -1535,14 +1574,14 @@ describe("a Consultation made before Products", () => {
             category: "bottom",
             item: "Navy relaxed cotton overshirt",
             why: expect.any(String),
-            brand: { name: "Jeanery", priceRange: { min: 50, max: 110 }, visitUrl: null },
+            brand: { name: "Jeanery", priceRange: "$50–$110", visitUrl: null },
             product: null,
           },
           {
             category: "shoes",
             item: "Navy relaxed cotton overshirt",
             why: expect.any(String),
-            brand: { name: "Stride", priceRange: { min: 60, max: 180 }, visitUrl: "https://stride.example/" },
+            brand: { name: "Stride", priceRange: "$60–$180", visitUrl: "https://stride.example/" },
             product: null,
           },
         ],
@@ -1551,13 +1590,13 @@ describe("a Consultation made before Products", () => {
         position: 2,
         styleIconName: "Bea Marsh",
         // Sole 40–90 and Bolt 20–120; Dune has no price data.
-        total: { kind: "brand_ranges", usdRange: { min: 60, max: 210 } },
+        total: "$60–$210",
         pieces: [
           expect.objectContaining({ category: "hairstyle", brand: null, product: null }),
           expect.objectContaining({ category: "top", brand: { name: "Dune", priceRange: null, visitUrl: "https://dune.example/" }, product: null }),
-          expect.objectContaining({ category: "bottom", brand: { name: "Bolt", priceRange: { min: 20, max: 120 }, visitUrl: "https://bolt.example/" }, product: null }),
+          expect.objectContaining({ category: "bottom", brand: { name: "Bolt", priceRange: "$20–$120", visitUrl: "https://bolt.example/" }, product: null }),
           // Sole's official site is http, so no Visit link.
-          expect.objectContaining({ category: "shoes", brand: { name: "Sole", priceRange: { min: 40, max: 90 }, visitUrl: null }, product: null }),
+          expect.objectContaining({ category: "shoes", brand: { name: "Sole", priceRange: "$40–$90", visitUrl: null }, product: null }),
         ],
       }),
     ]);
@@ -1607,12 +1646,102 @@ describe("a Consultation made before Products", () => {
 
     const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
     const made = outfits.filter((o) => !olderIds.includes(o.id));
-    expect(made.map((o) => [o.total?.kind, o.pieces.map((p) => p.product !== null)])).toEqual([
-      ["products", [true, true, true]],
-      ["products", [true, true, true]],
+    expect(made.map((o) => o.pieces.map((p) => p.product !== null))).toEqual([
+      [true, true, true],
+      [true, true, true],
     ]);
     // Any older Outfit kept beside them is as it was.
     for (const older of outfits.filter((o) => olderIds.includes(o.id))) expect(older.pieces.map((p) => p.product)).toEqual([null, null, null]);
+  });
+});
+
+describe("the prices a user sees", () => {
+  it('are each Product\'s and the Outfit\'s total converted into the currency of the user\'s Country, marked "≈", each Product still dated', async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    await storeExchangeRates({ IDR: 17986, GBP: 0.74925 });
+    // Indonesia searches the US market, whose Products are priced in dollars.
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "ID" });
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    const [shown] = (await readConsultation(harness.context(browser), consultationId))!.outfits;
+
+    // 45, 50 and 60 dollars at 17,986 rupiah to the dollar.
+    expect(shown).toMatchObject({
+      total: "≈ Rp 2,787,830",
+      pieces: [
+        { category: "top", product: { price: "≈ Rp 809,370", pricedOn: "2026-10-16" } },
+        { category: "bottom", product: { price: "≈ Rp 899,300", pricedOn: "2026-10-16" } },
+        { category: "shoes", product: { price: "≈ Rp 1,079,160", pricedOn: "2026-10-16" } },
+      ],
+    });
+  });
+
+  it("are shown as their offers give them, unmarked, when they're in the currency of the user's Country", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits[0]).toMatchObject({
+      total: "$155",
+      pieces: [{ product: { price: "$45" } }, { product: { price: "$50" } }, { product: { price: "$60" } }],
+    });
+  });
+
+  it("follow a change of Country into the new Country's currency, the Products themselves staying as they were found", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    await storeExchangeRates({ IDR: 17986, GBP: 0.74925 });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "ID" });
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+    const found = await productPiecesOf(consultationId);
+    const { username, stylePreference } = (await readSignedInUser(harness.context(browser)))!;
+
+    expect(await updateProfile(harness.context(browser), { username, stylePreference, countryCode: "GB" })).toEqual({ ok: true });
+
+    // 45, 50 and 60 dollars at 0.74925 pounds to the dollar.
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits[0]).toMatchObject({
+      total: "≈ £116",
+      pieces: [{ product: { price: "≈ £34" } }, { product: { price: "≈ £37" } }, { product: { price: "≈ £45" } }],
+    });
+    expect(await productPiecesOf(consultationId)).toEqual(found);
+    expect(found.map(({ market, price, currency }) => [market, price, currency])).toEqual([
+      ["US", 45, "USD"],
+      ["US", 50, "USD"],
+      ["US", 60, "USD"],
+    ]);
+  });
+
+  it("stay in their offers' own currency, unmarked, when no rate is stored for the currency of the user's Country", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "ID" });
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits[0]).toMatchObject({
+      total: "US$155",
+      pieces: [{ product: { price: "US$45" } }, { product: { price: "US$50" } }, { product: { price: "US$60" } }],
+    });
+  });
+
+  it("include an older Outfit's Brand price ranges, converted from US dollars the same way, its total a range", async () => {
+    await storeExchangeRates({ GBP: 0.74925 });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "GB" });
+    const consultationId = await start(browser, "full_body");
+    await harness.stylings.runPending();
+    await asMadeBeforeProducts(consultationId);
+
+    // Bolt 20–120, Jeanery 50–110 and Stride 60–180 dollars, which add up to 130–410.
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits[0]).toMatchObject({
+      total: "≈ £97–£307",
+      pieces: [
+        { category: "hairstyle", brand: null },
+        { category: "top", brand: { name: "Bolt", priceRange: "≈ £15–£90" }, product: null },
+        { category: "bottom", brand: { name: "Jeanery", priceRange: "≈ £37–£82" }, product: null },
+        { category: "shoes", brand: { name: "Stride", priceRange: "≈ £45–£135" }, product: null },
+      ],
+    });
   });
 });
 
@@ -3503,6 +3632,12 @@ async function brandPiecesOf(consultationId: string) {
       .toSorted(byCategoryOrder)
       .map(({ position: _, ...brandPiece }) => brandPiece),
   );
+}
+
+/** Stores these rates to the US dollar, as the daily sweep does when Frankfurter gives them. */
+async function storeExchangeRates(rates: Record<string, number>): Promise<void> {
+  harness.exchangeRates.respond = () => frankfurterRates(rates);
+  expect(await refreshExchangeRates(harness)).toBe("frankfurter");
 }
 
 /** The stored Product Pieces of the Consultation's Outfits, in Outfit and Category order. */

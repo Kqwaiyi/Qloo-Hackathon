@@ -1,7 +1,7 @@
 import type { StylePreference } from "@/config/accounts";
 import type { AgeGroup, BudgetTier, PhotoStyleWords, PhotoType } from "@/config/consultations";
 import { findCountry } from "@/config/countries";
-import { type OutfitCardContent, outfitTotal, type PieceView } from "@/server/operations/consultations";
+import { type OutfitCardContent, piecesAsShown, type StoredPiece } from "@/server/operations/consultations";
 import type { OperationContext } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 
@@ -23,8 +23,11 @@ export interface LandingSample {
   photoStyle: PhotoStyleWords;
   /** The first Style Icons Qloo ranked, best first: by name, never with a picture. */
   styleIcons: string[];
-  /** The Outfit it shows (its first, unless the team picked another), whose Style Icon is one of `styleIcons`. */
-  outfit: { styleIconName: string; pieces: PieceView[] };
+  /**
+   * The Outfit it shows (its first, unless the team picked another), whose Style Icon is one of
+   * `styleIcons`, its prices as they were found.
+   */
+  outfit: { styleIconName: string; pieces: StoredPiece[] };
   /**
    * The page's own copies of its photo and that Outfit's Preview, which ship with it in `public/`,
    * as paths from the site's root (`/landing/samples/full_body/photo.jpg`). Null for a placeholder
@@ -44,7 +47,10 @@ export interface LandingPageView {
 
 export interface LandingSampleView extends Omit<LandingSample, "countryCode" | "outfit" | "images"> {
   countryName: string;
-  /** The Outfit it shows, as its card shows it. */
+  /**
+   * The Outfit it shows, as its card shows it: its prices as they were found, written in English for
+   * the sample's Country. The page reads no exchange rate, so none is converted.
+   */
   outfit: OutfitCardContent;
   /** The photo's path, or null when there's none to show. */
   photoUrl: string | null;
@@ -57,12 +63,7 @@ export async function readLandingPage(ctx: Pick<OperationContext, "auth" | "requ
   const sampleView = ({ countryCode, outfit, images, ...text }: LandingSample): LandingSampleView => ({
     ...text,
     countryName: findCountry(countryCode)?.name ?? countryCode,
-    outfit: {
-      position: 1,
-      styleIconName: outfit.styleIconName,
-      total: outfitTotal(outfit.pieces),
-      pieces: outfit.pieces,
-    },
+    outfit: { position: 1, styleIconName: outfit.styleIconName, ...piecesAsShown(outfit.pieces, { countryCode, rates: new Map() }) },
     photoUrl: images?.photoPath ?? null,
     previewUrl: images?.previewPath ?? null,
   });
