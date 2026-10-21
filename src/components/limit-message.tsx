@@ -34,6 +34,7 @@ export function LimitMessage({ refusal }: { refusal: LimitRefusal }): string {
       return COPY.appWideCapForNow;
     case "app-wide-monthly-cap":
     case "qloo-backstop":
+    case "product-search-backstop":
       return COPY.appWideCapForMonth(local.date(refusal.backOn));
   }
 }

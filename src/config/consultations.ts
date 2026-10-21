@@ -24,10 +24,17 @@ export function isBrandCategory(category: Category): category is BrandCategory {
   return (BRAND_CATEGORIES as readonly Category[]).includes(category);
 }
 
-/** A price range in US dollars. Prices come only from Qloo's Brand data, never from the AI. */
+/** A price range in US dollars, from Qloo's Brand data. No price ever comes from the AI. */
 export interface PriceRangeUsd {
   min: number;
   max: number;
+}
+
+/** A price in one currency, as a Product's seller gives it. No price ever comes from the AI. */
+export interface Price {
+  amount: number;
+  /** An ISO 4217 code, such as `EUR`. */
+  currency: string;
 }
 
 /**
@@ -37,11 +44,8 @@ export interface PriceRangeUsd {
 export const PIECE_CATEGORIES = ["hairstyle", "top", "bottom", "one_piece", "shoes"] as const;
 export type PieceCategory = (typeof PIECE_CATEGORIES)[number];
 
-/** The Categories with one One-Piece in place of their Top and Bottom, or null unless they have both. */
-export function withOnePiece(categories: readonly Category[]): PieceCategory[] | null {
-  if (!categories.includes("top") || !categories.includes("bottom")) return null;
-  return categories.filter((category) => category !== "bottom").map((category) => (category === "top" ? "one_piece" : category));
-}
+/** What a Product can be in an Outfit: a Top, Bottom or Shoes Piece, or a One-Piece. */
+export type ProductCategory = Exclude<PieceCategory, "hairstyle">;
 
 /** Sorts Pieces into card order: Hairstyle, Top, Bottom (or a One-Piece in their place), Shoes. */
 export function byCategoryOrder(a: { category: PieceCategory }, b: { category: PieceCategory }): number {

@@ -27,6 +27,11 @@ export function stylingStatusRoute(consultationId: string): string {
   return `/api/consultations/${encodeURIComponent(consultationId)}/styling`;
 }
 
+/** Where a Consultation's page asks for its Products' prices to be refreshed in the background (see PriceRefresh). */
+export function priceRefreshRoute(consultationId: string): string {
+  return `/api/consultations/${encodeURIComponent(consultationId)}/price-refresh`;
+}
+
 /** Where the app pages renew the sign-in in the background (see RenewSignIn). */
 export const SIGN_IN_RENEWAL_ROUTE = "/api/sign-in-renewal";
 

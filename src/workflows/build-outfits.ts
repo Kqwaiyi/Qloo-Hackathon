@@ -1,5 +1,8 @@
 import type { Line } from "@/config/accounts";
+import { PRODUCT_SEARCH_STEP_MAX_RETRIES } from "@/config/product-search";
 import { QLOO_STEP_MAX_RETRIES } from "@/config/qloo";
+import { PREVIEW_STEP_MAX_RETRIES } from "@/config/stylings";
+import type { BrandToLookUp, PieceSearch } from "@/server/outfit-assembly/brands";
 import type { QlooBrand, QlooPerson } from "@/server/qloo/client";
 import {
   type BrandsByStyleIcon,
@@ -24,6 +27,8 @@ export async function buildOutfitsWorkflow(stylingId: string): Promise<void> {
     saveStyleIcons,
     planOutfits,
     fetchBrands,
+    lookUpBrand,
+    searchProducts,
     tailorOutfit,
     planPreviews,
     renderPreview,
@@ -71,6 +76,25 @@ async function fetchBrands(stylingId: string, styleIconId: string): Promise<Qloo
 }
 fetchBrands.maxRetries = QLOO_STEP_MAX_RETRIES;
 
+/** One product-search call, or none when the Brand was looked up lately. */
+async function lookUpBrand(stylingId: string, brand: BrandToLookUp): Promise<void> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.lookUpBrand(stylingId, brand));
+}
+lookUpBrand.maxRetries = PRODUCT_SEARCH_STEP_MAX_RETRIES;
+
+/**
+ * One product-search call. Errors get the retries; one still failing on the last try passes the
+ * Piece's Brand over, unless the product search refused the key.
+ */
+async function searchProducts(stylingId: string, search: PieceSearch): Promise<void> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.searchProducts(stylingId, search), { maxRetries: PRODUCT_SEARCH_STEP_MAX_RETRIES });
+}
+searchProducts.maxRetries = PRODUCT_SEARCH_STEP_MAX_RETRIES;
+
 /** One AI call. */
 async function tailorOutfit(stylingId: string, outfitTry: OutfitTry, attempt: number): Promise<TailoringOutcome> {
   "use step";
@@ -84,12 +108,17 @@ async function planPreviews(stylingId: string): Promise<string[]> {
   return runWorkflowStep((steps) => steps.planPreviews(stylingId));
 }
 
-/** One AI call. A refusal is final; errors get the default retries, then the Preview is left to fail. */
+/**
+ * One AI call, after fetching the Outfit's Product photos. A refusal is final; errors get the
+ * retries, then the Preview is left to fail. A Product photo that still fails on the last try is
+ * drawn from its title.
+ */
 async function renderPreview(stylingId: string, outfitId: string): Promise<void> {
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.renderPreview(stylingId, outfitId));
+  return runWorkflowStep((steps) => steps.renderPreview(stylingId, outfitId), { maxRetries: PREVIEW_STEP_MAX_RETRIES });
 }
+renderPreview.maxRetries = PREVIEW_STEP_MAX_RETRIES;
 
 async function finish(stylingId: string, outcome: StylingOutcome): Promise<void> {
   "use step";

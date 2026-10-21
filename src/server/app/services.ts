@@ -3,6 +3,10 @@ import "server-only";
 import { aiFromEnvironment } from "@/server/ai/environment";
 import type { AiProvider } from "@/server/ai/provider";
 import { type BaseServices, createBaseServices } from "@/server/app/environment";
+import type { ExchangeRateTransport } from "@/server/exchange-rates/rates";
+import type { ProductPhotos } from "@/server/product-photos/photos";
+import { productPhotosFromEnvironment, productSearchFromEnvironment } from "@/server/product-search/environment";
+import type { ProductSearch } from "@/server/product-search/provider";
 import { type QlooClient, qlooClientFromEnvironment } from "@/server/qloo/client";
 import { workflowStylingRunner } from "@/server/stylings/workflow-runner";
 
@@ -10,6 +14,11 @@ export interface Services extends BaseServices {
   ai: AiProvider;
   /** Real Qloo everywhere, local development included, through the cache. */
   qloo: QlooClient;
+  productSearch: ProductSearch;
+  /** Where Previews fetch Product photos: their sellers with Channel3, the fake's own catalogue otherwise. */
+  productPhotos: ProductPhotos;
+  /** Where the daily sweep fetches exchange rates from: Frankfurter and fawazahmed0's currency API, over the web. */
+  exchangeRateTransport: ExchangeRateTransport;
 }
 
 // One set per server process. Kept on globalThis so Next.js's module reloading in development
@@ -29,5 +38,8 @@ async function createServices(): Promise<Services> {
   // The fake adapter unless AI_PROVIDER switches Gemini on.
   const ai = aiFromEnvironment();
   const qloo = qlooClientFromEnvironment(base);
-  return { ...base, ai, qloo };
+  // The fake unless PRODUCT_SEARCH switches Channel3 on, which refuses to start without its key.
+  const productSearch = productSearchFromEnvironment();
+  const productPhotos = productPhotosFromEnvironment();
+  return { ...base, ai, qloo, productSearch, productPhotos, exchangeRateTransport: (request) => fetch(request) };
 }

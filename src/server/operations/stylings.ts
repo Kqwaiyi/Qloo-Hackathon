@@ -8,6 +8,7 @@ import { consultation, outfit, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import type { PhotoCategoryFacts } from "@/server/outfit-assembly/categories";
+import { productSearchMarket } from "@/server/outfit-assembly/markets";
 import { hasCurrentStyleIconLeft, readCurrentStyleIconList } from "@/server/stylings/current-outfits";
 import { readLatestFailedStyling } from "@/server/stylings/failed";
 import {
@@ -178,6 +179,7 @@ async function startStylingOn<R extends { refusal: string }>(
         userId: user.id,
         onDemoAccount: user.isDemoAccount,
         outfitsWanted: stylingStart.outfitsWanted,
+        market: productSearchMarket(user.countryCode),
       });
       return { ok: true, stylingId };
     });

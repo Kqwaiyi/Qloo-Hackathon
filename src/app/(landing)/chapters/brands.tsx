@@ -1,4 +1,3 @@
-import { usdRange } from "@/components/outfit-card";
 import { CATEGORY_LABELS } from "@/config/consultations";
 import type { LandingSampleView } from "@/server/operations/landing";
 
@@ -43,7 +42,7 @@ export function Brands({ sample }: { sample: LandingSampleView }) {
                 <div>
                   <div className="flex flex-wrap items-end justify-between gap-4 px-5 pt-10 pb-5">
                     <p className="text-title">{brand.name}</p>
-                    {brand.priceRange && <p className="text-title">{usdRange(brand.priceRange)}</p>}
+                    {brand.priceRange && <p className="text-title">{brand.priceRange}</p>}
                   </div>
                 </div>
               </div>

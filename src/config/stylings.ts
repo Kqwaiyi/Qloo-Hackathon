@@ -45,6 +45,12 @@ export type PreviewRefusalReason = (typeof PREVIEW_REFUSAL_REASONS)[number];
 /** A Styling renders this many Previews at once, each its own step. */
 export const PREVIEWS_AT_ONCE = 2;
 
+/**
+ * A Preview step that throws is tried again this many times, as the Workflow's default retries it.
+ * A Product photo that still can't be fetched on its last try is drawn from its title instead.
+ */
+export const PREVIEW_STEP_MAX_RETRIES = 3;
+
 /** A Styling makes up to this many Outfits, one per top unused Style Icon. */
 export const OUTFITS_PER_STYLING = 2;
 
@@ -60,6 +66,16 @@ export const MAX_BRAND_FETCHES_PER_STYLING = 6;
 
 /** A Styling never has more Qloo calls than this waiting at once. There's no shared rate limiter. */
 export const QLOO_CALLS_AT_ONCE = 3;
+
+/** A Styling never has more product-search calls than this waiting at once, Brand lookups included. */
+export const PRODUCT_CALLS_AT_ONCE = 3;
+
+/**
+ * A Styling makes at most this many product searches, each counted once however many tries it
+ * takes, so one Styling can't run away with the product-search budget. Brand lookups are free, and
+ * don't count. Like the cap on Brand fetches, it's the Styling's own, the Demo Account's included.
+ */
+export const MAX_PRODUCT_SEARCHES_PER_STYLING = 24;
 
 /** How often a page waiting on a Styling asks for its status. */
 export const STYLING_STATUS_POLL_INTERVAL_MS = 1000;

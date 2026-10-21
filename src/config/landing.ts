@@ -5,3 +5,6 @@ export const LANDING_STYLE_ICONS = 5;
 
 /** Where the frozen samples' images ship with the page: a folder per Photo Type under `public/`, served from the site's root. */
 export const LANDING_SAMPLES_FOLDER = "/landing/samples";
+
+/** The Country the team's script makes every sample in, so its Products are sold there and priced in its currency. */
+export const LANDING_SAMPLE_COUNTRY_CODE = "US";

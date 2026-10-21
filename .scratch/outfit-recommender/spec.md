@@ -154,6 +154,7 @@ Outfit Recommender is a webapp for adults. A user signs up, takes or uploads one
 94. As a user, I want the Hairstyle row to show the cut, its Style Icon and why it suits me, with no price or link, so that it isn't presented as something to buy.
 95. As a womenswear or menswear user, I want an Outfit's Top and Bottom sometimes to be one One-Piece (a dress, jumpsuit or overalls), so that my Outfits aren't all separates.
 96. As a user, I want prices to come only from Qloo's Brand data and items to be generic, never invented products, so that what I see is honest.
+    > **Replaced** by the [Real Products spec](../real-products/spec.md) and [ADR-0008](../../docs/adr/0008-pieces-are-real-products.md): every Top, Bottom, Shoes and One-Piece Piece is a real Product the AI picks from its Brand's range, priced by its seller. Older Pieces keep their generic items and Brand price ranges.
 97. As a user, I want my Hairstyle to be something my current hair can achieve, in my own hair colour, so that the suggestion is realistic.
 98. As a user, I want a Hairstyle whose Style Icon's signature cut the AI doesn't know to be based on the Outfit instead, without claiming to be that Style Icon's cut.
 99. As a user, I want "why it suits you" never to mention my body size or shape, weight, skin colour, ethnicity, gender or age, so that the advice stays respectful.
@@ -322,6 +323,7 @@ Our own interface with three operations. The domain depends only on this interfa
   - `why`: one line of about 20 words, in English and second person. It may mention the garment, the Style Icon, the Photo Style, the user's hair and what they're already wearing. It never mentions body size or shape, weight, skin colour, ethnicity, gender or age.
 - **Rules:**
   - Items are generic, never product or model names.
+    > **Replaced** by the [Real Products spec](../real-products/spec.md) ("Tailoring contract") and [ADR-0008](../../docs/adr/0008-pieces-are-real-products.md): each Brand Piece is one of its Brand's real Products, picked from the candidates a product search found, and its item is the Product's own title.
   - Never a price.
   - Only an item the Brand plausibly makes.
   - The Top is one garment, the main visible upper layer.
@@ -361,6 +363,7 @@ Our own interface with three operations. The domain depends only on this interfa
 **Fake adapter** (the default in local development and tests).
 - **Photo check:** passes every photo, with Photo Style casual.
 - **Tailoring:** deterministic and built from its inputs: generic items in the right Categories, a `why` naming the Style Icon, and the cut marked as known.
+  > **Replaced** by the [Real Products spec](../real-products/spec.md) ("Removing the generic path") and [ADR-0008](../../docs/adr/0008-pieces-are-real-products.md): the fake adapter picks the first candidate Product in each Category instead of inventing an item.
 - **Preview:** the user's own photo with a "Fake Preview" banner, re-encoded to WebP.
 - **Scenarios** switch on every other outcome:
   - each of the six rejection reasons;
@@ -485,6 +488,7 @@ A self-contained module with no framework or I/O code. It builds every Qloo quer
   - Face Photo: Hairstyle only. There are no Brand calls and no Budget Tier, and each Outfit is the next Style Icon's Hairstyle.
 - **Price range:** a Brand Piece shows the Brand's `price_range_usd_min`–`max`. The Outfit's range sums its Brand Pieces' minimums and maximums, and a Piece with no price data is left out of the sum. The Hairstyle has no price.
 - **"Visit <Brand>":** links to the Brand's `official_site` when it's an https URL. Otherwise the row has no link.
+  > **Replaced** by the [Real Products spec](../real-products/spec.md) ("Choosing the offer", "Pages and copy") and [ADR-0008](../../docs/adr/0008-pieces-are-real-products.md): a Product Piece links to its Product's own page, "View at <shop domain>", at the Brand's own store when it sells it there. Older Pieces keep their "Visit <Brand>" link.
 - **Config** holds:
   - the 11 Photo Style words: casual, classic, elegant, streetwear, preppy, edgy, bohemian, chic, glamorous, sporty, rugged;
   - the occupation and exclusion tags;
@@ -1022,6 +1026,7 @@ Everything else in the UI is checked by hand before submission.
 - **Swapping a single Piece** inside an Outfit.
 - **Finer-grained "popular near you"** (city or GPS). Only a Country is collected.
 - **Product-level shopping,** affiliate links or in-app purchase. Pieces link only to the Brand's official site.
+  > **Replaced** by the [Real Products spec](../real-products/spec.md) and [ADR-0008](../../docs/adr/0008-pieces-are-real-products.md): Pieces are real Products, each linked to its own page. Affiliate links and in-app purchase stay out of scope.
 - **Users under 18,** and a second AI provider for them.
 - **A "regenerate Preview" button,** automatic Preview quality checks, and reusing Outfits across Budget Tiers, Photo Styles or repeated photos.
 - **CAPTCHA,** a breached-password check, account lockout, a "remember me" box, and welcome or account-deleted emails.

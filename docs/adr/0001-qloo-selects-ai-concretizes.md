@@ -2,7 +2,7 @@
 
 Qloo's API has no garment, product or hairstyle entities: fashion exists only as brands (tagged by product category, target age group, target gender and target income level, with a USD price range), and hair is reachable only through well-known people. So Qloo decides _what_ is recommended and in what order (the Brands and Style Icons, ranked for the user's age, Style Preference and Budget Tier), and a generative AI model only turns each pick into a concrete item or haircut tailored to the user's photo and renders the Preview. The AI model sits behind our own interface as a swappable provider: Gemini is the first implementation, never a dependency of the domain.
 
-Refined by [ADR-0002](0002-photo-style-steers-style-icons.md): the AI also reads a Photo Style from the photo, which Qloo uses as a signal when picking Style Icons. Refined by [ADR-0003](0003-ai-may-merge-top-and-bottom.md): the AI may turn an Outfit's Top and Bottom into one One-Piece, leaving out the Bottom Brand.
+Refined by [ADR-0002](0002-photo-style-steers-style-icons.md): the AI also reads a Photo Style from the photo, which Qloo uses as a signal when picking Style Icons. Refined by [ADR-0003](0003-ai-may-merge-top-and-bottom.md): the AI may turn an Outfit's Top and Bottom into one One-Piece, leaving out the Bottom Brand. Refined by [ADR-0008](0008-pieces-are-real-products.md): every Top, Bottom and Shoes Piece is now a real Product the AI picks from its Brand's range, not an item it invents.
 
 ## Considered Options
 

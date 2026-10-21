@@ -1,18 +1,31 @@
 import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import type { PhotoType } from "@/config/consultations";
 import { qlooCache, qlooLimitState, usageRecord } from "@/server/db/schema";
 import { deleteConsultation, readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
 import { readStylingStatus } from "@/server/operations/stylings";
+import { refreshPrices } from "@/server/operations/price-refresh";
 import { readUsageSummary } from "@/server/operations/usage";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
-import { qlooPerson, qlooResponse } from "@/server/qloo/fake";
-import { recordUsage } from "@/server/usage/records";
+import { channel3Offer, channel3Product, channel3ProductDetail, channel3SellingEveryBrand } from "@/server/product-search/fake-channel3";
+import { qlooBrand, qlooPerson, qlooResponse } from "@/server/qloo/fake";
+import { recordProductSearches, recordUsage } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities: enough Style Icons for a Face Photo's two Outfits.
 const STYLE_ICONS = [qlooPerson("p-1", "Ava Stone", 0.94), qlooPerson("p-2", "Bea Marsh", 0.91), qlooPerson("p-3", "Cleo Hart", 0.88)];
+
+// Made-up Brands, shaped like Qloo's Brand entities, for a body photo's Outfits: the first is Bolt,
+// Jeanery (denim, so the Bottom) and Stride, the second Dune, Bolt and Sole.
+const BRANDS = [
+  qlooBrand("b-stride", "Stride", { categories: ["footwear"], affinity: 0.97, price: [60, 180] }),
+  qlooBrand("b-bolt", "Bolt", { categories: ["apparel"], affinity: 0.95, price: [20, 120] }),
+  qlooBrand("b-sole", "Sole", { categories: ["footwear"], affinity: 0.93, price: [40, 90] }),
+  qlooBrand("b-dune", "Dune", { categories: ["apparel"], affinity: 0.9 }),
+  qlooBrand("b-jeanery", "Jeanery", { categories: ["apparel", "denim"], affinity: 0.88, price: [50, 110] }),
+];
 
 let harness: TestHarness;
 
@@ -30,9 +43,11 @@ beforeEach(async () => {
   harness.stylings.pending.length = 0;
   harness.qloo.requests.length = 0;
   harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+  harness.channel3.requests.length = 0;
+  harness.channel3.respond = channel3SellingEveryBrand();
   await harness.db.delete(qlooCache);
-  // The app-wide caps count every user's Outfits, so each test starts with none made, and with no
-  // report from Qloo of the calls left.
+  // The app-wide caps count every user's Outfits, and the product-search backstop every product
+  // search, so each test starts with none made, and with no report from Qloo of the calls left.
   await harness.db.delete(usageRecord);
   await harness.db.delete(qlooLimitState);
 });
@@ -427,6 +442,83 @@ describe("the Qloo backstop", () => {
   });
 });
 
+describe("the product-search backstop", () => {
+  it("stops new Stylings once this UTC month's product searches leave less than one Styling's 24 below 5,000, until the next month starts", async () => {
+    await productSearchesMade(4977, "2026-10-01T00:00:00Z");
+    const browser = await signedInUser();
+
+    expect(await readUsageSummary(harness.context(browser))).toEqual({
+      outfitsLeft: 10,
+      moreOutfitsFrom: null,
+      stylingStart: { ok: false, refusal: "product-search-backstop", backOn: new Date("2026-11-01T00:00:00Z") },
+    });
+    expect(await getMyOutfits(browser)).toEqual({ ok: false, refusal: "product-search-backstop", backOn: new Date("2026-11-01T00:00:00Z") });
+    expect(harness.ai.photoCheckCount).toBe(0);
+    expect(harness.blob.objects.size).toBe(0);
+    harness.clock.set("2026-10-31T23:59:59Z");
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: false, refusal: "product-search-backstop" } });
+    harness.clock.set("2026-11-01T00:00:00Z");
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true, outfitsWanted: 2 } });
+  });
+
+  it("lets Stylings start while this month's product searches leave room for one Styling's 24, whatever earlier months made", async () => {
+    await productSearchesMade(500, "2026-09-30T23:59:59Z");
+    await productSearchesMade(4976, "2026-10-16T11:00:00Z");
+
+    expect(await readUsageSummary(harness.context(await signedInUser()))).toMatchObject({ stylingStart: { ok: true, outfitsWanted: 2 } });
+  });
+
+  it.each([
+    { qlooResetsInDays: 28, refusal: { refusal: "qloo-backstop", backOn: new Date("2026-11-13T12:30:00Z") } },
+    { qlooResetsInDays: 4, refusal: { refusal: "product-search-backstop", backOn: new Date("2026-11-01T00:00:00Z") } },
+  ])("gives the later date when the Qloo backstop holds too (Qloo resets in $qlooResetsInDays days)", async ({ qlooResetsInDays, refusal }) => {
+    const browser = await styledWhileQlooReports({ callsLeft: 999, resetsInDays: qlooResetsInDays });
+    await productSearchesMade(4977, "2026-10-05T09:00:00Z");
+
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: false, ...refusal } });
+  });
+
+  it("counts every search a Styling makes in the product search, and none of its free Brand lookups or Product checks", async () => {
+    harness.qloo.respond = (request) => qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
+    await productSearchesMade(4968, "2026-10-01T00:00:00Z");
+    const browser = await signedInUser();
+
+    const consultationId = await styleAt(browser, "2026-10-16T12:30:00Z", "body_only");
+
+    // Each of the two Outfits' Top, Bottom, Shoes and One-Piece: 4,976 this month, room for one more Styling.
+    expect(channel3Requests("search")).toBe(8);
+    expect(channel3Requests("brand lookup")).toBeGreaterThan(0);
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true } });
+    harness.clock.set("2026-10-17T09:00:00Z");
+    harness.channel3.respond = channel3SellingEveryBrand({
+      checks: ({ productId }) => channel3ProductDetail(channel3Product(productId, { offers: [channel3Offer({ price: 52 })] })),
+    });
+    expect(await refreshPrices(harness.context(browser), consultationId)).toEqual({ ok: true });
+    expect(channel3Requests("product check")).toBe(6);
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({ stylingStart: { ok: true } });
+
+    await styleAt(browser, "2026-10-17T10:00:00Z", "body_only");
+
+    expect(channel3Requests("search")).toBe(16);
+    expect(await readUsageSummary(harness.context(browser))).toMatchObject({
+      stylingStart: { ok: false, refusal: "product-search-backstop", backOn: new Date("2026-11-01T00:00:00Z") },
+    });
+  });
+});
+
+/** How many requests of one kind went out to the product search, Channel3. */
+function channel3Requests(kind: "search" | "brand lookup" | "product check"): number {
+  const paths = { search: /^\/v1\/browse$/, "brand lookup": /^\/v1\/brands\/search$/, "product check": /^\/v1\/products\/[^/]+$/ };
+  return harness.channel3.requests.filter(({ url }) => paths[kind].test(url.pathname)).length;
+}
+
+/**
+ * Records `count` product searches sent at `time`, as if Stylings had sent them then.
+ */
+async function productSearchesMade(count: number, time: string): Promise<void> {
+  await recordProductSearches(harness.db, new Date(time), count);
+}
+
 /**
  * Has a new user's first Styling run at 12:30 while Qloo reports, on each response, `callsLeft`
  * calls left this month and, if given, how many days until they reset (Qloo sends seconds). Clears
@@ -458,14 +550,17 @@ async function rejectPhotos(browser: TestBrowser, count: number): Promise<void> 
   harness.ai.scenario = "pass";
 }
 
-/** Presses "Get my Outfits" with a plain JPEG Face Photo, agreeing on the consent sheet, returning what the operation returns. */
-async function getMyOutfits(browser: TestBrowser) {
-  return startConsultation(harness.context(browser), { photo: await jpeg(), photoType: "face", consent: BOTH_CONSENT_BOXES_TICKED });
+/**
+ * Presses "Get my Outfits" with a plain JPEG, a Face Photo unless said otherwise, agreeing on the
+ * consent sheet, returning what the operation returns.
+ */
+async function getMyOutfits(browser: TestBrowser, photoType: PhotoType = "face") {
+  return startConsultation(harness.context(browser), { photo: await jpeg(), photoType, consent: BOTH_CONSENT_BOXES_TICKED });
 }
 
-/** Starts a Face Photo Consultation, returning its id. Its Styling waits for `runPending()`. */
-async function start(browser: TestBrowser): Promise<string> {
-  const result = await getMyOutfits(browser);
+/** Starts a Consultation, a Face Photo's unless said otherwise, returning its id. Its Styling waits for `runPending()`. */
+async function start(browser: TestBrowser, photoType: PhotoType = "face"): Promise<string> {
+  const result = await getMyOutfits(browser, photoType);
   if (!result.ok) throw new Error(`Couldn't start a Consultation: ${result.refusal}`);
   return result.consultationId;
 }
@@ -483,10 +578,13 @@ async function useUpAllowance(browser?: TestBrowser): Promise<TestBrowser> {
   return browser;
 }
 
-/** Starts a Face Photo Consultation at `time` and runs its Styling to its finish then, returning its id. */
-async function styleAt(browser: TestBrowser, time: string): Promise<string> {
+/**
+ * Starts a Consultation, a Face Photo's unless said otherwise, at `time` and runs its Styling to its
+ * finish then, returning its id.
+ */
+async function styleAt(browser: TestBrowser, time: string, photoType: PhotoType = "face"): Promise<string> {
   harness.clock.set(time);
-  const consultationId = await start(browser);
+  const consultationId = await start(browser, photoType);
   await harness.stylings.runPending();
   return consultationId;
 }

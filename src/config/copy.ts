@@ -54,11 +54,17 @@ export const COPY = {
   photoCheckLimitReached: (limit: number, time: string) => `You've checked ${limit} photos today. More from ${time}.`,
   /** The app-wide 24-hour cap. */
   appWideCapForNow: "Qurator has made all the Outfits it can for now. Please try again in a few hours.",
-  /** The app-wide monthly cap, and the Qloo backstop. */
+  /** The app-wide monthly cap, and the Qloo and product-search backstops. */
   appWideCapForMonth: (date: string) => `Qurator has made all the Outfits it can for this month. Back on ${date}.`,
   faceGuide: "keep your face above this line",
   takingLonger: "This is taking longer than usual.",
   aiGenerated: "AI-generated",
+  /** On every Outfit card with Product Pieces, whose Preview is drawn from their sellers' photos. */
+  productPhotoCredit: "Product photos © their sellers",
+  /** In place of the price and link of a Product its latest check found no longer offered. */
+  noLongerAvailable: "No longer available",
+  /** After "Whole Outfit about <amount>", when that total leaves out Products no longer available. */
+  leavesOutOfTotal: (pieces: number) => `(leaves out ${pieces} ${pieces === 1 ? "Piece" : "Pieces"} no longer available)`,
   /** Beside every sample person's photo on the landing page, with `aiGeneratedPersonAlt` as its alt text. */
   aiGeneratedPerson: "AI-generated person: not a real person.",
   aiGeneratedPersonAlt: "AI-generated photo of a fictional person",

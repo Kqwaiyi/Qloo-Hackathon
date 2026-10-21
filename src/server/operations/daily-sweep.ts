@@ -2,6 +2,7 @@ import { and, asc, eq, isNull, lt, lte, ne, type SQL } from "drizzle-orm";
 
 import { INACTIVE_ACCOUNT_LIFETIME_MONTHS, INACTIVITY_WARNING_NOTICE_DAYS, UNVERIFIED_ACCOUNT_LIFETIME_DAYS } from "@/config/accounts";
 import { EMAIL_LOG_LIFETIME_DAYS } from "@/config/email";
+import type { ExchangeRateSource } from "@/config/currencies";
 import { USAGE_RECORD_LIFETIME_DAYS } from "@/config/limits";
 import { QLOO_CACHE_LIFETIME_DAYS } from "@/config/qloo";
 import { ROUTES } from "@/config/routes";
@@ -10,12 +11,17 @@ import { startOfNextUtcDay } from "@/server/clock";
 import { emailLog, qlooCache, usageRecord, user } from "@/server/db/schema";
 import { inactivityWarningEmail } from "@/server/email/messages";
 import type { EmailSender, SendResult } from "@/server/email/send-email";
+import { type ExchangeRateTransport, refreshExchangeRates } from "@/server/exchange-rates/rates";
 import type { OperationContext } from "@/server/operations/context";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** What the daily sweep needs: an account's deletion, and the send-email function for its warnings. */
-export type SweepContext = AccountDeletionContext & Pick<OperationContext, "auth"> & { emailSender: EmailSender };
+/**
+ * What the daily sweep needs: an account's deletion, the send-email function for its warnings, and
+ * where it fetches exchange rates from.
+ */
+export type SweepContext = AccountDeletionContext &
+  Pick<OperationContext, "auth"> & { emailSender: EmailSender; exchangeRateTransport: ExchangeRateTransport };
 
 /** What the daily sweep did. */
 export interface SweepReport {
@@ -25,6 +31,8 @@ export interface SweepReport {
   usageRecordsPurged: number;
   emailLogRowsPurged: number;
   qlooCacheEntriesPurged: number;
+  /** Where the day's exchange rates came from, or null when no source answered, so the day before's stay. */
+  exchangeRatesFrom: ExchangeRateSource | null;
   /** Accounts it couldn't delete or warn, each logged. They're still due, so the next sweep tries them again. */
   failures: number;
 }
@@ -37,7 +45,8 @@ interface Tally {
 
 /**
  * The daily sweep, which Vercel Cron runs once a day: it keeps the Privacy Policy's retention
- * promises, at the clock's current time. An account that fails doesn't stop the rest.
+ * promises, at the clock's current time, and refreshes the exchange rates. An account that fails
+ * doesn't stop the rest.
  *
  * An account is deleted on the date its email gave, the verification email's or the inactivity
  * warning's, at whatever time of that UTC day the sweep runs.
@@ -52,6 +61,7 @@ export async function runDailySweep(ctx: SweepContext): Promise<SweepReport> {
     inactiveAccountsDeleted: inactive.done,
     inactivityWarningsSent: warnings.done,
     ...(await purgeOldRows(ctx, now)),
+    exchangeRatesFrom: await refreshExchangeRates(ctx),
     failures: unverified.failed + inactive.failed + warnings.failed,
   };
 }

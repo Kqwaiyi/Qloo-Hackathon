@@ -1,0 +1,1 @@
+ALTER TABLE "piece_candidates" ALTER COLUMN "candidates" DROP NOT NULL;

@@ -4,14 +4,20 @@ import { FatalError, getStepMetadata, RetryableError } from "workflow";
 
 import { UnretryableAiError } from "@/server/ai/provider";
 import { getServices } from "@/server/app/services";
+import { NoExchangeRateError } from "@/server/outfit-assembly/products";
+import { ProductSearchRateLimitedError, UnretryableProductSearchError } from "@/server/product-search/provider";
 import { QlooError, QlooRateLimitedError } from "@/server/qloo/client";
 
 import type { BuildOutfitsSteps } from "./build-outfits";
-import { StylingNotRunningError, stylingSteps } from "./steps";
+import { ProductSearchDownError, StylingNotRunningError, stylingSteps } from "./steps";
 
-/** Runs one "build Outfits" step for the Workflow: on the app's services, telling the Workflow which failures to retry. */
-export async function runWorkflowStep<T>(step: (steps: BuildOutfitsSteps) => Promise<T>): Promise<T> {
-  const steps = stylingSteps(await getServices());
+/**
+ * Runs one "build Outfits" step for the Workflow: on the app's services, telling the Workflow which
+ * failures to retry. A step given its `maxRetries` learns whether this try is its last.
+ */
+export async function runWorkflowStep<T>(step: (steps: BuildOutfitsSteps) => Promise<T>, { maxRetries }: { maxRetries?: number } = {}): Promise<T> {
+  const lastTry = maxRetries === undefined ? undefined : getStepMetadata().attempt > maxRetries;
+  const steps = stylingSteps(await getServices(), { lastTry });
   try {
     return await step(steps);
   } catch (error) {
@@ -21,10 +27,12 @@ export async function runWorkflowStep<T>(step: (steps: BuildOutfitsSteps) => Pro
 
 /** Other failures keep the Workflow's own retries. */
 function asWorkflowError(error: unknown): unknown {
-  // A Styling that has finished, or been cancelled, stops: retrying can't change that.
-  if (error instanceof StylingNotRunningError) return new FatalError(error.message);
-  // "Too many requests": wait as long as Qloo asks, or back off longer each time.
-  if (error instanceof QlooRateLimitedError) {
+  // A Styling that has finished, or been cancelled, stops: retrying can't change that. Nor can it
+  // change that every product search it sent failed after their own retries.
+  if (error instanceof StylingNotRunningError || error instanceof ProductSearchDownError) return new FatalError(error.message);
+  // "Too many requests" from Qloo or the product search: wait as long as it asks, or back off
+  // longer each time.
+  if (error instanceof QlooRateLimitedError || error instanceof ProductSearchRateLimitedError) {
     const seconds = error.retryAfterSeconds ?? 2 ** getStepMetadata().attempt;
     return new RetryableError(error.message, { retryAfter: seconds * 1000 });
   }
@@ -32,5 +40,8 @@ function asWorkflowError(error: unknown): unknown {
   if (error instanceof QlooError && error.status >= 400 && error.status < 500) return new FatalError(error.message);
   // Nor will an AI call that failed for good, such as a request Gemini rejects.
   if (error instanceof UnretryableAiError) return new FatalError(error.message);
+  // Nor will the product search refusing the API key, or a market's currency with no rate stored
+  // until the next daily sweep.
+  if (error instanceof UnretryableProductSearchError || error instanceof NoExchangeRateError) return new FatalError(error.message);
   return error;
 }

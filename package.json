@@ -17,10 +17,12 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "check:photo-style-tags": "tsx --env-file=.env.local scripts/check-photo-style-tags.ts",
+    "check:product-search-coverage": "tsx --env-file=.env.local scripts/check-product-search-coverage.ts",
     "team:create-demo-account": "tsx scripts/create-demo-account.ts",
     "team:delete-account": "tsx scripts/delete-account.ts",
     "team:correct-birth-date": "tsx scripts/correct-birth-date.ts",
-    "team:export-landing-sample": "tsx scripts/export-landing-sample.ts"
+    "team:export-landing-sample": "tsx scripts/export-landing-sample.ts",
+    "team:make-landing-sample": "tsx --env-file=.env.local scripts/make-landing-sample.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "4.0.95",

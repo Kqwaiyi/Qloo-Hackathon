@@ -1,9 +1,19 @@
-import { expect, type Page } from "@playwright/test";
+import { type APIRequestContext, expect, type Page } from "@playwright/test";
 import sharp from "sharp";
 
 import { LOCAL_INBOX_FOLDER, readInbox } from "../src/server/email/inbox";
+import { SMOKE_CRON_SECRET } from "./cron-secret";
 
 export const SMOKE_PASSWORD = "smoke-test-password";
+
+/**
+ * Runs the daily sweep as Vercel Cron does, which stores the day's exchange rates from their live
+ * sources: a Styling outside the US needs them to hold its searches to each Brand's price range.
+ */
+export async function runDailySweep(request: APIRequestContext): Promise<void> {
+  const response = await request.get("/api/daily-sweep", { headers: { authorization: `Bearer ${SMOKE_CRON_SECRET}` } });
+  expect(await response.json()).toMatchObject({ exchangeRatesFrom: expect.any(String) });
+}
 
 let signUps = 0;
 

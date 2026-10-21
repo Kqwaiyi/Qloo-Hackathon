@@ -2,8 +2,9 @@ import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import type { BudgetTier, PhotoStyleWords } from "@/config/consultations";
-import { QLOO_BACKSTOP_CALLS } from "@/config/limits";
-import { OUTFITS_PER_STYLING, type StylingKind, type StylingStage } from "@/config/stylings";
+import { PRODUCT_SEARCH_BACKSTOP_SEARCHES, QLOO_BACKSTOP_CALLS } from "@/config/limits";
+import type { ProductSearchMarket } from "@/config/product-search";
+import { MAX_PRODUCT_SEARCHES_PER_STYLING, OUTFITS_PER_STYLING, type StylingKind, type StylingStage } from "@/config/stylings";
 import { startOfNextUtcMonth } from "@/server/clock";
 import type { Transaction } from "@/server/db/database";
 import { consultation, styleIcon, styling } from "@/server/db/schema";
@@ -11,7 +12,7 @@ import type { OperationContext, Result } from "@/server/operations/context";
 import type { SignedInUser } from "@/server/operations/session";
 import { type QlooLimitState, readQlooLimitState } from "@/server/qloo/limit-state";
 import { isFromSupportedRegion } from "@/server/region-gate";
-import { readAppWideOutfitsLeft, readUsageLeft } from "@/server/usage/records";
+import { readAppWideOutfitsLeft, readProductSearchesInMonth, readUsageLeft } from "@/server/usage/records";
 
 import { finishStyling } from "./steps";
 import { finishStuckStylings } from "./stop";
@@ -32,7 +33,12 @@ export type StylingStartRefusal =
   /** Every user together has made as many Outfits this UTC calendar month as the monthly cap allows, until `backOn`, when the next starts. */
   | { refusal: "app-wide-monthly-cap"; backOn: Date }
   /** Qloo last reported fewer calls left this month than the Qloo backstop needs, until `backOn`, when they reset. */
-  | { refusal: "qloo-backstop"; backOn: Date };
+  | { refusal: "qloo-backstop"; backOn: Date }
+  /**
+   * This UTC calendar month's product searches leave less than one Styling's searches below the
+   * product-search backstop, until `backOn`, when the next month starts.
+   */
+  | { refusal: "product-search-backstop"; backOn: Date };
 
 /** A Styling may start, making at most `outfitsWanted` Outfits, or the reason it can't. */
 export type StylingStart = Result<{ outfitsWanted: number }, StylingStartRefusal>;
@@ -70,10 +76,11 @@ export async function checkStylingStart(
     .limit(1);
   if (running) return { ok: false, refusal: "already-styling" };
   const now = ctx.clock.now();
-  const [outfits, appWide, qloo] = await Promise.all([
+  const [outfits, appWide, qloo, productSearches] = await Promise.all([
     readUsageLeft(ctx.db, { kind: "outfit", userId: user.id, at: now }),
     readAppWideOutfitsLeft(ctx.db, now),
     readQlooLimitState(ctx.db),
+    readProductSearchesInMonth(ctx.db, now),
   ]);
   const inForce: { liftsAt: Date; refusal: StylingStartRefusal }[] = [];
   if (appWide.inMonth === 0) {
@@ -82,6 +89,10 @@ export async function checkStylingStart(
   }
   const qlooResets = qlooBackstopLiftsAt(qloo, now);
   if (qlooResets) inForce.push({ liftsAt: qlooResets, refusal: { refusal: "qloo-backstop", backOn: qlooResets } });
+  const productSearchesBackOn = productSearchBackstopLiftsAt(productSearches, now);
+  if (productSearchesBackOn) {
+    inForce.push({ liftsAt: productSearchesBackOn, refusal: { refusal: "product-search-backstop", backOn: productSearchesBackOn } });
+  }
   if (appWide.inWindow.usedUp) inForce.push({ liftsAt: appWide.inWindow.moreFrom, refusal: { refusal: "app-wide-24-hour-cap" } });
   if (outfits.usedUp) inForce.push({ liftsAt: outfits.moreFrom, refusal: { refusal: "allowance-used", moreFrom: outfits.moreFrom } });
   const liftsLast = inForce.sort((a, b) => b.liftsAt.getTime() - a.liftsAt.getTime())[0];
@@ -101,6 +112,16 @@ function qlooBackstopLiftsAt(state: QlooLimitState | null, now: Date): Date | nu
   return now < liftsAt ? liftsAt : null;
 }
 
+/**
+ * When the product-search backstop lifts, while this UTC calendar month's product searches leave too
+ * little room below it for every search one more Styling may make, or null. That's when the next
+ * month starts, and the count with it.
+ */
+function productSearchBackstopLiftsAt(searchesThisMonth: number, now: Date): Date | null {
+  if (searchesThisMonth + MAX_PRODUCT_SEARCHES_PER_STYLING <= PRODUCT_SEARCH_BACKSTOP_SEARCHES) return null;
+  return startOfNextUtcMonth(now);
+}
+
 export interface NewStyling {
   consultationId: string;
   userId: string;
@@ -112,6 +133,8 @@ export interface NewStyling {
   photoStyle: PhotoStyleWords;
   /** How many Outfits it makes, at most: what `checkStylingStart` allowed. */
   outfitsWanted: number;
+  /** The market its Products come from: the user's Country's, as it starts (`productSearchMarket`). */
+  market: ProductSearchMarket;
   /**
    * Where it starts. At Style Icons, it ranks its own, as a first Styling and a Photo Style change
    * do. Further in, it has them already: "Show 2 more Outfits" carries on down the current ones

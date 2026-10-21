@@ -16,6 +16,7 @@ import { AllowanceLine } from "./allowance-line";
 import { BudgetTierDropdown } from "./budget-tier-dropdown";
 import { MoreOutfits } from "./more-outfits";
 import { PhotoStyleEditor } from "./photo-style-editor";
+import { PriceRefresh } from "./price-refresh";
 import { StylingProgress } from "./styling-progress";
 import { TryAgain } from "./try-again";
 
@@ -54,6 +55,8 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 
   return (
     <>
+      {/* The stored prices show at once; any Product not checked today is checked in the background. */}
+      {consultation.productsToCheck && <PriceRefresh consultationId={consultation.id} />}
       <Stepper current={4} />
       {/* Top-aligned, so the photo stays put as the Photo Style editor opens. */}
       <header className="flex flex-wrap items-start gap-4">

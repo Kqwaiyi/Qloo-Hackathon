@@ -41,7 +41,7 @@ export function Hero({ notice }: { notice?: ReactNode }) {
   );
 }
 
-/** One line, filled word by word as it's read: who decides and who makes it concrete (ADR-0001). */
+/** One line, filled word by word as it's read: who decides, and who picks the real Products (ADR-0001, ADR-0008). */
 export function Statement() {
   return (
     <section
@@ -54,7 +54,7 @@ export function Statement() {
         <span data-fill-hold className="text-mute">
           How it works.
         </span>{" "}
-        Qloo decides what to recommend. The AI makes it concrete and shows it on you.
+        Qloo decides what to recommend. The AI picks real Products and shows them on you.
       </p>
     </section>
   );

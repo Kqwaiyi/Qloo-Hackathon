@@ -11,7 +11,7 @@ The menswear / womenswear / no-preference choice a user makes at sign-up (editab
 _Avoid_: gender, sex
 
 **Country**:
-The country a user gives at sign-up (editable later); their Style Icons and Brands lean towards what is popular with people there, wherever those people or Brands come from.
+The country a user gives at sign-up (editable later); their Style Icons and Brands lean towards what is popular with people there, wherever those people or Brands come from. Their Products are ones sold there where possible, and every price they see is in its currency.
 _Avoid_: market, region, location, nationality
 
 **Bot Check**:
@@ -58,26 +58,30 @@ One of the four slots an Outfit can fill: Hairstyle, Top, Bottom, Shoes.
 _Avoid_: upper-body clothing (say Top), lower-body clothing (say Bottom), footwear (say Shoes)
 
 **Piece**:
-The part of an Outfit in one Category (or in both Top and Bottom, for a One-Piece): a concrete item or haircut built on a Brand (Top, Bottom, Shoes) or a Style Icon (Hairstyle) that Qloo selected.
+The part of an Outfit in one Category (or in both Top and Bottom, for a One-Piece): a Product of a Brand (Top, Bottom, Shoes) or a haircut inspired by a Style Icon (Hairstyle), each built on a pick Qloo made. Outfits made before Products existed keep an item the AI described instead.
 _Avoid_: item, component
 
+**Product**:
+A real item a Brand sells, priced within that Brand's usual range, which the user could go and buy: shown by its seller's own name for it and linked to its own page. Every Top, Bottom, Shoes and One-Piece Piece is a Product, picked from the Brand's range to suit the user and the rest of the Outfit. One that stops being sold stays in its Outfit, shown as no longer available.
+_Avoid_: item, listing, SKU
+
 **One-Piece**:
-A Piece that fills both the Top and Bottom Categories with a single garment, such as a dress, jumpsuit or overalls, built on the Outfit's Top Brand.
+A Piece that fills both the Top and Bottom Categories with a single garment, such as a dress, jumpsuit or overalls: a Product of the Outfit's Top Brand, held to everything a Top or Bottom would be held to.
 _Avoid_: dress (only one kind), full outfit
 
 **Brand**:
-A fashion brand that Qloo links to an Outfit's Style Icon, within the user's Budget Tier and Country; the basis of every Top, Bottom and Shoes Piece.
+A fashion brand that Qloo links to an Outfit's Style Icon, within the user's Budget Tier and Country, and whose Products the app can find; it sells the Product behind every Top, Bottom and Shoes Piece. A brand whose Products can't be found is never one of an Outfit's Brands.
 
 **Style Icon**:
 A well-known person that Qloo picks as popular with the user's demographic and Country and in tune with their Photo Style, who inspires an Outfit: their signature haircut inspires its Hairstyle Piece and the Brands their fans favour supply its other Pieces.
 _Avoid_: celebrity, influencer
 
 **Preview**:
-The AI-generated image of the user wearing a whole Outfit.
+The AI-generated image of the user wearing a whole Outfit, its Products drawn from the images their sellers publish.
 _Avoid_: try-on, render, mockup
 
 **Budget Tier**:
-The price filter on Outfits: No Budget, Low, Medium or Expensive. Low, Medium and Expensive keep every Piece of an Outfit within that tier; No Budget applies no filter, so one Outfit may mix tiers. A Face Photo Consultation has no Budget Tier, since a Hairstyle has no price.
+The price filter on Outfits: No Budget, Low, Medium or Expensive. Low, Medium and Expensive keep every Brand of an Outfit within that tier; No Budget applies no filter, so one Outfit may mix tiers. A Face Photo Consultation has no Budget Tier, since a Hairstyle has no price.
 _Avoid_: price range, price level
 
 **Styling**:
