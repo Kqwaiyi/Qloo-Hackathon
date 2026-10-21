@@ -7,6 +7,7 @@ import {
 } from "@/config/product-search";
 
 import type { Channel3Transport } from "./channel3";
+import type { ProductCheck } from "./provider";
 
 /** A request as it left for Channel3, its JSON body parsed. */
 export interface RecordedChannel3Request {
@@ -68,20 +69,35 @@ export interface Channel3Search {
  * lookup lists the one Brand with the name looked up, whose ID is `c3-` and the name in lower case.
  * It sells each Brand what `products` gives for a search: by default a small catalogue of two
  * Products in every Category and line, One-Pieces included, new and in stock in the market, priced in its currency within
- * any price filter. It knows no website.
+ * any price filter. Its Product check answers with what `checks` gives: by default, that it knows
+ * no such Product. It knows no website.
  */
 export function channel3SellingEveryBrand({
   except = [],
   products = channel3SmallCatalogue,
-}: { except?: readonly string[]; products?: (search: Channel3Search) => readonly object[] } = {}) {
+  checks = channel3NotFound,
+}: {
+  except?: readonly string[];
+  products?: (search: Channel3Search) => readonly object[];
+  checks?: (check: ProductCheck) => Response;
+} = {}) {
   return (request: RecordedChannel3Request): Response => {
     if (request.url.pathname === "/v1/brands/search") {
       const name = request.url.searchParams.get("query") ?? "";
       return channel3Brands(except.includes(name) ? [] : [channel3Brand(channel3BrandId(name), name)]);
     }
     if (request.url.pathname === "/v1/browse") return channel3Products(products(channel3Search(request)));
+    const check = channel3ProductCheck(request);
+    if (check) return checks(check);
     return knowsNothing(request);
   };
+}
+
+/** The Product check a request makes, read back into our terms, or null when it's no Product check. */
+export function channel3ProductCheck({ method, url }: RecordedChannel3Request): ProductCheck | null {
+  const [, productId] = /^\/v1\/products\/([^/]+)$/.exec(url.pathname) ?? [];
+  if (method !== "GET" || !productId) return null;
+  return { productId: decodeURIComponent(productId), market: url.searchParams.get("country") as ProductSearchMarket };
 }
 
 /** Channel3's ID for a Brand of this name, as `channel3SellingEveryBrand` knows it. */

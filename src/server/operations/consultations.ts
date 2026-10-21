@@ -35,6 +35,7 @@ import { readSignedInUser } from "@/server/operations/session";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
 import { productSearchMarket } from "@/server/outfit-assembly/markets";
 import { brandPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
+import { isDueForCheck, pricedOn } from "@/server/outfit-assembly/products";
 import { outfitTotalText, type PriceViewer, priceText } from "@/server/outfit-assembly/prices";
 import { isFromSupportedRegion } from "@/server/region-gate";
 import { hasCurrentStyleIconLeft } from "@/server/stylings/current-outfits";
@@ -208,6 +209,11 @@ export interface ConsultationView {
    * 2 more Outfits" isn't one: `everyOutfitBuilt` says it.
    */
   failedStyling: FailedStyling | null;
+  /**
+   * One of its Outfits' Products wasn't found or checked today, so once the page has shown their
+   * stored prices it asks for the price refresh in the background.
+   */
+  productsToCheck: boolean;
 }
 
 /**
@@ -233,15 +239,17 @@ export interface OutfitView {
    * What "Whole Outfit about" is followed by: its Products' prices added up, any Piece priced only by
    * its Brand's range adding that range, in the viewer's Country's currency as `PieceView`'s prices
    * are. Null when there's nothing to add up, as for a Hairstyle-only Outfit. A One-Piece's left-out
-   * Bottom Brand isn't one of them.
+   * Bottom Brand isn't one of them, and nor is a Product no longer available.
    */
   total: string | null;
+  /** How many of its Products are no longer available, which `total` leaves out and says it does. */
+  leftOutOfTotal: number;
   /** One row per Piece, in Category order, whether or not there's a Preview: a One-Piece is one row. */
   pieces: PieceView[];
 }
 
 /** What an Outfit's card shows beside its Preview. */
-export type OutfitCardContent = Pick<OutfitView, "position" | "styleIconName" | "total" | "pieces">;
+export type OutfitCardContent = Pick<OutfitView, "position" | "styleIconName" | "total" | "leftOutOfTotal" | "pieces">;
 
 /** The Outfit's Preview: a signed link to it, valid for 1 hour from now, or why there's none. */
 export type PreviewView = { state: "ready"; url: string } | { state: "refused" | "failed" };
@@ -276,11 +284,18 @@ export interface BrandView {
   visitUrl: string | null;
 }
 
-/** What a Product Piece's row shows of its Product, beside its title: its price, dated, and where to buy it. */
-export interface ProductView {
+/**
+ * What a Product Piece's row shows of its Product, beside its title: its offer, or, once a check
+ * finds it no longer offered where it was found, "No longer available" in place of a price and link.
+ */
+export type ProductView = OfferView | { available: false };
+
+/** A Product's offer, as its row shows it: its price, dated, and where to buy it. */
+export interface OfferView {
+  available: true;
   /** Its offer's price, such as "≈ Rp 809,370" or "€45". */
   price: string;
-  /** The UTC date its price was found, as YYYY-MM-DD: "on 21 Oct". */
+  /** The UTC date its price was found or last checked, as YYYY-MM-DD: "on 21 Oct". */
   pricedOn: string;
   /** Its offer's page, where "View at <shop domain>" goes. */
   url: string;
@@ -293,7 +308,7 @@ export interface ProductView {
  */
 export interface StoredPiece extends Omit<PieceView, "brand" | "product"> {
   brand: (Omit<BrandView, "priceRange"> & { priceRange: PriceRangeUsd | null }) | null;
-  product: (Omit<ProductView, "price"> & { price: Price }) | null;
+  product: (Omit<OfferView, "price"> & { price: Price }) | { available: false } | null;
 }
 
 /** The columns of a Piece that its row shows. */
@@ -310,6 +325,7 @@ export const storedPieceColumns = {
   price: piece.price,
   currency: piece.currency,
   pricedAt: piece.pricedAt,
+  available: piece.available,
 };
 
 /** A Piece as it's stored, from its `storedPieceColumns`. */
@@ -326,6 +342,7 @@ export function storedPiece({
   price,
   currency,
   pricedAt,
+  available,
 }: {
   category: PieceCategory;
   item: string;
@@ -339,12 +356,15 @@ export function storedPiece({
   price: number | null;
   currency: string | null;
   pricedAt: Date | null;
+  available: boolean | null;
 }): StoredPiece {
   // The check constraint keeps a Product Piece's fields all set, and any other Piece's all empty.
-  const product: StoredPiece["product"] =
-    offerUrl === null || offerShopDomain === null || price === null || currency === null || pricedAt === null
-      ? null
-      : { price: { amount: price, currency }, pricedOn: pricedAt.toISOString().slice(0, 10), url: offerUrl, shopDomain: offerShopDomain };
+  let product: StoredPiece["product"] = null;
+  if (offerUrl !== null && offerShopDomain !== null && price !== null && currency !== null && pricedAt !== null) {
+    product = available
+      ? { available, price: { amount: price, currency }, pricedOn: pricedOn(pricedAt), url: offerUrl, shopDomain: offerShopDomain }
+      : { available: false };
+  }
   let brand: StoredPiece["brand"] = null;
   if (brandName !== null) {
     brand = product
@@ -354,14 +374,21 @@ export function storedPiece({
   return { category, item, why, brand, product };
 }
 
-/** An Outfit's Pieces as `viewer` is shown them, every price as `priceText` writes it, and their total. */
-export function piecesAsShown(pieces: readonly StoredPiece[], viewer: PriceViewer): Pick<OutfitView, "total" | "pieces"> {
+/**
+ * An Outfit's Pieces as `viewer` is shown them, every price as `priceText` writes it, and their
+ * total, which leaves out any Product no longer available.
+ */
+export function piecesAsShown(pieces: readonly StoredPiece[], viewer: PriceViewer): Pick<OutfitView, "total" | "leftOutOfTotal" | "pieces"> {
   return {
-    total: outfitTotalText(pieces.flatMap(({ brand, product }) => product?.price ?? brand?.priceRange ?? []), viewer),
+    total: outfitTotalText(
+      pieces.flatMap(({ brand, product }) => (product ? (product.available ? product.price : []) : (brand?.priceRange ?? []))),
+      viewer,
+    ),
+    leftOutOfTotal: pieces.filter(({ product }) => product?.available === false).length,
     pieces: pieces.map(({ brand, product, ...shown }) => ({
       ...shown,
       brand: brand && { ...brand, priceRange: brand.priceRange && priceText(brand.priceRange, viewer) },
-      product: product && { ...product, price: priceText(product.price, viewer) },
+      product: product && (product.available ? { ...product, price: priceText(product.price, viewer) } : product),
     })),
   };
 }
@@ -440,6 +467,7 @@ export async function readConsultation(
     everyPreviewRefused: outfits.length > 0 && outfits.every((outfitView) => outfitView.preview.state === "refused"),
     everyOutfitBuilt: !(await hasCurrentStyleIconLeft(ctx.db, row.id)),
     failedStyling: failedStylingView(await readLatestFailedStyling(ctx.db, row.id)),
+    productsToCheck: pieceRows.some(({ pricedAt }) => pricedAt !== null && isDueForCheck(pricedAt, ctx.clock.now())),
   };
 }
 

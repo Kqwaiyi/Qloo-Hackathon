@@ -231,6 +231,7 @@ export async function createTestHarness({
       ai,
       blob,
       stylings,
+      productSearch,
       requestHeaders: browser.requestHeaders(),
       responseCookies: browser.responseCookies,
     }),

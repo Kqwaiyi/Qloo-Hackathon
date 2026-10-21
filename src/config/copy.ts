@@ -61,6 +61,10 @@ export const COPY = {
   aiGenerated: "AI-generated",
   /** On every Outfit card with Product Pieces, whose Preview is drawn from their sellers' photos. */
   productPhotoCredit: "Product photos © their sellers",
+  /** In place of the price and link of a Product its latest check found no longer offered. */
+  noLongerAvailable: "No longer available",
+  /** After "Whole Outfit about <amount>", when that total leaves out Products no longer available. */
+  leavesOutOfTotal: (pieces: number) => `(leaves out ${pieces} ${pieces === 1 ? "Piece" : "Pieces"} no longer available)`,
   /** Beside every sample person's photo on the landing page, with `aiGeneratedPersonAlt` as its alt text. */
   aiGeneratedPerson: "AI-generated person: not a real person.",
   aiGeneratedPersonAlt: "AI-generated photo of a fictional person",

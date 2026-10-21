@@ -289,6 +289,7 @@ describe("each Outfit's Pieces", () => {
         styleIconName: "Ava Stone",
         preview: { state: "ready", url: expect.any(String) },
         total: null,
+        leftOutOfTotal: 0,
         pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone"), brand: null, product: null }],
       },
       {
@@ -297,6 +298,7 @@ describe("each Outfit's Pieces", () => {
         styleIconName: "Bea Marsh",
         preview: { state: "ready", url: expect.any(String) },
         total: null,
+        leftOutOfTotal: 0,
         pieces: [{ category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Bea Marsh"), brand: null, product: null }],
       },
     ]);
@@ -441,7 +443,7 @@ describe("a body photo's Outfits", () => {
     await harness.stylings.runPending();
 
     const { outfits } = (await readConsultation(harness.context(browser), consultationId))!;
-    expect(outfits.map((o) => [o.styleIconName, o.pieces.map((p) => [p.category, p.brand?.name ?? null, p.product?.url ?? null])])).toEqual([
+    expect(outfits.map((o) => [o.styleIconName, o.pieces.map((p) => [p.category, p.brand?.name ?? null, p.product?.available ? p.product.url : null])])).toEqual([
       [
         "Ava Stone",
         [
@@ -888,27 +890,28 @@ describe("a body photo's Products", () => {
         preview: { state: "ready", url: expect.any(String) },
         // 45, 50 and 60 dollars.
         total: "$155",
+        leftOutOfTotal: 0,
         pieces: [
           {
             category: "top",
             item: "Product c3-bolt-top-1",
             why: expect.stringContaining("Ava Stone"),
             brand: { name: "Bolt", priceRange: null, visitUrl: null },
-            product: { price: "$45", pricedOn: "2026-10-21", url: "https://shop.example/products/c3-bolt-top-1", shopDomain: "shop.example" },
+            product: { available: true, price: "$45", pricedOn: "2026-10-21", url: "https://shop.example/products/c3-bolt-top-1", shopDomain: "shop.example" },
           },
           {
             category: "bottom",
             item: "Product c3-jeanery-bottom-1",
             why: expect.stringContaining("Ava Stone"),
             brand: { name: "Jeanery", priceRange: null, visitUrl: null },
-            product: { price: "$50", pricedOn: "2026-10-21", url: "https://shop.example/products/c3-jeanery-bottom-1", shopDomain: "shop.example" },
+            product: { available: true, price: "$50", pricedOn: "2026-10-21", url: "https://shop.example/products/c3-jeanery-bottom-1", shopDomain: "shop.example" },
           },
           {
             category: "shoes",
             item: "Product c3-stride-shoes-1",
             why: expect.stringContaining("Ava Stone"),
             brand: { name: "Stride", priceRange: null, visitUrl: null },
-            product: { price: "$60", pricedOn: "2026-10-21", url: "https://shop.example/products/c3-stride-shoes-1", shopDomain: "shop.example" },
+            product: { available: true, price: "$60", pricedOn: "2026-10-21", url: "https://shop.example/products/c3-stride-shoes-1", shopDomain: "shop.example" },
           },
         ],
       },
@@ -1450,7 +1453,13 @@ describe("a body photo's One-Pieces", () => {
             item: "Product c3-bolt-one_piece-1",
             why: expect.stringContaining("Ava Stone"),
             brand: { name: "Bolt", priceRange: null, visitUrl: null },
-            product: { price: "$45", pricedOn: "2026-10-21", url: "https://shop.example/products/c3-bolt-one_piece-1", shopDomain: "shop.example" },
+            product: {
+              available: true,
+              price: "$45",
+              pricedOn: "2026-10-21",
+              url: "https://shop.example/products/c3-bolt-one_piece-1",
+              shopDomain: "shop.example",
+            },
           },
           expect.objectContaining({ category: "shoes", item: "Product c3-stride-shoes-1" }),
         ],
@@ -1560,6 +1569,7 @@ describe("a Consultation made before Products", () => {
         preview: { state: "ready", url: expect.any(String) },
         // Stride 60–180, Bolt 20–120 and Jeanery 50–110.
         total: "$130–$410",
+        leftOutOfTotal: 0,
         pieces: [
           { category: "hairstyle", item: expect.any(String), why: expect.stringContaining("Ava Stone"), brand: null, product: null },
           {

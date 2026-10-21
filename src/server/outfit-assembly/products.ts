@@ -85,6 +85,19 @@ export function chosenOffer(offers: readonly ProductOffer[], { priceFilter, offi
   return buyable.find((offer) => brandHost !== null && withoutWww(offer.shopDomain) === brandHost) ?? buyable[0] ?? null;
 }
 
+/**
+ * Whether a Product Piece priced at `pricedAt`, when it was found or last checked, is due its daily
+ * check: it wasn't priced today, by the date its price is shown with.
+ */
+export function isDueForCheck(pricedAt: Date, now: Date): boolean {
+  return pricedOn(pricedAt) < pricedOn(now);
+}
+
+/** The date a Product's price is shown with, "on 21 Oct", for when it was found or last checked: its UTC date, as YYYY-MM-DD. */
+export function pricedOn(pricedAt: Date): string {
+  return pricedAt.toISOString().slice(0, 10);
+}
+
 /** No rate is stored for a market's currency, so a search there can't be held to its Brand's price range. */
 export class NoExchangeRateError extends Error {
   constructor(readonly currency: string) {

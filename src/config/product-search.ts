@@ -81,6 +81,12 @@ export const BRAND_MATCH_LIFETIME_DAYS = 30;
 /** A Styling retries each product-search call this many times, backing off longer each time on "too many requests". */
 export const PRODUCT_SEARCH_STEP_MAX_RETRIES = 5;
 
+/**
+ * The price refresh never has more Product checks than this waiting at once, as a Styling has no
+ * more product-search calls: Channel3's rate limit is shared by every call the app makes.
+ */
+export const PRODUCT_CHECKS_AT_ONCE = 3;
+
 // Product photos, which each Preview step fetches from their sellers and never keeps.
 
 /** A Product photo that hasn't fully arrived this long after it was asked for doesn't count. */

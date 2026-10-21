@@ -120,6 +120,7 @@ describe("the landing page", () => {
         position: 1,
         styleIconName: "Dev Rowe",
         total: "US$130–US$410",
+        leftOutOfTotal: 0,
         pieces: [
           FULL_BODY.outfit.pieces[0],
           { ...FULL_BODY.outfit.pieces[1], brand: { name: "Bolt", priceRange: "US$20–US$120", visitUrl: "https://bolt.example/" } },
@@ -184,6 +185,7 @@ describe("the team exporting a Demo Account Consultation as a landing page sampl
     await harness.stylings.runPending();
     // Each Product as the fake Channel3 sells it in the United Kingdom.
     const product = (id: string) => ({
+      available: true,
       price: { amount: 45, currency: "GBP" },
       pricedOn: "2026-10-16",
       url: `https://shop.example/products/${id}`,

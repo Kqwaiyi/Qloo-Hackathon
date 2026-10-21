@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { textLink } from "@/components/ui";
 import { CATEGORY_LABELS } from "@/config/consultations";
 import { COPY } from "@/config/copy";
-import type { OutfitCardContent, PieceView, ProductView } from "@/server/operations/consultations";
+import type { OfferView, OutfitCardContent, PieceView } from "@/server/operations/consultations";
 
 // The Outfit card, as the results page shows it and the landing page reuses it.
 
@@ -22,7 +22,12 @@ export function OutfitCard({ outfit, preview }: { outfit: OutfitCardContent; pre
           <h2 className="text-lg font-semibold">
             Outfit {outfit.position} · Inspired by {outfit.styleIconName}
           </h2>
-          {outfit.total && <p className="text-sm text-stone-600">Whole Outfit about {outfit.total}</p>}
+          {outfit.total && (
+            <p className="text-sm text-stone-600">
+              Whole Outfit about {outfit.total}
+              {outfit.leftOutOfTotal > 0 && ` ${COPY.leavesOutOfTotal(outfit.leftOutOfTotal)}`}
+            </p>
+          )}
           {outfit.pieces.length > 0 && (
             <ul aria-label="Pieces" className="mt-3">
               {outfit.pieces.map((piece) => (
@@ -49,10 +54,10 @@ export function AiGeneratedBadge({ className = "top-2 left-2" }: { className?: s
 
 /**
  * A Piece's row. A Product Piece names its Product, by its title, and its Brand, with its dated price
- * and a "View at <shop domain>" link to its page. An older Piece names its Brand, with the Brand's
- * price range and a "Visit <Brand>" link when it has them. The Hairstyle names its Style Icon
- * instead, with no price or link: it isn't something to buy. Every price comes written for the
- * viewer, in their Country's currency.
+ * and a "View at <shop domain>" link to its page, or "No longer available" in their place once it's
+ * no longer offered. An older Piece names its Brand, with the Brand's price range and a "Visit
+ * <Brand>" link when it has them. The Hairstyle names its Style Icon instead, with no price or link:
+ * it isn't something to buy. Every price comes written for the viewer, in their Country's currency.
  */
 function PieceRow({ piece, styleIconName }: { piece: PieceView; styleIconName: string }) {
   const { brand, product } = piece;
@@ -66,8 +71,14 @@ function PieceRow({ piece, styleIconName }: { piece: PieceView; styleIconName: s
       </div>
       {product ? (
         <div className="col-start-2 text-sm @sm:col-start-auto @sm:text-right">
-          <div className="font-medium">{productPriceText(product)}</div>
-          <NewTabLink href={product.url}>View at {product.shopDomain}</NewTabLink>
+          {product.available ? (
+            <>
+              <div className="font-medium">{productPriceText(product)}</div>
+              <NewTabLink href={product.url}>View at {product.shopDomain}</NewTabLink>
+            </>
+          ) : (
+            <div className="font-medium text-stone-500">{COPY.noLongerAvailable}</div>
+          )}
         </div>
       ) : (
         brand &&
@@ -100,7 +111,7 @@ export function builtOn(piece: PieceView, styleIconName: string): string {
 }
 
 /** A Product's price and the day it was found, such as "≈ Rp 809,370 on 21 Oct" or "€45 on 21 Oct". */
-export function productPriceText({ price, pricedOn }: ProductView): string {
+export function productPriceText({ price, pricedOn }: OfferView): string {
   return `${price} on ${dayText(pricedOn)}`;
 }
 

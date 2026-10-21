@@ -7,12 +7,14 @@ import { OUTFIT_ALLOWANCE, PHOTO_CHECK_LIMIT } from "@/config/limits";
 import { needsPhotoConsent } from "@/server/accounts/photo-consent";
 import { consultation, qlooCache, qlooLimitState, usageRecord } from "@/server/db/schema";
 import { readConsultation, startConsultation } from "@/server/operations/consultations";
+import { refreshPrices } from "@/server/operations/price-refresh";
 import { readSignedInUser } from "@/server/operations/session";
 import { signIn } from "@/server/operations/sign-in";
 import { signUp } from "@/server/operations/sign-up";
 import { createDemoAccount } from "@/server/operations/team";
 import { changePhotoStyle, showMoreOutfits } from "@/server/operations/stylings";
 import { readUsageSummary } from "@/server/operations/usage";
+import { channel3Offer, channel3Product, channel3ProductDetail, channel3SellingEveryBrand } from "@/server/product-search/fake-channel3";
 import { qlooBrand, qlooPerson, qlooResponse } from "@/server/qloo/fake";
 import { saveQlooLimitState } from "@/server/qloo/limit-state";
 import { recordUsage } from "@/server/usage/records";
@@ -57,6 +59,7 @@ beforeEach(async () => {
   harness.stylings.pending.length = 0;
   harness.qloo.requests.length = 0;
   harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+  harness.channel3.respond = channel3SellingEveryBrand();
   await harness.db.delete(qlooCache);
   // The app-wide caps count every user's Outfits, so each test starts with none made, and with no
   // report from Qloo of the calls left.
@@ -232,7 +235,7 @@ describe("Stylings on the Demo Account", () => {
     await harness.stylings.runPending();
 
     const { outfits } = (await readConsultation(harness.context(judge), started.consultationId))!;
-    expect(outfits.map((o) => o.pieces.map((p) => [p.category, p.brand?.name, p.product?.shopDomain]))).toEqual([
+    expect(outfits.map((o) => o.pieces.map((p) => [p.category, p.brand?.name, p.product?.available ? p.product.shopDomain : undefined]))).toEqual([
       [
         ["top", "Bolt", "shop.example"],
         ["bottom", "Jeanery", "shop.example"],
@@ -244,6 +247,26 @@ describe("Stylings on the Demo Account", () => {
         ["shoes", "Sole", "shop.example"],
       ],
     ]);
+  });
+
+  it("have their Products' prices refreshed by any judge who opens them, as every judge sees every Consultation on it", async () => {
+    harness.qloo.respond = (request) =>
+      qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
+    const judge = await signedInJudge();
+    const started = await startConsultation(harness.context(judge), { photo: await jpeg(), photoType: "body_only", consent: BOTH_CONSENT_BOXES_TICKED });
+    if (!started.ok) throw new Error(`Couldn't start a Consultation: ${started.refusal}`);
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-17T09:00:00Z");
+    harness.channel3.respond = channel3SellingEveryBrand({
+      checks: ({ productId }) => channel3ProductDetail(channel3Product(productId, { offers: [channel3Offer({ price: 52 })] })),
+    });
+
+    expect(await refreshPrices(harness.context(await signedInJudge()), started.consultationId)).toEqual({ ok: true });
+
+    const { outfits } = (await readConsultation(harness.context(judge), started.consultationId))!;
+    expect(outfits.flatMap((o) => o.pieces.map((p) => (p.product?.available ? [p.product.price, p.product.pricedOn] : null)))).toEqual(
+      Array.from({ length: 6 }, () => ["$52", "2026-10-17"]),
+    );
   });
 
   it("still run one Styling at a time on each Consultation, also when two judges press at once", async () => {
