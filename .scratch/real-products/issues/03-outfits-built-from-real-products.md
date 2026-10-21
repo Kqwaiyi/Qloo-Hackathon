@@ -1,0 +1,25 @@
+# 03: Outfits built from real Products
+
+**What to build:** A user's body-photo Consultation shows Outfits whose Top, Bottom and Shoes are real Products. Each Piece is searched in its Brand's range, the AI picks one Product per Category from the real candidates and writes why it suits the user, and the card names the Product, its Brand, its price and date, and links to the shop that sells it. This is the tracer bullet for Product Pieces; later tickets add Product photos in the Preview (04), the next-Brand fallback (05), One-Pieces (06), currency conversion (07), price refresh (08) and limits (09).
+
+**Blocked by:** 02
+
+**Status:** ready-for-agent
+
+**Spec:** [spec.md](../spec.md) sections "Implementation Decisions › Candidates", "Choosing the offer", "Tailoring contract", "Removing the generic path", "Data model" (Piece and Candidates), "Pages and copy" (the Product Piece row, the total, the credit, older Pieces), and "Testing Decisions" (Seam 1, Seam 2, the Gemini adapter, the browser smoke test). Stories 1–12, 13, 19, 23, 24, 46, 48–53, 66 and 72.
+
+- [ ] Each Outfit's Top, Bottom and Shoes get one search each: the Brand's Products in that Category and the Outfit's line (the line's gender plus unisex), in the Styling's market, in stock, within the Brand's Qloo price range. Until 07 converts, the price filter is sent only when the market's currency is USD. The market is chosen once per Styling from the user's Country at its start.
+- [ ] A Product qualifies when one of its Brands is the matched Brand, it has a hero or flat-lay photo (the background-removed version when there is one), and it has a new, in-stock offer within the price filter. Up to 8 qualifying Products per Category are kept, in Channel3's order.
+- [ ] Each search is its own Workflow step. Its candidates are saved with the Outfit try and deleted when the Styling finishes, however it finishes. Nothing is reused by a later Styling.
+- [ ] Until 05 lands: a search with no qualifying candidate skips the Style Icon like one that can't complete an Outfit; a search that still errors after its retries breaks the Styling.
+- [ ] The offer whose shop domain matches the host of Qloo's official site (ignoring `www.`, http or https) wins; otherwise the first new, in-stock offer. Never second-hand; no affiliate parameters.
+- [ ] Tailoring's input carries, for each Brand Piece, its Brand and its candidates (ID, title, description, colours), never their images. Its reply gives each Brand Piece the chosen candidate's ID and its "why"; the Hairstyle's input and reply are unchanged. The check accepts exactly one Piece per Category, IDs from that Category's candidates only, and every "why" non-empty and free of prices; a bad reply is asked again once. The prompt drops the rule against product names and keeps every other rule.
+- [ ] A Product Piece stores the Product's ID, its title (as the item), the chosen photo's URL, the offer's URL and shop domain, the price and currency, the market, the date found, and that it's available. A check constraint keeps these all set for Product Pieces and all empty for older Pieces. Product Pieces have no hidden Preview description. A new migration adds the columns and the candidates table.
+- [ ] The tailoring code that invented Top, Bottom and Shoes items is gone. The fake AI adapter's tailoring picks the first candidate in each Category and writes a "why" naming the Style Icon.
+- [ ] Until 04 lands, the Preview draws each Product from its title.
+- [ ] A Product Piece's row shows its Category, the Product's title, its Brand's name below it, the "why", the price in the offer's own currency with its date ("€45 on 21 Oct", whole units), and "View at <shop domain> ↗" opening in a new tab with `noopener noreferrer`. A card with Product Pieces says "Product photos © their sellers". "Whole Outfit about <amount>" sums its Products' prices.
+- [ ] Older Pieces still show their AI-described items, Brand price ranges and Visit links. "Show 2 more Outfits", a Budget Tier change and a Photo Style change on an older Consultation make Product Pieces. The Hairstyle, Face Photo Consultations and the Outfit Allowance work as today.
+- [ ] Tests at Seam 1: a body-photo Styling saving Product Pieces with title, offer, price, currency, market and date; search requests always carrying the market, the Brand and in-stock, and the price range for USD markets; candidates deleted when the Styling finishes or fails; the offer rule's choice reaching the Piece; older Pieces still read and shown; new Stylings on an older Consultation making Product Pieces; the Demo Account getting Product Pieces.
+- [ ] Tests at Seam 2: which Products qualify (Brand, shot type, background-removed photo, condition, stock, price, line or unisex) and which offer wins.
+- [ ] Gemini adapter tests: the tailoring request carries candidates as text and no image but the user's photo, and the reply check accepts only listed candidate IDs.
+- [ ] The browser smoke test's "two Outfit cards" flow, on the fake product search, checks a Product title, a "View at" link and a dated price.
