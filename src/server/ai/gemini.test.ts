@@ -406,6 +406,16 @@ describe("tailoring", () => {
     expect(text).not.toMatch(/generic|US dollars/);
   });
 
+  it("tells the model to tailor the Outfit to the Main Person, as the most prominent person in the photo, matching colours to what they're wearing, not anyone else's", async () => {
+    gemini.respond = () => geminiJson(TAILORED);
+
+    await ai.tailorPieces(TAILORING);
+
+    const text = textOf(gemini.requests[0]!);
+    expect(text).toMatch(/for the most prominent person in the photo/i);
+    expect(text).toMatch(/match colours to what they're wearing, not to anyone else/i);
+  });
+
   it("gets a reply our check accepts only when each Brand Piece is one of its own Category's listed candidates", async () => {
     gemini.respond = () => geminiJson(TAILORED);
     expect(checkTailoredPieces(await ai.tailorPieces(TAILORING), TAILORING.pieces)).toEqual([
@@ -520,7 +530,23 @@ describe("Previews", () => {
     const text = textOf(gemini.requests[0]!);
     expect(text).toMatch(/take only the garment/i);
     expect(text).toMatch(/ignore any person, mannequin or other clothing/i);
-    expect(text).toContain("Keep everything else exactly as it is:\n- the person's face and identity");
+    expect(text).toContain("Keep everything else exactly as it is:\n- the most prominent person's face and identity");
+  });
+
+  it.each<[string, PreviewInput]>([
+    ["a Face Photo's hair", { ...PREVIEW, photoType: "face", pieces: [PREVIEW.pieces[0]!] }],
+    ["a Full-Body Photo's Outfit", PREVIEW],
+    ["a Full-Body Photo's Outfit with no Product photos", { ...PREVIEW, pieces: PREVIEW.pieces.map((piece) => (piece.category === "hairstyle" ? piece : { ...piece, photo: null })) }],
+    ["a Body-Only Photo's Outfit", { ...PREVIEW, photoType: "body_only", pieces: PREVIEW.pieces.slice(1) }],
+  ])("tells the model to change only the Main Person, as the most prominent person in the photo, for %s, keeping every other person exactly as they are", async (_change, preview) => {
+    gemini.respond = () => geminiImage(DRAWN);
+
+    await ai.renderPreview(preview);
+
+    const text = textOf(gemini.requests[0]!);
+    const [instruction] = text.split("\n");
+    expect(instruction).toMatch(/the most prominent person in the photo/i);
+    expect(text).toContain("- every other person in the photo, exactly as they are");
   });
 
   it("draws a Product whose photo couldn't be fetched from its title, numbering the photos after it in turn", async () => {

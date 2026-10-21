@@ -240,7 +240,7 @@ When there is nobody in the photo, every part of visible is false and photoStyle
 
 Never guess the person's age. Never infer their ethnicity, skin tone, body measurements or health, and never mention them.`;
 
-const TAILORING_PROMPT = `You are the stylist in a styling app. For the person in the photo, you make one Outfit concrete. Its picks are already made: the Style Icon who inspires it, and the Brand each clothing Piece comes from. Each clothing Piece comes with its Brand's real products, as candidates: you pick one of them. For the Hairstyle, you choose one haircut. Choose so that the Outfit goes together and suits the person in the photo, their Photo Style and the Style Icon. You may use the photo to match colours to what they're wearing.
+const TAILORING_PROMPT = `You are the stylist in a styling app. For the most prominent person in the photo, you make one Outfit concrete. Anyone else in the photo isn't styled: ignore them, and "the person" always means the most prominent one. The Outfit's picks are already made: the Style Icon who inspires it, and the Brand each clothing Piece comes from. Each clothing Piece comes with its Brand's real products, as candidates: you pick one of them. For the Hairstyle, you choose one haircut. Choose so that the Outfit goes together and suits the person, their Photo Style and the Style Icon. You may use the photo to match colours to what they're wearing, not to anyone else.
 
 Reply with one Piece per category you're given, in the order given, or with a one_piece in place of the top and the bottom (see below), each with:
 - category: the Piece's category, as given.
@@ -325,8 +325,9 @@ function productPhotos(pieces: readonly PreviewPiece[]): Photo[] {
 
 /**
  * The instruction for one Preview: change only the Pieces, the Hairstyle by its details and each
- * Product by its seller's photo, named by its image, or by its title when it has none. Keep
- * everything else. It never names the Style Icon, which the Preview isn't told.
+ * Product by its seller's photo, named by its image, or by its title when it has none, on the
+ * Main Person alone, named only as the most prominent person (ADR-0009). Keep everything else,
+ * everyone else in the photo included. It never names the Style Icon, which the Preview isn't told.
  */
 function previewInstruction({ photoType, pieces }: PreviewInput): string {
   const changesHair = pieces.some(({ category }) => category === "hairstyle");
@@ -340,10 +341,11 @@ function previewInstruction({ photoType, pieces }: PreviewInput): string {
     return piece.photo ? `- ${label}: the garment in image ${photos.indexOf(piece.photo) + 2}, "${title}"` : `- ${label}: ${title}`;
   });
   const kept = [
-    "the person's face and identity",
+    "the most prominent person's face and identity",
     "their body shape and size: never slim, reshape or beautify them",
     "their skin tone",
     "their pose, the background and the lighting",
+    "every other person in the photo, exactly as they are",
     "the framing and aspect ratio of the photo",
     "any glasses, jewellery and bags",
     "any head covering: never remove or change it",
@@ -354,10 +356,10 @@ function previewInstruction({ photoType, pieces }: PreviewInput): string {
   ];
   return [
     photoType === "face"
-      ? "Edit this photo of a person. Change only their hair, to this:"
+      ? "Edit this photo of a person. Change only the hair of the most prominent person in the photo, to this:"
       : withProductPhotos
-        ? "Image 1 is a photo of a person. Edit it so the person is wearing the outfit below. Change only these items:"
-        : "Edit this photo so the person is wearing the outfit below. Change only these items:",
+        ? "Image 1 is a photo of a person. Edit it so the most prominent person in the photo is wearing the outfit below. Change only these items:"
+        : "Edit this photo so the most prominent person in the photo is wearing the outfit below. Change only these items:",
     ...changes,
     ...(withProductPhotos
       ? [
