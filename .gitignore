@@ -5,6 +5,9 @@
 # Claude Code agent worktrees
 .claude/worktrees/
 
+# Claude Code agent definitions
+.claude/agents/
+
 # Dependencies and builds
 node_modules/
 .next/
