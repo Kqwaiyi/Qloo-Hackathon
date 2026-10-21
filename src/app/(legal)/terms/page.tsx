@@ -13,8 +13,9 @@ import { bulletList, LegalSection, paragraph, TeamEmailLink } from "../legal-tex
 export const metadata: Metadata = { title: "Terms" };
 
 /**
- * The Terms: the 18+ rule, the content rules, and that this is a free hackathon project with no
- * affiliation with Style Icons or Brands. Public, with no sign-in.
+ * The Terms: the 18+ rule, the content rules, that this is a free hackathon project with no
+ * affiliation with Style Icons or Brands, and where Products, their prices, links and photos come
+ * from. Public, with no sign-in.
  */
 export default function Page() {
   const teamEmail = getTeamEmail();
@@ -36,8 +37,7 @@ export default function Page() {
         </p>
         <p className={paragraph}>
           {COPY.notAffiliated} Style Icons are named because Qloo finds them popular with people like you, not because they
-          endorse the app. Each Brand links to its own website, with no affiliate links, and its price range comes from
-          Qloo&apos;s data, so check the Brand&apos;s own site for real prices.
+          endorse the app.
         </p>
       </LegalSection>
 
@@ -63,6 +63,33 @@ export default function Page() {
           <li>
             Each account can make up to {OUTFIT_ALLOWANCE} Outfits a day, and the whole app has daily and monthly limits.
             Don&apos;t try to get around them, or to disrupt the app or anyone else&apos;s account.
+          </li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection id="products" title="Products and prices">
+        <ul className={bulletList}>
+          <li>
+            Each Product&apos;s name, price and link come from its seller, as our product search, Channel3, finds them. A
+            price is dated with when we found or last checked it, and the seller may have changed it, or stopped selling the
+            Product, since. Check the seller&apos;s own page before you buy.
+          </li>
+          <li>
+            An Outfit made before Pieces were real Products shows each Brand&apos;s price range from Qloo&apos;s data
+            instead, so check the Brand&apos;s own site for real prices.
+          </li>
+          <li>
+            A price converted into your Country&apos;s currency is marked &ldquo;≈&rdquo;: it uses our latest daily
+            exchange rates, so it&apos;s only approximate.
+          </li>
+          <li>
+            Qurator sells none of these Products and earns nothing from its links: none of them is an affiliate link.
+            Anything you buy, you buy from the Product&apos;s seller, on the seller&apos;s own terms.
+          </li>
+          <li>
+            Product photos belong to their sellers. Qurator uses them only to draw your Previews, and never keeps them. If you
+            sell a Product and want its photos taken out of Qurator, email{" "}
+            <TeamEmailLink teamEmail={teamEmail} subject="Product photos" /> and we&apos;ll take them out.
           </li>
         </ul>
       </LegalSection>

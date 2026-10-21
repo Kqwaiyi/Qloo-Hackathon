@@ -85,8 +85,7 @@ export function ReadyToShop({ sample }: { sample: LandingSampleView }) {
             </div>
           )}
           <p data-reveal="blur" className="mt-6 max-w-[44ch] text-body text-mute">
-            Each Piece names its Brand, its price range and, where there is one, its site. Change the Budget Tier or Photo Style and Qloo picks
-            again.
+            Each Piece names its Product, its shop and its price. Change the Budget Tier or Photo Style and Qloo picks again.
           </p>
         </div>
       </div>

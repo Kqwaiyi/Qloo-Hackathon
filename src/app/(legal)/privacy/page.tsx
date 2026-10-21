@@ -53,8 +53,9 @@ function section(id: SectionId): { id: SectionId; title: string } {
 }
 
 /**
- * The Privacy Policy, everything the spec's "Privacy Policy and Terms" section lists. Public, with
- * no sign-in. Its retention promises read their numbers from config, so they follow the rules.
+ * The Privacy Policy, everything the spec's "Privacy Policy and Terms" section lists, with the
+ * Real Products spec's product search and Product photos. Public, with no sign-in. Its retention
+ * promises read their numbers from config, so they follow the rules.
  */
 export default function Page() {
   const teamEmail = getTeamEmail();
@@ -107,8 +108,8 @@ export default function Page() {
             identify anyone or to infer sensitive traits (see <a href="#photos" className={textLink}>Photos</a>);
           </li>
           <li>
-            the risk to you is low: we keep little, Qloo receives nothing that identifies you, and everything is deleted on the
-            schedule below, or as soon as you ask.
+            the risk to you is low: we keep little, Qloo and Channel3 receive nothing that identifies you, and everything is
+            deleted on the schedule below, or as soon as you ask.
           </li>
         </ul>
         <p className={paragraph}>
@@ -214,15 +215,26 @@ export default function Page() {
           <li>
             <strong>Google&apos;s Gemini</strong>, our AI provider, gets your photos as our processor. With each one it gets
             only what it needs to check the photo, tailor each Outfit and draw its Preview: the Photo Type, your age group, the
-            Photo Style, whether the Outfit is menswear or womenswear, the Style Icon&apos;s name and the Brands. It never gets
-            your username, email, Country or Budget Tier. Google keeps a copy for 55 days to detect abuse, and doesn&apos;t use
-            it to improve its products.
+            Photo Style, whether the Outfit is menswear or womenswear, the Style Icon&apos;s name, the Brands, the names,
+            descriptions and colours of the Brands&apos; Products to pick from, and the sellers&apos; photos of the Products picked (see{" "}
+            <a href="#previews" className={textLink}>
+              Previews are AI-generated
+            </a>
+            ). It never gets your username, email, Country or Budget Tier. Google keeps a copy for 55 days to detect abuse,
+            and doesn&apos;t use it to improve its products.
           </li>
           <li>
             <strong>Qloo</strong>, which picks the Style Icons and Brands, gets only your age group, a gender signal
             (menswear or womenswear, from your Style Preference), your Country, the Photo Style&apos;s tags, and the IDs of
             Style Icons and Brands. It never gets your username, email, user ID or photo, or anything that links two requests
             to you.
+          </li>
+          <li>
+            <strong>Channel3</strong>, our product search, finds the real Products each Brand sells. It gets only the Brand
+            (its name and website), the Category, whether the Outfit is menswear or womenswear, the Brand&apos;s price range,
+            and the country searched, which comes from your Country. When you open a Consultation later, it gets its
+            Products&apos; IDs and the country each was found in, to check their prices. It never gets your photo or anything
+            about your account: not your username, email or user ID, or anything that links two requests to you.
           </li>
           <li>
             <strong>Our hosting, database and storage providers:</strong> Vercel hosts the app, stores your photos and
@@ -255,7 +267,7 @@ export default function Page() {
           European Commission&apos;s Standard Contractual Clauses and the UK&apos;s addendum to them. Email addresses in Gmail
           are covered by Google&apos;s own privacy policy and its safeguards, and Cloudflare&apos;s own privacy policy
           likewise covers what it uses to improve its bot detection. Qloo, also in the United States, receives nothing that
-          identifies you.
+          identifies you, and nor does Channel3.
         </p>
       </LegalSection>
 
@@ -296,7 +308,7 @@ export default function Page() {
           <li>
             <strong>Workflow run data</strong>, Vercel&apos;s record of each Styling&apos;s steps: deleted as soon as the
             Styling ends. It holds where photos and Previews are stored, the Style Icons and the Pieces&apos; text, never
-            the images themselves.
+            the images themselves, Product photos included.
           </li>
           <li>
             <strong>Database backups</strong>: Neon&apos;s restore window keeps earlier states of the database for 6 hours.
@@ -385,7 +397,14 @@ export default function Page() {
       <LegalSection {...section("previews")}>
         <p className={paragraph}>
           A Preview is made by AI: it edits your photo to show you wearing an Outfit. Every Preview is labelled &ldquo;
-          {COPY.aiGenerated}&rdquo; wherever the app shows it. It&apos;s an illustration of the Outfit, not a photo of real clothes.
+          {COPY.aiGenerated}&rdquo; wherever the app shows it. It&apos;s an illustration of how the Outfit could look on you,
+          not a photo of you in the real clothes.
+        </p>
+        <p className={paragraph}>
+          Each Product in a Preview is drawn from its seller&apos;s own photo of it, or from its name when that photo
+          can&apos;t be fetched. To draw a Preview, the app fetches those photos and sends them to Google&apos;s Gemini with
+          your photo. It fetches them only while it draws the Preview, and never keeps them: no Product photo is stored with
+          your photos, in our database or in our logs.
         </p>
       </LegalSection>
 
@@ -400,9 +419,9 @@ export default function Page() {
       <LegalSection {...section("automated")}>
         <p className={paragraph}>
           Your Outfits are recommended automatically, with no person involved. AI reads the Photo Style from your photo. Qloo
-          then picks Style Icons and Brands from your age group, Style Preference and Country and that Photo Style, and AI turns
-          them into Pieces tailored to your photo and draws each Preview. The photo check is automated too, and can turn a
-          photo down.
+          then picks Style Icons and Brands from your age group, Style Preference and Country and that Photo Style. Channel3
+          finds each Brand&apos;s real Products, and AI picks those that suit your photo, tailors any Hairstyle to it and
+          draws each Preview. The photo check is automated too, and can turn a photo down.
         </p>
         <p className={paragraph}>
           None of this has a legal or similarly significant effect on you: it only suggests clothes and haircuts. You can
