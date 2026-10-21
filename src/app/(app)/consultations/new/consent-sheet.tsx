@@ -96,6 +96,10 @@ export function ConsentSheet({
               A Body-Only Photo can still show your face. If it does, your face is processed with the rest of the photo, and
               left as it is in your Previews.
             </li>
+            <li>
+              If anyone else is in your photo, it&apos;s stored and sent to Google with it, but only the main person is styled.
+              Please make sure you have the consent of everyone else in it.
+            </li>
           </ul>
 
           <h3 className="mt-6 text-sm font-medium">When you delete them</h3>

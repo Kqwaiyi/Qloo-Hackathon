@@ -50,6 +50,7 @@ export default function Page() {
 
       <LegalSection id="content-rules" title="What you may upload">
         <p className={paragraph}>{COPY.contentRules}</p>
+        <p className={paragraph}>If other people are in a photo, only upload it if they&apos;re fine with that.</p>
         <p className={paragraph}>
           Your photos stay yours. You let us store them and have AI process them only to make your Outfits and Previews, as
           the Privacy Policy describes, until you delete them. We may delete an account that breaks these rules.

@@ -74,7 +74,7 @@ export type EmailChangeStep = (typeof EMAIL_CHANGE_STEPS)[number];
  * COPY lines it shows. Raise it whenever that wording changes, so every user sees the sheet again
  * before their next Consultation.
  */
-export const PHOTO_NOTICE_VERSION = 2;
+export const PHOTO_NOTICE_VERSION = 3;
 
 /**
  * The Demo Account, the single shared account the judges use, is named by its email: the team

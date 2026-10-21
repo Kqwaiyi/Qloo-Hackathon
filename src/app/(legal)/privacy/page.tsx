@@ -346,6 +346,13 @@ export default function Page() {
           Previews and having AI process your face and body, for the purpose and the time described here. Ticking the second
           agrees to your photos being sent to Google&apos;s Gemini. We record which version you agreed to, and when.
         </p>
+        <h3 className={subheading}>Other people in your photo</h3>
+        <p className={paragraph}>
+          If anyone else is in your photo, they&apos;re stored and sent to Google&apos;s Gemini with it, because your
+          Previews edit the photo as it is. Only its Main Person, the one the photo is clearly of, is styled. Nobody else in it is ever styled, read or
+          identified, nothing about them is kept from the check, and they&apos;re deleted with the Consultation. Your release
+          covers only you, so please make sure you have the consent of everyone else in a photo before you send it.
+        </p>
         <h3 className={subheading}>Before a photo leaves your device</h3>
         <p className={paragraph}>
           Your browser redraws every photo before sending it, as a JPEG at most {PHOTO_MAX_LONG_SIDE_PX} pixels on its long
