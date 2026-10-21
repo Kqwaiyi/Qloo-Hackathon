@@ -135,6 +135,7 @@ describe("a new Consultation's first Styling", () => {
         outfitsWanted: 2,
         outfitsMade: 0,
         tailoringFailures: 0,
+        productSearches: 0,
         failureReason: null,
         workflowRunId: expect.any(String),
         market: "US",
@@ -1297,6 +1298,69 @@ describe("a body photo's Products", () => {
     // Ava Stone's Top, Bottom, Shoes and One-Piece.
     expect(browseRequests()).toHaveLength(4);
     expect(await candidatesOf(consultationId)).toEqual([]);
+  });
+
+  it("are searched for at most 24 times in a Styling, leaving a position it can't fill within them unfilled, as when the Style Icons run out", async () => {
+    // Bea Marsh's fans favour 20 Brands whose tops are never found, so her Top keeps moving on.
+    const plainBrands = Array.from({ length: 20 }, (_, index) =>
+      qlooBrand(`b-plain-${index + 1}`, `Plain${index + 1}`, { categories: ["apparel"], affinity: 0.8 - index / 100 }),
+    );
+    harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) =>
+      styleIconId === "w-2" ? [...BRANDS.filter((b) => b.name === "Stride" || b.name === "Sole"), ...plainBrands] : BRANDS,
+    );
+    harness.channel3.respond = channel3SellingEveryBrand({
+      products: (search) => (search.brandId.startsWith("c3-plain") && search.category === "top" ? [] : channel3SmallCatalogue(search)),
+    });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(browseRequests()).toHaveLength(24);
+    // Ava Stone's Outfit was found within them; its One-Piece search, waiting on Bea Marsh's Top, never was.
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => [p.category, p.brand?.name])])).toEqual([
+      [
+        "Ava Stone",
+        [
+          ["top", "Bolt"],
+          ["bottom", "Jeanery"],
+          ["shoes", "Stride"],
+        ],
+      ],
+    ]);
+    expect(productSearchesSent().filter(({ category }) => category === "one_piece")).toEqual([]);
+    expect(await stylingsOf(consultationId)).toEqual([
+      expect.objectContaining({ status: "succeeded", outfitsWanted: 2, outfitsMade: 1, tailoringFailures: 0, productSearches: 24 }),
+    ]);
+    expect(await styleIconStatuses(consultationId)).toEqual([
+      ["Ava Stone", "used"],
+      ["Bea Marsh", "unused"],
+      ["Cleo Hart", "unused"],
+    ]);
+    expect(harness.ai.tailoringRequests.map((request) => request.styleIconName)).toEqual(["Ava Stone"]);
+  });
+
+  it("count each search once, however many tries it takes, towards the Styling's 24 and this month's product searches", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    harness.stylings.searchRetries = 2;
+    const selling = channel3SellingEveryBrand();
+    let boltTopTries = 0;
+    harness.channel3.respond = (request) => {
+      if (request.url.pathname === "/v1/browse" && channel3Search(request).brandId === "c3-bolt" && channel3Search(request).category === "top") {
+        boltTopTries += 1;
+        if (boltTopTries <= 2) return Response.json({ detail: "Too many requests" }, { status: 429 });
+      }
+      return selling(request);
+    };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    // Ava Stone's Top, tried 3 times, and her Bottom, Shoes and One-Piece.
+    expect(browseRequests()).toHaveLength(6);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1, productSearches: 4 })]);
+    expect(await harness.db.$count(usageRecord, eq(usageRecord.kind, "product_search"))).toBe(4);
   });
 
   it("come from the market of the user's Country as each Styling starts, which a Country change since doesn't move", async () => {

@@ -323,8 +323,7 @@ export function planOutfitBrands(
     }
   }
   if (plan.lookUpBrands.length > 0) return plan;
-  const notSearched = ({ styleIconId, category, brand }: PieceSearch) =>
-    !searched.some((search) => search.styleIconId === styleIconId && search.category === category && search.brandEntityId === brand.entityId);
+  const notSearched = ({ styleIconId, category, brand }: PieceSearch) => !searchMade(searched, styleIconId, category, brand.entityId);
   const separates = plan.picked
     .flatMap(({ styleIconId, brands }) => BRAND_CATEGORIES.map((category) => ({ styleIconId, category, brand: brands[category] })))
     .filter(notSearched);
@@ -335,6 +334,21 @@ export function planOutfitBrands(
       ? separates
       : plan.picked.map(({ styleIconId, brands }): PieceSearch => ({ styleIconId, category: "one_piece", brand: productPieceBrand(brands, "one_piece") })).filter(notSearched);
   return plan;
+}
+
+/**
+ * The picks whose Top, Bottom and Shoes have each been found by a search on its Brand, which fixes
+ * them, so their Outfits can be tailored, whether or not their One-Pieces have been searched for.
+ */
+export function foundPicks(picked: OutfitBrandPlan["picked"], searched: PieceSearches): OutfitBrandPlan["picked"] {
+  return picked.filter(({ styleIconId, brands }) =>
+    BRAND_CATEGORIES.every((category) => searchMade(searched, styleIconId, category, brands[category].entityId)?.found),
+  );
+}
+
+/** The search the Styling made for a Style Icon's Piece in one Category on one Brand, if it has. */
+function searchMade(searched: PieceSearches, styleIconId: string, category: ProductCategory, brandEntityId: string): PieceSearchMade | undefined {
+  return searched.find((search) => search.styleIconId === styleIconId && search.category === category && search.brandEntityId === brandEntityId);
 }
 
 /** A Brand Piece's price range: its Brand's `price_range_usd_min`–`max`, or null without both. */

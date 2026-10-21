@@ -13,6 +13,7 @@ import { signIn } from "@/server/operations/sign-in";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { createDemoAccount } from "@/server/operations/team";
 import { qlooPerson, qlooResponse } from "@/server/qloo/fake";
+import { recordProductSearches } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities: enough Style Icons for a Face Photo's two Outfits.
@@ -318,6 +319,19 @@ describe("purges", () => {
     expect(await runDailySweep(harness)).toMatchObject({ usageRecordsPurged: 3, emailLogRowsPurged: 1, qlooCacheEntriesPurged: 0 });
     expect(await usageTimes()).toEqual([november, november, november]);
     expect(await emailLogTimes()).toEqual([november]);
+  });
+
+  it("purges the product searches the product-search backstop counts with the other usage records, once older than 35 days", async () => {
+    const october = new Date("2026-10-16T12:00:00Z");
+    const november = new Date("2026-11-01T12:00:00Z");
+    await recordProductSearches(harness.db, october, 2);
+    await recordProductSearches(harness.db, november, 1);
+
+    harness.clock.set("2026-11-20T12:00:00Z");
+    expect(await runDailySweep(harness)).toMatchObject({ usageRecordsPurged: 0 });
+    harness.clock.set("2026-11-20T12:01:00Z");
+    expect(await runDailySweep(harness)).toMatchObject({ usageRecordsPurged: 2 });
+    expect(await usageTimes()).toEqual([november]);
   });
 });
 

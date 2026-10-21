@@ -141,6 +141,13 @@
       "when": 1792584432974,
       "tag": "0019_exchange_rates",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792588399301,
+      "tag": "0020_product_search_usage",
+      "breakpoints": true
     }
   ]
 }

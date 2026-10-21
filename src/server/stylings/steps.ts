@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 
 import {
+  type BrandCategory,
   type BudgetTier,
   byCategoryOrder,
   CATEGORY_LABELS,
@@ -16,6 +17,7 @@ import {
   BRAND_FETCHES_UP_FRONT,
   isStuck,
   MAX_BRAND_FETCHES_PER_STYLING,
+  MAX_PRODUCT_SEARCHES_PER_STYLING,
   MAX_TAILORING_SUBSTITUTES,
   type PreviewRefusalReason,
   PRODUCT_CALLS_AT_ONCE,
@@ -43,6 +45,7 @@ import {
   type BrandPicks,
   brandQueries,
   brandsUsedBy,
+  foundPicks,
   fullestPool,
   isThinPool,
   needsBrands,
@@ -59,7 +62,7 @@ import type { ProductPhotos } from "@/server/product-photos/photos";
 import { lookUpBrandMatch, readBrandMatches } from "@/server/product-search/brand-matches";
 import { type ProductSearch, UnretryableProductSearchError } from "@/server/product-search/provider";
 import type { QlooBrand, QlooClient } from "@/server/qloo/client";
-import { recordUsage } from "@/server/usage/records";
+import { recordProductSearches, recordUsage } from "@/server/usage/records";
 
 import type { BuildOutfitsSteps, OutfitPlan, OutfitTry, StylingOutcome } from "./build-outfits";
 import { readBuildingBeside } from "./current-outfits";
@@ -156,6 +159,7 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
             budgetTier: styling.budgetTier,
             stage: styling.stage,
             tailoringFailures: styling.tailoringFailures,
+            productSearches: styling.productSearches,
             photoType: consultation.photoType,
             hairCovered: consultation.hairCovered,
           })
@@ -204,29 +208,45 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
         const plan = planOutfitBrands(ready, budgetTier, count, brandsUsedBy([...beside.outfits, ...made]), matches, searched);
         // Skipped quietly, and not a tailoring failure: the next Style Icon takes its place.
         if (plan.skipped.length > 0) await tx.update(styleIcon).set({ status: "skipped" }).where(inArray(styleIcon.id, plan.skipped));
-        // The picks' Brands are looked up a few at a time, in the order the picks use them: a later
-        // pick may change once an earlier pick's Brand turns out unknown. Their Pieces are searched
-        // the same way once they're all known: a later pick may change once an earlier one's
-        // search finds nothing.
-        const lookUpBrands = plan.lookUpBrands.slice(0, PRODUCT_CALLS_AT_ONCE);
-        const searchProducts = plan.searches.slice(0, PRODUCT_CALLS_AT_ONCE);
-        const stillWanted = count - plan.picked.length;
-        let fetchBrandsFor: string[] = [];
-        if (stillWanted > 0) {
-          const fetchedSoFar = Object.keys(brandsByStyleIcon).length;
-          // A first Styling fetches a spare up front, in case a Style Icon can't complete an Outfit.
-          const fetchCount = Math.min(
-            fetchedSoFar === 0 && planning!.kind === "first" ? BRAND_FETCHES_UP_FRONT : stillWanted,
-            MAX_BRAND_FETCHES_PER_STYLING - fetchedSoFar,
-            QLOO_CALLS_AT_ONCE,
-          );
-          fetchBrandsFor = icons.slice(ready.length, ready.length + Math.max(fetchCount, 0)).map((icon) => icon.id);
+        const searchesLeft = MAX_PRODUCT_SEARCHES_PER_STYLING - planning!.productSearches;
+        if (searchesLeft > 0) {
+          // The picks' Brands are looked up a few at a time, in the order the picks use them: a
+          // later pick may change once an earlier pick's Brand turns out unknown. Their Pieces are
+          // searched the same way once they're all known: a later pick may change once an earlier
+          // one's search finds nothing.
+          const lookUpBrands = plan.lookUpBrands.slice(0, PRODUCT_CALLS_AT_ONCE);
+          const searchProducts = plan.searches.slice(0, Math.min(PRODUCT_CALLS_AT_ONCE, searchesLeft));
+          const stillWanted = count - plan.picked.length;
+          let fetchBrandsFor: string[] = [];
+          if (stillWanted > 0) {
+            const fetchedSoFar = Object.keys(brandsByStyleIcon).length;
+            // A first Styling fetches a spare up front, in case a Style Icon can't complete an Outfit.
+            const fetchCount = Math.min(
+              fetchedSoFar === 0 && planning!.kind === "first" ? BRAND_FETCHES_UP_FRONT : stillWanted,
+              MAX_BRAND_FETCHES_PER_STYLING - fetchedSoFar,
+              QLOO_CALLS_AT_ONCE,
+            );
+            fetchBrandsFor = icons.slice(ready.length, ready.length + Math.max(fetchCount, 0)).map((icon) => icon.id);
+          }
+          // Each search counts once as it's set going, however many tries it takes: towards the
+          // Styling's own, and the product-search backstop's.
+          if (searchProducts.length > 0) {
+            await tx
+              .update(styling)
+              .set({ productSearches: sql`${styling.productSearches} + ${searchProducts.length}` })
+              .where(eq(styling.id, stylingId));
+            await recordProductSearches(tx, ctx.clock.now(), searchProducts.length);
+          }
+          if (fetchBrandsFor.length > 0 || lookUpBrands.length > 0 || searchProducts.length > 0) {
+            return { fetchBrandsFor, lookUpBrands, searchProducts, tries: [] };
+          }
         }
-        if (fetchBrandsFor.length > 0 || lookUpBrands.length > 0 || searchProducts.length > 0) {
-          return { fetchBrandsFor, lookUpBrands, searchProducts, tries: [] };
-        }
-        if (plan.picked.length > 0 && planning!.stage === "brands") await moveStage(tx, ctx.clock, stylingId, "building_outfits");
-        return tailoring(plan.picked.map((picked, index) => ({ position: open[index]!, styleIconId: picked.styleIconId, brands: picked.brands })));
+        // Every pick has been found by now, unless the Styling has made all the searches it may: then
+        // nothing more is worth fetching, looking up or searching, and only the picks already found
+        // are tailored. The other positions stay unfilled, as when the Style Icons run out.
+        const picked = foundPicks(plan.picked, searched);
+        if (picked.length > 0 && planning!.stage === "brands") await moveStage(tx, ctx.clock, stylingId, "building_outfits");
+        return tailoring(picked.map((found, index) => ({ position: open[index]!, styleIconId: found.styleIconId, brands: found.brands })));
       });
     },
 
@@ -307,7 +327,7 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
       const asked: TailoringPiece[] = categories.map((category) => {
         if (!isBrandCategory(category)) return { category };
         // The Top Brand's One-Pieces come beside the Top's candidates, when it has any (ADR-0003).
-        const onePieces = category === "top" ? searches!.one_piece.candidates : [];
+        const onePieces = category === "top" ? (searches!.one_piece?.candidates ?? []) : [];
         return {
           category,
           brand: tailoringBrand(brands![category]),
@@ -364,7 +384,8 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
             // One-Piece is the Top Brand's, and leaves the Bottom Brand out, still reserved (ADR-0003).
             const { category, productId, why } = tailored;
             const brand = productPieceBrand(brands!, category);
-            const { candidates, searchedAt } = searches![category];
+            // A One-Piece is only ever picked from its search's candidates, so it has some.
+            const { candidates, searchedAt } = searches![category]!;
             const product = candidates.find((candidate) => candidate.id === productId)!;
             return {
               id: randomUUID(),
@@ -512,18 +533,24 @@ async function readPieceSearches(tx: Transaction, stylingId: string): Promise<(P
   return rows.flatMap(({ category, ...search }) => (category === "hairstyle" ? [] : [{ ...search, category }]));
 }
 
+/** What a Piece's search that answered found: its candidates, and when it was made. */
+interface SearchFound {
+  candidates: Candidate[];
+  searchedAt: Date;
+}
+
 /**
  * Each Product Piece's candidates, as its search for the Outfit's Brand found them, and when: the
- * Top's, Bottom's and Shoes', and the One-Piece's on the Top Brand, which has none when its search
- * never answered. Throws for a Piece not yet searched, or a Top, Bottom or Shoes whose search never
- * answered.
+ * Top's, Bottom's and Shoes', and the One-Piece's on the Top Brand, which are null when it has none:
+ * its search found none or never answered, or the Styling had made all the searches it may before
+ * making it. Throws for a Top, Bottom or Shoes not yet searched, or whose search never answered.
  */
 async function readCandidates(
   db: Database,
   stylingId: string,
   styleIconId: string,
   brands: BrandPicks,
-): Promise<Record<ProductCategory, { candidates: Candidate[]; searchedAt: Date }>> {
+): Promise<Record<BrandCategory, SearchFound> & { one_piece: SearchFound | null }> {
   const rows = await db
     .select({
       category: pieceCandidates.category,
@@ -533,14 +560,23 @@ async function readCandidates(
     })
     .from(pieceCandidates)
     .where(and(eq(pieceCandidates.stylingId, stylingId), eq(pieceCandidates.styleIconId, styleIconId)));
-  const searchFor = (category: ProductCategory) => {
-    const found = rows.find((row) => row.category === category && row.brandEntityId === productPieceBrand(brands, category).entityId);
-    // An Outfit with no One-Piece is separates only: its Top Brand isn't passed over.
-    const candidates = found?.candidates ?? (found && category === "one_piece" ? [] : null);
-    if (!found || !candidates) throw new Error(`The ${category} of Style Icon ${styleIconId}'s Outfit hasn't been searched, or its search never answered.`);
-    return { candidates, searchedAt: found.searchedAt };
+  const answered = (category: ProductCategory): SearchFound | null => {
+    const row = rows.find((searched) => searched.category === category && searched.brandEntityId === productPieceBrand(brands, category).entityId);
+    return row?.candidates ? { candidates: row.candidates, searchedAt: row.searchedAt } : null;
   };
-  return { top: searchFor("top"), bottom: searchFor("bottom"), shoes: searchFor("shoes"), one_piece: searchFor("one_piece") };
+  const answeredOrThrow = (category: BrandCategory): SearchFound => {
+    const found = answered(category);
+    if (!found) throw new Error(`The ${category} of Style Icon ${styleIconId}'s Outfit hasn't been searched, or its search never answered.`);
+    return found;
+  };
+  // An Outfit with no One-Piece is separates only: its Top Brand isn't passed over.
+  const onePiece = answered("one_piece");
+  return {
+    top: answeredOrThrow("top"),
+    bottom: answeredOrThrow("bottom"),
+    shoes: answeredOrThrow("shoes"),
+    one_piece: onePiece?.candidates.length ? onePiece : null,
+  };
 }
 
 /** What tailoring is told about a picked Brand: never its entity ID, official site or prices. */

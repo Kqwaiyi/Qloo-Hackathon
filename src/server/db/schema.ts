@@ -177,7 +177,8 @@ export const emailLog = pgTable(
 );
 
 // Usage records, which the limits count. They're kept apart from Consultations, so deleting a
-// Consultation keeps them, and they hold no photo and no Outfit content.
+// Consultation keeps them, and they hold no photo and no Outfit content. A product search's holds
+// no user either: only the product-search backstop counts it.
 
 export const usageKindEnum = pgEnum("usage_kind", USAGE_KINDS);
 
@@ -288,6 +289,9 @@ export const styling = pgTable(
     // Style Icons it skipped because their tailoring failed. Each is replaced by the next unused
     // Style Icon, up to MAX_TAILORING_SUBSTITUTES times.
     tailoringFailures: integer("tailoring_failures").notNull(),
+    // The searches it has set going in the product search, up to MAX_PRODUCT_SEARCHES_PER_STYLING,
+    // each counted once however many tries it takes.
+    productSearches: integer("product_searches").notNull().default(0),
     failureReason: stylingFailureReasonEnum("failure_reason"),
     workflowRunId: text("workflow_run_id"),
     // The market its Products come from, chosen from the user's Country as it started. Null only for

@@ -17,7 +17,7 @@ import { readUsageSummary } from "@/server/operations/usage";
 import { channel3Offer, channel3Product, channel3ProductDetail, channel3SellingEveryBrand } from "@/server/product-search/fake-channel3";
 import { qlooBrand, qlooPerson, qlooResponse } from "@/server/qloo/fake";
 import { saveQlooLimitState } from "@/server/qloo/limit-state";
-import { recordUsage } from "@/server/usage/records";
+import { recordProductSearches, recordUsage } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities: enough Style Icons for a Face Photo's two
@@ -61,8 +61,8 @@ beforeEach(async () => {
   harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
   harness.channel3.respond = channel3SellingEveryBrand();
   await harness.db.delete(qlooCache);
-  // The app-wide caps count every user's Outfits, so each test starts with none made, and with no
-  // report from Qloo of the calls left.
+  // The app-wide caps count every user's Outfits, and the product-search backstop every product
+  // search, so each test starts with none made, and with no report from Qloo of the calls left.
   await harness.db.delete(usageRecord);
   await harness.db.delete(qlooLimitState);
 });
@@ -83,6 +83,11 @@ describe("the Demo Account's exemptions", () => {
       limit: "the Qloo backstop",
       reach: () => saveQlooLimitState(harness.db, { remainingCalls: 999, resetsAt: new Date("2026-11-13T00:00:00Z"), observedAt: harness.clock.now() }),
       refusal: { refusal: "qloo-backstop" },
+    },
+    {
+      limit: "the product-search backstop",
+      reach: () => productSearchesMade(4977, "2026-10-05T09:00:00Z"),
+      refusal: { refusal: "product-search-backstop" },
     },
   ])("lets a Styling start, making 2 Outfits, while $limit stops everyone else's, with no Outfit Allowance to show", async ({ reach, refusal }) => {
     await reach();
@@ -249,6 +254,23 @@ describe("Stylings on the Demo Account", () => {
     ]);
   });
 
+  it("count each product search they send towards the product-search backstop, as anyone's do", async () => {
+    harness.qloo.respond = (request) =>
+      qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
+    await productSearchesMade(4969, "2026-10-05T09:00:00Z");
+    const judge = await signedInJudge();
+    const started = await startConsultation(harness.context(judge), { photo: await jpeg(), photoType: "body_only", consent: BOTH_CONSENT_BOXES_TICKED });
+    if (!started.ok) throw new Error(`Couldn't start a Consultation: ${started.refusal}`);
+
+    await harness.stylings.runPending();
+
+    // Each of its two Outfits' Top, Bottom, Shoes and One-Piece: 4,977 this month.
+    expect(await readUsageSummary(harness.context(await signedInUser()))).toMatchObject({
+      stylingStart: { ok: false, refusal: "product-search-backstop", backOn: new Date("2026-11-01T00:00:00Z") },
+    });
+    expect(await readUsageSummary(harness.context(judge))).toMatchObject({ stylingStart: { ok: true, outfitsWanted: 2 } });
+  });
+
   it("have their Products' prices refreshed by any judge who opens them, as every judge sees every Consultation on it", async () => {
     harness.qloo.respond = (request) =>
       qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
@@ -312,6 +334,11 @@ async function demoAccountId(): Promise<string> {
 async function outfitsMadeByOthers(count: number, time: string): Promise<void> {
   const user = await readSignedInUser(harness.context(await signedInUser()));
   await recordUsage(harness.db, { kind: "outfit", userId: user!.id, at: new Date(time) }, count);
+}
+
+/** Records `count` product searches sent at `time`, as if other users' Stylings had sent them then. */
+async function productSearchesMade(count: number, time: string): Promise<void> {
+  await recordProductSearches(harness.db, new Date(time), count);
 }
 
 /** Presses "Get my Outfits" with a plain JPEG Face Photo, agreeing on the consent sheet, returning what the operation returns. */

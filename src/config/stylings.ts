@@ -70,6 +70,13 @@ export const QLOO_CALLS_AT_ONCE = 3;
 /** A Styling never has more product-search calls than this waiting at once, Brand lookups included. */
 export const PRODUCT_CALLS_AT_ONCE = 3;
 
+/**
+ * A Styling makes at most this many product searches, each counted once however many tries it
+ * takes, so one Styling can't run away with the product-search budget. Brand lookups are free, and
+ * don't count. Like the cap on Brand fetches, it's the Styling's own, the Demo Account's included.
+ */
+export const MAX_PRODUCT_SEARCHES_PER_STYLING = 24;
+
 /** How often a page waiting on a Styling asks for its status. */
 export const STYLING_STATUS_POLL_INTERVAL_MS = 1000;
 

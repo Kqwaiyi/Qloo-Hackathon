@@ -54,7 +54,7 @@ export const COPY = {
   photoCheckLimitReached: (limit: number, time: string) => `You've checked ${limit} photos today. More from ${time}.`,
   /** The app-wide 24-hour cap. */
   appWideCapForNow: "Qurator has made all the Outfits it can for now. Please try again in a few hours.",
-  /** The app-wide monthly cap, and the Qloo backstop. */
+  /** The app-wide monthly cap, and the Qloo and product-search backstops. */
   appWideCapForMonth: (date: string) => `Qurator has made all the Outfits it can for this month. Back on ${date}.`,
   faceGuide: "keep your face above this line",
   takingLonger: "This is taking longer than usual.",

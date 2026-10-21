@@ -1,16 +1,16 @@
 import { and, asc, count, eq, gt, gte, lte, type SQL } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
-import { APP_WIDE_24_HOUR_CAP, APP_WIDE_MONTHLY_CAP, type UsageKind, USAGE_LIMITS, USAGE_WINDOW_HOURS } from "@/config/limits";
+import { APP_WIDE_24_HOUR_CAP, APP_WIDE_MONTHLY_CAP, type UsageKind, USAGE_LIMITS, USAGE_WINDOW_HOURS, type UserUsageKind } from "@/config/limits";
 import { startOfUtcMonth } from "@/server/clock";
 import type { Database, Transaction } from "@/server/db/database";
 import { usageRecord } from "@/server/db/schema";
 
 const WINDOW_MS = USAGE_WINDOW_HOURS * 60 * 60 * 1000;
 
-/** One kind of usage by one user at a time: what a usage record holds. */
+/** One kind of usage by one user at a time: what a user's usage record holds. */
 export interface Usage {
-  kind: UsageKind;
+  kind: UserUsageKind;
   userId: string;
   at: Date;
 }
@@ -42,15 +42,32 @@ export interface AppWideOutfitsLeft {
 
 /** What every user's Outfits up to `at`, deleted accounts' included, leave of the app-wide caps. */
 export async function readAppWideOutfitsLeft(db: Database | Transaction, at: Date): Promise<AppWideOutfitsLeft> {
-  const outfits = eq(usageRecord.kind, "outfit");
-  const [inWindow, [inMonth]] = await Promise.all([
-    readLeftInWindow(db, outfits, APP_WIDE_24_HOUR_CAP, at),
-    db
-      .select({ made: count() })
-      .from(usageRecord)
-      .where(and(outfits, gte(usageRecord.usedAt, startOfUtcMonth(at)), lte(usageRecord.usedAt, at))),
+  const [inWindow, madeInMonth] = await Promise.all([
+    readLeftInWindow(db, eq(usageRecord.kind, "outfit"), APP_WIDE_24_HOUR_CAP, at),
+    countInUtcMonth(db, "outfit", at),
   ]);
-  return { inWindow, inMonth: Math.max(0, APP_WIDE_MONTHLY_CAP - (inMonth?.made ?? 0)) };
+  return { inWindow, inMonth: Math.max(0, APP_WIDE_MONTHLY_CAP - madeInMonth) };
+}
+
+/** Records `count` product searches made at `at`: one usage record each, holding no user. */
+export async function recordProductSearches(db: Database | Transaction, at: Date, count: number): Promise<void> {
+  await db
+    .insert(usageRecord)
+    .values(Array.from({ length: count }, () => ({ id: randomUUID(), kind: "product_search" as const, userId: null, usedAt: at })));
+}
+
+/** How many product searches every Styling together made in `at`'s UTC calendar month, up to `at`. */
+export function readProductSearchesInMonth(db: Database | Transaction, at: Date): Promise<number> {
+  return countInUtcMonth(db, "product_search", at);
+}
+
+/** How many usage records of one kind, every user's together, are in `at`'s UTC calendar month, up to `at`. */
+async function countInUtcMonth(db: Database | Transaction, kind: UsageKind, at: Date): Promise<number> {
+  const [inMonth] = await db
+    .select({ counted: count() })
+    .from(usageRecord)
+    .where(and(eq(usageRecord.kind, kind), gte(usageRecord.usedAt, startOfUtcMonth(at)), lte(usageRecord.usedAt, at)));
+  return inMonth?.counted ?? 0;
 }
 
 /** What the uses `counting` selects in the rolling window up to `at` leave of `limit`. */
