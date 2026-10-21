@@ -39,6 +39,10 @@ A photo of the user's whole body, head to feet, face included. Unlocks all four 
 A photo of the user's body from the shoulders to the feet, meant to leave the face out. Unlocks Top, Bottom and Shoes; a face that does appear is allowed and left unchanged.
 _Avoid_: faceless photo, headless photo
 
+**Main Person**:
+The one person in a photo whom the app styles, taken to be the user: the photo's clear subject, noticeably closer or larger than anyone else in it. Anyone else in the photo is left as they are; a photo with no clear Main Person is rejected.
+_Avoid_: subject, main individual, primary person
+
 **Photo Style**:
 The one or two style words (edgy, classic, sporty…) the AI reads from a Consultation's photo, which the user may change, and which steer which Style Icons Qloo picks.
 _Avoid_: vibe, aesthetic, personal style (too close to Style Preference)

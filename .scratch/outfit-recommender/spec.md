@@ -296,7 +296,7 @@ Our own interface with three operations. The domain depends only on this interfa
 - **Our code decides**, checking in this order:
   1. explicit, or Google blocked the photo: **not appropriate**;
   2. no people: **no person**;
-  3. more than one person: **more than one person**;
+  3. more than one person: **more than one person**; superseded by [Group Photos](../group-photos/spec.md), which accepts a photo with a clear Main Person;
   4. not clear enough: **too unclear**;
   5. the chosen Photo Type's rule fails but another type's rule passes: **wrong Photo Type**, naming that type;
   6. a Face Photo with covered or hidden hair: **hair not visible**;
@@ -891,7 +891,7 @@ A Photo Style change's list becomes current only when its Styling succeeds.
 - "Something went wrong with this photo. Try another."
 - "This looks like a <Photo Type>.", with the button "Use it as a <Photo Type>". The switch sends the same photo again as a fresh check.
 - "We couldn't find a person in this photo."
-- "There's more than one person here. Use a photo of just you."
+- "There's more than one person here. Use a photo of just you." (superseded by [Group Photos](../group-photos/spec.md))
 - "This photo is too blurry, dark or tightly cropped to work with."
 - "We can't use this photo.", with the content rule beneath it.
 - "We need to see your hair to suggest a Hairstyle."
