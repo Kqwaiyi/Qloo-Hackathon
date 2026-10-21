@@ -192,7 +192,7 @@ describe("the photo check", () => {
     ["an explicit photo as not appropriate", "not-appropriate", "full_body", { reason: "not-appropriate" }],
     ["a photo Google blocked as not appropriate", "blocked", "full_body", { reason: "not-appropriate" }],
     ["a photo with nobody in it", "no-person", "full_body", { reason: "no-person" }],
-    ["a photo of two people", "more-than-one-person", "full_body", { reason: "more-than-one-person" }],
+    ["a photo of two people with no clear Main Person", "unclear-main-person", "full_body", { reason: "unclear-main-person" }],
     ["a photo that isn't clear enough", "too-unclear", "full_body", { reason: "too-unclear" }],
     [
       "a face-and-hair photo sent as a Full-Body Photo, naming the Face Photo it looks like",
@@ -241,6 +241,19 @@ describe("the photo check", () => {
     expect(result).toEqual({ ok: false, refusal: "check-errored" });
     expect(harness.blob.objects.size).toBe(0);
     expect(await consultationsOf(browser)).toEqual([]);
+  });
+
+  it("accepts a photo of two people with a clear Main Person as a one-person photo, queueing its Styling", async () => {
+    const browser = await signedInUser();
+    harness.ai.scenario = "clear-main-person";
+
+    const result = await getMyOutfits(browser, "full_body");
+
+    expect(result).toEqual({ ok: true, consultationId: expect.any(String) });
+    const [stored] = await consultationsOf(browser);
+    expect(stored).toMatchObject({ id: result.ok && result.consultationId, photoType: "full_body", state: "styling" });
+    expect([...harness.blob.objects.keys()]).toEqual([stored!.photoPathname]);
+    expect(harness.stylings.pending).toHaveLength(1);
   });
 
   it("accepts a Full-Body Photo with covered hair, storing the hair as covered", async () => {

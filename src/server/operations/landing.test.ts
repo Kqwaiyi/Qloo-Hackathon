@@ -568,11 +568,11 @@ describe("the team making a landing page sample by running the pipeline once on 
   });
 
   it("says why when the photo check rejects the photo, styling nothing", async () => {
-    fresh.ai.scenario = "more-than-one-person";
+    fresh.ai.scenario = "unclear-main-person";
 
     const result = await makeLandingSample(freshApp(), { photoType: "full_body", photo: await jpegPhoto(), stylePreference: "menswear" });
 
-    expect(result).toEqual({ ok: false, refusal: "photo-rejected", rejection: { reason: "more-than-one-person" } });
+    expect(result).toEqual({ ok: false, refusal: "photo-rejected", rejection: { reason: "unclear-main-person" } });
     expect(fresh.qloo.requests).toEqual([]);
     expect(fresh.channel3.requests).toEqual([]);
   });

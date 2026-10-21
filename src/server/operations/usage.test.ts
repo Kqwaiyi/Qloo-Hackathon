@@ -2,6 +2,7 @@ import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { PhotoType } from "@/config/consultations";
+import type { FakeAiScenario } from "@/server/ai/fake";
 import { qlooCache, qlooLimitState, usageRecord } from "@/server/db/schema";
 import { deleteConsultation, readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
@@ -294,6 +295,13 @@ describe("the photo-check limit", () => {
     expect(await getMyOutfits(browser)).toMatchObject({ ok: false, refusal: "photo-check-limit" });
   });
 
+  it("counts a photo rejected for having no clear Main Person, as any other rejection", async () => {
+    const browser = await signedInUser();
+    await rejectPhotos(browser, 20, "unclear-main-person");
+
+    expect(await getMyOutfits(browser)).toMatchObject({ ok: false, refusal: "photo-check-limit" });
+  });
+
   it("is each user's own", async () => {
     await rejectPhotos(await signedInUser(), 20);
 
@@ -541,9 +549,9 @@ async function outfitsMadeByOthers(count: number, time: string): Promise<void> {
   await recordUsage(harness.db, { kind: "outfit", userId: user!.id, at: new Date(time) }, count);
 }
 
-/** Sends `count` photos that the check rejects, as showing no one. */
-async function rejectPhotos(browser: TestBrowser, count: number): Promise<void> {
-  harness.ai.scenario = "no-person";
+/** Sends `count` photos that the check rejects, as showing no one unless another scenario is given. */
+async function rejectPhotos(browser: TestBrowser, count: number, scenario: FakeAiScenario = "no-person"): Promise<void> {
+  harness.ai.scenario = scenario;
   for (let sent = 0; sent < count; sent += 1) {
     expect(await getMyOutfits(browser)).toMatchObject({ ok: false, refusal: "photo-rejected" });
   }

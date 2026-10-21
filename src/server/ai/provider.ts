@@ -46,6 +46,12 @@ export interface PhotoVisibility {
 /** What the model reports seeing. Our code, not the model, decides whether the photo is accepted. */
 export interface PhotoCheckReport {
   peopleCount: number;
+  /**
+   * Whether one person is clearly the photo's Main Person, noticeably closer or larger than anyone
+   * else. Everything else here, but `explicit`, is about them. Used only to judge the photo, never
+   * stored.
+   */
+  clearMainPerson: boolean;
   visible: PhotoVisibility;
   /** Yes or no only: what covers the hair is never returned or stored. */
   hairCovered: boolean;

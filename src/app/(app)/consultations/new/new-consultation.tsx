@@ -235,8 +235,8 @@ function rejectionProblem(rejection: PhotoRejection): Problem {
       return { message: COPY.photoLooksLike(PHOTO_TYPE_LABELS[rejection.looksLike]), switchTo: rejection.looksLike };
     case "no-person":
       return { message: COPY.photoNoPerson };
-    case "more-than-one-person":
-      return { message: COPY.photoMoreThanOnePerson };
+    case "unclear-main-person":
+      return { message: COPY.photoUnclearMainPerson };
     case "too-unclear":
       return { message: COPY.photoTooUnclear };
     case "not-appropriate":

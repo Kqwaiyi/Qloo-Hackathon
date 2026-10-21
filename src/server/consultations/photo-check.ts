@@ -3,7 +3,7 @@ import type { PhotoCheckReport, PhotoCheckResult } from "@/server/ai/provider";
 
 /** Why a photo was rejected. Each reason has its own message at the photo step. */
 export type PhotoRejection =
-  | { reason: "not-appropriate" | "no-person" | "more-than-one-person" | "too-unclear" | "hair-not-visible" }
+  | { reason: "not-appropriate" | "no-person" | "unclear-main-person" | "too-unclear" | "hair-not-visible" }
   | { reason: "wrong-photo-type"; looksLike: PhotoType };
 
 export type PhotoCheckVerdict = { accepted: true; report: PhotoCheckReport } | { accepted: false; rejection: PhotoRejection };
@@ -13,7 +13,7 @@ export function judgePhotoCheck(result: PhotoCheckResult, photoType: PhotoType):
   if (result.blocked || result.report.explicit) return rejected({ reason: "not-appropriate" });
   const { report } = result;
   if (report.peopleCount === 0) return rejected({ reason: "no-person" });
-  if (report.peopleCount > 1) return rejected({ reason: "more-than-one-person" });
+  if (report.peopleCount > 1 && !report.clearMainPerson) return rejected({ reason: "unclear-main-person" });
   if (!report.clearEnough) return rejected({ reason: "too-unclear" });
   if (PHOTO_TYPE_RULES[photoType](report)) return { accepted: true, report };
   const looksLike = PHOTO_TYPES.find((type) => PHOTO_TYPE_RULES[type](report));

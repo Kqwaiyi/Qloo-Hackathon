@@ -18,7 +18,7 @@ export function PhotoCheck({ sample }: { sample: LandingSampleView }) {
           <div data-reveal="blur" className={`${sampleFrame} rounded-xl bg-card`}>
             <SamplePhotoImage sample={sample} />
             <ul data-reveal="stagger" aria-label="What the AI checked" className="absolute inset-x-3 top-3 flex flex-col items-start gap-2">
-              <CheckChip>✓ One person</CheckChip>
+              <CheckChip>✓ One main person</CheckChip>
               <CheckChip>✓ {photoTypeLabel}</CheckChip>
               <CheckChip>
                 Photo Style: {sample.photoStyle.join(" + ")}
@@ -32,7 +32,7 @@ export function PhotoCheck({ sample }: { sample: LandingSampleView }) {
             The AI checks the photo and reads its style.
           </h2>
           <p data-reveal="blur" className="mt-4 max-w-[36ch] text-body text-mute">
-            Is there one person, and is it really a {photoTypeLabel}? Then one or two words for its Photo Style. You can change them.
+            Is there one clear main person, and is it really a {photoTypeLabel}? Then one or two words for its Photo Style. You can change them.
           </p>
         </div>
       </div>

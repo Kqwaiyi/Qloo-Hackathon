@@ -117,6 +117,7 @@ const PHOTO_CHECK: PhotoCheckInput = { photo: PHOTO, photoType: "full_body" };
 
 const REPORT: PhotoCheckReport = {
   peopleCount: 1,
+  clearMainPerson: true,
   visible: { face: true, hair: true, upperBody: true, legs: true, feet: true },
   hairCovered: false,
   clearEnough: true,
@@ -250,6 +251,21 @@ describe("the photo check", () => {
     const result = await ai.checkPhoto(PHOTO_CHECK);
 
     expect(result).toEqual({ blocked: false, report: REPORT });
+  });
+
+  it("asks Gemini whether one person is clearly the Main Person, reporting the rest about them, and carries its answer", async () => {
+    gemini.respond = () => geminiJson({ ...REPORT, peopleCount: 2, clearMainPerson: false });
+
+    const result = await ai.checkPhoto(PHOTO_CHECK);
+
+    expect(result).toEqual({ blocked: false, report: { ...REPORT, peopleCount: 2, clearMainPerson: false } });
+    const text = textOf(gemini.requests[0]!);
+    expect(text).toMatch(/clearMainPerson: whether one person is clearly the photo's subject/i);
+    expect(text).toMatch(/noticeably closer or larger than everyone else, and in focus/i);
+    expect(text).toMatch(/a couple's selfie, friends side by side, a group photo/i);
+    expect(text).toMatch(/when in doubt, clearMainPerson is false/i);
+    expect(text).toMatch(/everything else you report, except explicit, is about the main person/i);
+    expect(text).not.toMatch(/report on the most prominent one/i);
   });
 
   it("sends the photo inline to gemini-3.5-flash-lite, never through the Files API", async () => {

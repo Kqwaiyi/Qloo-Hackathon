@@ -25,7 +25,9 @@ import type {
  * - `not-appropriate`: an explicit photo.
  * - `blocked`: Google blocks the photo.
  * - `no-person`: nobody in the photo.
- * - `more-than-one-person`: two people in the photo.
+ * - `unclear-main-person`: two people in the photo, and no clear Main Person.
+ * - `clear-main-person`: two people in the photo, one of them clearly its Main Person. It passes the
+ *   photo, tailors and draws Previews as `pass` does.
  * - `too-unclear`: a photo that isn't clear enough.
  * - `wrong-photo-type`: just a face and hair, whatever Photo Type was chosen, so it looks like a Face
  *   Photo to the other two, and switching to Face Photo passes it.
@@ -54,7 +56,8 @@ export const FAKE_AI_SCENARIOS = [
   "not-appropriate",
   "blocked",
   "no-person",
-  "more-than-one-person",
+  "unclear-main-person",
+  "clear-main-person",
   "too-unclear",
   "wrong-photo-type",
   "hair-not-visible",
@@ -191,6 +194,7 @@ const NOTHING_VISIBLE: PhotoVisibility = { face: false, hair: false, upperBody: 
 function reportFor(scenario: Exclude<FakeAiScenario, "blocked" | "check-errors">, photoType: PhotoType): PhotoCheckReport {
   const passing: PhotoCheckReport = {
     peopleCount: 1,
+    clearMainPerson: true,
     visible: VISIBLE_BY_PHOTO_TYPE[photoType],
     hairCovered: false,
     clearEnough: true,
@@ -203,8 +207,10 @@ function reportFor(scenario: Exclude<FakeAiScenario, "blocked" | "check-errors">
     case "not-appropriate":
       return { ...passing, explicit: true };
     case "no-person":
-      return { ...passing, peopleCount: 0, visible: NOTHING_VISIBLE };
-    case "more-than-one-person":
+      return { ...passing, peopleCount: 0, clearMainPerson: false, visible: NOTHING_VISIBLE };
+    case "unclear-main-person":
+      return { ...passing, peopleCount: 2, clearMainPerson: false };
+    case "clear-main-person":
       return { ...passing, peopleCount: 2 };
     case "too-unclear":
       return { ...passing, clearEnough: false };

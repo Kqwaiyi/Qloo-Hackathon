@@ -206,6 +206,7 @@ function replyAsItCame(text: string | undefined): unknown {
  */
 const photoCheckReplySchema = z.object({
   peopleCount: z.number().int().min(0),
+  clearMainPerson: z.boolean(),
   visible: z.object({ face: z.boolean(), hair: z.boolean(), upperBody: z.boolean(), legs: z.boolean(), feet: z.boolean() }),
   hairCovered: z.boolean(),
   clearEnough: z.boolean(),
@@ -221,22 +222,23 @@ function photoStyleWords([strongest, second]: PhotoStyle[]): PhotoStyleWords {
 // The prompts. Each asks only for what the interface returns, and never for age, ethnicity, skin
 // tone, body measurements or health (ADR-0005).
 
-const PHOTO_CHECK_PROMPT = `You check one photo for a styling app, which suggests clothes and a haircut to the person in it. Report only what you can see in the photo. Never guess anything you can't see.
+const PHOTO_CHECK_PROMPT = `You check one photo for a styling app, which suggests clothes and a haircut to the main person in it. Report only what you can see in the photo. Never guess anything you can't see.
 
 Reply with:
 - peopleCount: how many people are in the photo. Count only real people, not people in pictures, posters or screens.
-- visible: whether each of these shows in the photo, for the person in it:
+- clearMainPerson: whether one person is clearly the photo's subject, its main person: noticeably closer or larger than everyone else, and in focus, while anyone else is in the background, much smaller, blurred or partly cut off. Two or more people of similar prominence mean there is no clear main person: a couple's selfie, friends side by side, a group photo, or two people of the same size where one faces away. When in doubt, clearMainPerson is false. With one person in the photo, it is true; with nobody, it is false. As for peopleCount, people in pictures, posters or screens don't count.
+- visible: whether each of these shows in the photo, for the main person:
   - face: their face, seen from the front or the side, not turned away or cut off.
   - hair: their hair. False when it is hidden, cut off by the frame or covered.
   - upperBody: their shoulders, chest and waist.
   - legs: their legs, from the hips to the ankles.
   - feet: both feet, with whatever they're wearing on them.
 - hairCovered: true or false only: whether something covers most of their hair, such as a hijab, a turban or a cap. Never say what covers it.
-- clearEnough: whether the photo is sharp, well lit and unfiltered enough to see the person and what they're wearing.
-- explicit: whether the photo shows nudity or sexual content.
+- clearEnough: whether the photo is sharp, well lit and unfiltered enough to see the main person and what they're wearing.
+- explicit: whether the photo shows nudity or sexual content, on anyone in it.
 - photoStyle: one or two words for the style of what they're wearing, strongest first, from this list only: ${PHOTO_STYLES.join(", ")}. A plain photo with no clear style is casual.
 
-When there is nobody in the photo, every part of visible is false and photoStyle is casual. When there is more than one person, report on the most prominent one.
+Everything else you report, except explicit, is about the main person alone, never anyone else in the photo. When there is nobody in the photo, every part of visible is false and photoStyle is casual.
 
 Never guess the person's age. Never infer their ethnicity, skin tone, body measurements or health, and never mention them.`;
 

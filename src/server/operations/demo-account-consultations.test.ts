@@ -155,9 +155,9 @@ describe("what still holds on the Demo Account", () => {
 
   it("is the photo check, which stores nothing for a photo it rejects", async () => {
     const judge = await signedInJudge();
-    harness.ai.scenario = "more-than-one-person";
+    harness.ai.scenario = "unclear-main-person";
 
-    expect(await getMyOutfits(judge)).toEqual({ ok: false, refusal: "photo-rejected", rejection: { reason: "more-than-one-person" } });
+    expect(await getMyOutfits(judge)).toEqual({ ok: false, refusal: "photo-rejected", rejection: { reason: "unclear-main-person" } });
     expect(harness.blob.objects.size).toBe(0);
     expect(harness.stylings.pending).toEqual([]);
   });

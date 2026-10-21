@@ -23,7 +23,7 @@ export const COPY = {
   photoLooksLike: (photoTypeLabel: string) => `This looks like a ${photoTypeLabel}.`,
   useItAs: (photoTypeLabel: string) => `Use it as a ${photoTypeLabel}`,
   photoNoPerson: "We couldn't find a person in this photo.",
-  photoMoreThanOnePerson: "There's more than one person here. Use a photo of just you.",
+  photoUnclearMainPerson: "It's not clear who the main person in this photo is. Retake it or use a different photo.",
   photoTooUnclear: "This photo is too blurry, dark or tightly cropped to work with.",
   photoNotAppropriate: "We can't use this photo.",
   /** Part of the photo notice too, on the consent sheet: raise PHOTO_NOTICE_VERSION when it changes. */
