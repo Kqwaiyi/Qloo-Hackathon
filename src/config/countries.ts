@@ -254,6 +254,45 @@ export const COUNTRIES: readonly Country[] = [
   country("AX", "Åland Islands", { keyMarket: "aland_islands" }),
 ];
 
+/**
+ * The Countries whose currency is the euro, from the Unicode CLDR currency data as of 2026-10-21,
+ * which has Bulgaria on the euro since 2026-01-01.
+ */
+export const EURO_COUNTRY_CODES: ReadonlySet<string> = new Set([
+  "AD",
+  "AT",
+  "AX",
+  "BE",
+  "BG",
+  "BL",
+  "CY",
+  "DE",
+  "EE",
+  "ES",
+  "FI",
+  "FR",
+  "GF",
+  "GR",
+  "HR",
+  "IE",
+  "IT",
+  "LT",
+  "LU",
+  "LV",
+  "MC",
+  "ME",
+  "MT",
+  "NL",
+  "PM",
+  "PT",
+  "RE",
+  "SI",
+  "SK",
+  "SM",
+  "VA",
+  "XK",
+]);
+
 const COUNTRIES_BY_CODE = new Map(COUNTRIES.map((entry) => [entry.code, entry]));
 
 export function findCountry(code: string): Country | undefined {

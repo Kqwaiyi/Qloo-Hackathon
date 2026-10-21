@@ -4,6 +4,7 @@ import { FatalError, getStepMetadata, RetryableError } from "workflow";
 
 import { UnretryableAiError } from "@/server/ai/provider";
 import { getServices } from "@/server/app/services";
+import { ProductSearchRateLimitedError, UnretryableProductSearchError } from "@/server/product-search/provider";
 import { QlooError, QlooRateLimitedError } from "@/server/qloo/client";
 
 import type { BuildOutfitsSteps } from "./build-outfits";
@@ -23,8 +24,9 @@ export async function runWorkflowStep<T>(step: (steps: BuildOutfitsSteps) => Pro
 function asWorkflowError(error: unknown): unknown {
   // A Styling that has finished, or been cancelled, stops: retrying can't change that.
   if (error instanceof StylingNotRunningError) return new FatalError(error.message);
-  // "Too many requests": wait as long as Qloo asks, or back off longer each time.
-  if (error instanceof QlooRateLimitedError) {
+  // "Too many requests" from Qloo or the product search: wait as long as it asks, or back off
+  // longer each time.
+  if (error instanceof QlooRateLimitedError || error instanceof ProductSearchRateLimitedError) {
     const seconds = error.retryAfterSeconds ?? 2 ** getStepMetadata().attempt;
     return new RetryableError(error.message, { retryAfter: seconds * 1000 });
   }
@@ -32,5 +34,7 @@ function asWorkflowError(error: unknown): unknown {
   if (error instanceof QlooError && error.status >= 400 && error.status < 500) return new FatalError(error.message);
   // Nor will an AI call that failed for good, such as a request Gemini rejects.
   if (error instanceof UnretryableAiError) return new FatalError(error.message);
+  // Nor will the product search refusing the API key.
+  if (error instanceof UnretryableProductSearchError) return new FatalError(error.message);
   return error;
 }

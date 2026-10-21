@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { COUNTRIES, findCountry } from "@/config/countries";
+import { COUNTRIES, EURO_COUNTRY_CODES, findCountry } from "@/config/countries";
 
 describe("the Country list", () => {
   it("holds every Country Gemini serves, once each", () => {
@@ -32,5 +32,10 @@ describe("the Country list", () => {
     expect(findCountry("CI")?.qlooKeyMarket).toBe("urn:tag:key_market:qloo:ivory_coast");
     expect(findCountry("FK")?.qlooKeyMarket).toBeNull();
     expect(COUNTRIES.filter((country) => country.qlooKeyMarket !== null)).toHaveLength(213);
+  });
+
+  it("names only its own Countries as on the euro", () => {
+    for (const code of EURO_COUNTRY_CODES) expect(findCountry(code)).toBeDefined();
+    expect(EURO_COUNTRY_CODES.size).toBe(32);
   });
 });
