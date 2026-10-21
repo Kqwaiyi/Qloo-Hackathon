@@ -448,7 +448,9 @@ export const piece = pgTable(
  * The candidates of each Piece's search in a running Styling: up to CANDIDATES_PER_PIECE Products of
  * the Piece's Brand that qualified, kept for its Outfit's tailoring, or none when none did. One row
  * per search, by the Outfit's Style Icon, the Category and the Brand searched. Deleted when the
- * Styling finishes, however it finishes: nothing is reused by a later Styling.
+ * Styling finishes, however it finishes: nothing is reused by a later Styling. A search that still
+ * errored after its retries has a row too, with no candidates at all (null), so its Brand is passed
+ * over like one whose search found none.
  */
 export const pieceCandidates = pgTable(
   "piece_candidates",
@@ -461,7 +463,8 @@ export const pieceCandidates = pgTable(
       .references(() => styleIcon.id, { onDelete: "cascade" }),
     category: categoryEnum("category").notNull(),
     brandEntityId: text("brand_entity_id").notNull(),
-    candidates: jsonb("candidates").notNull().$type<Candidate[]>(),
+    // Null when the search never answered: it still errored after its retries.
+    candidates: jsonb("candidates").$type<Candidate[]>(),
     // When the search was made: the date each Product Piece's price is found.
     searchedAt: timestamp("searched_at", { withTimezone: true }).notNull(),
   },

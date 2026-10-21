@@ -61,11 +61,12 @@ export interface BuildOutfitsSteps {
   /**
    * The Outfits to tailor next: one per position still open, each from the next unused Style Icon,
    * while substitutes for failed tailoring are left. For a body photo, each also gets its Brands
-   * from `brandsByStyleIcon`, only those the product search knows, skipping Style Icons that can't
-   * complete an Outfit, as when one of its Pieces' searches found no Product. When the Style Icons
-   * it needs haven't had their Brands fetched, the Brands it would pick haven't been looked up in
-   * the product search, or their Pieces haven't been searched, it asks for that instead. Nothing
-   * once every position is filled or nothing more can be tried.
+   * from `brandsByStyleIcon`, only those the product search knows, passing over a Brand for a
+   * Category its search found no Product in, and skipping Style Icons that can't complete an
+   * Outfit. When the Style Icons it needs haven't had their Brands fetched, the Brands it would pick
+   * haven't been looked up in the product search, or their Pieces haven't been searched, it asks
+   * for that instead. Nothing once every position is filled or nothing more can be tried. Throws
+   * once every product search the Styling sent still failed after its retries, none answering.
    */
   planOutfits(stylingId: string, brandsByStyleIcon: BrandsByStyleIcon): Promise<OutfitPlan>;
   /** One Style Icon's Brand call. */
@@ -74,7 +75,9 @@ export interface BuildOutfitsSteps {
   lookUpBrand(stylingId: string, brand: BrandToLookUp): Promise<void>;
   /**
    * One product-search call: the Products of one Piece's Brand in its Category, of which those that
-   * qualify are kept as its candidates, for the plans and tailoring after it.
+   * qualify are kept as its candidates, for the plans and tailoring after it. Throws on errors worth
+   * retrying; on the last try, it keeps that the search never answered instead, unless the product
+   * search refused the key.
    */
   searchProducts(stylingId: string, search: PieceSearch): Promise<void>;
   /**

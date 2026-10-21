@@ -15,7 +15,6 @@ import {
   outfitPriceRange,
   pickBrands,
   type PieceSearches,
-  pieceSearchKey,
   planOutfitBrands,
   usableBrands,
   type UsedBrands,
@@ -33,7 +32,7 @@ const NOTHING_USED: UsedBrands = { top: new Set(), bottom: new Set(), shoes: new
 const NONE_LOOKED_UP: BrandMatches = new Map();
 
 /** No Piece searched in the product search yet. */
-const NONE_SEARCHED: PieceSearches = new Map();
+const NONE_SEARCHED: PieceSearches = [];
 
 const search: BrandSearch = { ageGroup: "35_44", countryCode: "GB", budgetTier: "no_budget" };
 
@@ -633,7 +632,7 @@ describe("the searches for the Pieces of the Outfits a Styling builds", () => {
   const allKnown: BrandMatches = new Map(pool.map(({ entityId }) => [entityId, `c3-${entityId}`]));
 
   it("are each pick's Top, Bottom and Shoes not searched yet, once every pick's Brand is looked up", () => {
-    const searched: PieceSearches = new Map([[pieceSearchKey("icon-1", "top", "b"), true]]);
+    const searched: PieceSearches = [{ styleIconId: "icon-1", category: "top", brandEntityId: "b", found: true }];
 
     expect(planOutfitBrands(twoStyleIcons, "no_budget", 2, NOTHING_USED, NONE_LOOKED_UP, searched).searches).toEqual([]);
     const plan = planOutfitBrands(twoStyleIcons, "no_budget", 2, NOTHING_USED, allKnown, searched);
@@ -646,18 +645,99 @@ describe("the searches for the Pieces of the Outfits a Styling builds", () => {
     ]);
   });
 
-  it("skip a Style Icon one of whose Pieces' searches found nothing, and plan the next without its picks", () => {
-    const searched: PieceSearches = new Map([
-      [pieceSearchKey("icon-1", "top", "b"), true],
-      [pieceSearchKey("icon-1", "shoes", "s1"), false],
-    ]);
+});
 
-    const plan = planOutfitBrands(twoStyleIcons, "no_budget", 2, NOTHING_USED, allKnown, searched);
+describe("the Brands of the Outfits a Styling builds, once a Piece's search found nothing", () => {
+  const pool = [
+    brand("s1", "Stride", { tags: [FOOTWEAR], affinity: 0.95 }),
+    brand("s2", "Sole", { tags: [FOOTWEAR], affinity: 0.9 }),
+    brand("b", "Bolt", { tags: [APPAREL], affinity: 0.85 }),
+    brand("d", "Dune", { tags: [APPAREL], affinity: 0.8 }),
+    brand("e", "Ember", { tags: [APPAREL], affinity: 0.7 }),
+  ];
+  const allKnown: BrandMatches = new Map(pool.map(({ entityId }) => [entityId, `c3-${entityId}`]));
+
+  it("give that Category the Style Icon's next usable Brand, under the same pick rules, leaving the Brand free for its other Categories", () => {
+    const searched: PieceSearches = [{ styleIconId: "icon-1", category: "top", brandEntityId: "b", found: false }];
+
+    const plan = planOutfitBrands([{ styleIconId: "icon-1", line: "womenswear", brands: pool }], "no_budget", 1, NOTHING_USED, allKnown, searched);
+
+    // Without the search, Bolt would be the Top and Dune the Bottom.
+    expect(plan.picked.map(({ styleIconId, brands }) => [styleIconId, pickedNames(brands)])).toEqual([
+      ["icon-1", { shoes: "Stride", top: "Dune", bottom: "Bolt" }],
+    ]);
+    expect(plan.skipped).toEqual([]);
+    expect(plan.searches.map(({ category, brand }) => [category, brand.name])).toEqual([
+      ["top", "Dune"],
+      ["bottom", "Bolt"],
+      ["shoes", "Stride"],
+    ]);
+  });
+
+  it("never give the Top or Bottom the Brand the Shoes move to", () => {
+    const withAllround = [
+      brand("s1", "Stride", { tags: [FOOTWEAR], affinity: 0.95 }),
+      brand("a", "Allround", { tags: [APPAREL, FOOTWEAR], affinity: 0.9 }),
+      brand("b", "Bolt", { tags: [APPAREL], affinity: 0.85 }),
+      brand("d", "Dune", { tags: [APPAREL], affinity: 0.8 }),
+    ];
+    const searched: PieceSearches = [
+      { styleIconId: "icon-1", category: "top", brandEntityId: "a", found: true },
+      { styleIconId: "icon-1", category: "bottom", brandEntityId: "b", found: true },
+      { styleIconId: "icon-1", category: "shoes", brandEntityId: "s1", found: false },
+    ];
+
+    const plan = planOutfitBrands([{ styleIconId: "icon-1", line: "womenswear", brands: withAllround }], "no_budget", 1, NOTHING_USED, allKnown, searched);
+
+    // Allround was the Top, and Bolt the Bottom.
+    expect(plan.picked.map(({ brands }) => pickedNames(brands))).toEqual([{ shoes: "Allround", top: "Bolt", bottom: "Dune" }]);
+  });
+
+  it("keep that Brand out of that Category for every Style Icon after, still repeating no Brand within a Category", () => {
+    const searched: PieceSearches = [{ styleIconId: "icon-1", category: "top", brandEntityId: "b", found: false }];
+
+    const plan = planOutfitBrands(
+      [
+        { styleIconId: "icon-1", line: "womenswear", brands: pool },
+        { styleIconId: "icon-2", line: "womenswear", brands: pool },
+      ],
+      "no_budget",
+      2,
+      NOTHING_USED,
+      allKnown,
+      searched,
+    );
+
+    expect(plan.picked.map(({ styleIconId, brands }) => [styleIconId, pickedNames(brands)])).toEqual([
+      ["icon-1", { shoes: "Stride", top: "Dune", bottom: "Bolt" }],
+      ["icon-2", { shoes: "Sole", top: "Ember", bottom: "Dune" }],
+    ]);
+  });
+
+  it("skip a Style Icon left with no usable Brand for a Category, and plan the next in its place", () => {
+    const oneFootwearBrand = pool.filter(({ name }) => name !== "Sole");
+    const searched: PieceSearches = [
+      { styleIconId: "icon-1", category: "top", brandEntityId: "b", found: true },
+      { styleIconId: "icon-1", category: "bottom", brandEntityId: "d", found: true },
+      { styleIconId: "icon-1", category: "shoes", brandEntityId: "s1", found: false },
+    ];
+
+    const plan = planOutfitBrands(
+      [
+        { styleIconId: "icon-1", line: "womenswear", brands: oneFootwearBrand },
+        { styleIconId: "icon-2", line: "womenswear", brands: pool },
+      ],
+      "no_budget",
+      1,
+      NOTHING_USED,
+      allKnown,
+      searched,
+    );
 
     expect(plan.skipped).toEqual(["icon-1"]);
-    // Stride and Bolt are free again for icon-2.
+    // Bolt and Dune are free again, and Stride is out of the Shoes.
     expect(plan.picked.map(({ styleIconId, brands }) => [styleIconId, pickedNames(brands)])).toEqual([
-      ["icon-2", { shoes: "Stride", top: "Bolt", bottom: "Dune" }],
+      ["icon-2", { shoes: "Sole", top: "Bolt", bottom: "Dune" }],
     ]);
   });
 });

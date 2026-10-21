@@ -231,13 +231,17 @@ export interface PieceSearch {
   brand: PickedBrand;
 }
 
-/** Whether each Piece's search made so far found a Product that qualified, by `pieceSearchKey`. One missing here hasn't been made. */
-export type PieceSearches = ReadonlyMap<string, boolean>;
-
-/** What `PieceSearches` keeps a search by: its Style Icon, Category and Brand. */
-export function pieceSearchKey(styleIconId: string, category: ProductCategory, brandEntityId: string): string {
-  return JSON.stringify([styleIconId, category, brandEntityId]);
+/** A Piece's search the Styling has made: its Style Icon, Category and Brand, and whether it found a Product that qualified. */
+export interface PieceSearchMade {
+  styleIconId: string;
+  category: ProductCategory;
+  brandEntityId: string;
+  /** False when it found none that qualified, or still errored after its retries. */
+  found: boolean;
 }
+
+/** Every Piece's search the Styling has made so far. One missing here hasn't been made. */
+export type PieceSearches = readonly PieceSearchMade[];
 
 /** Which Style Icons' Outfits get which Brands, which Style Icons can't complete one, and what to look up or search first. */
 export interface OutfitBrandPlan {
@@ -265,10 +269,11 @@ export interface OutfitBrandPlan {
  * picks are freed if their tailoring fails, so it waits for a later plan. Only Brands the product
  * search knows, by `matches`, are picked; the picks' Brands not looked up yet are to be looked up
  * before the picks are used, and a later plan picks again with what the lookups found. Then each
- * pick's Pieces are searched, by `searched`: a Style Icon one of whose Pieces' searches found no
- * Product that qualified can't complete an Outfit either, so it's skipped, and the Style Icons after
- * it are planned without its picks. That holds only until a missing Product falls back to the Style
- * Icon's next Brand instead (ADR-0008).
+ * pick's Pieces are searched, by `searched`. A Brand whose search for a Category found no Product
+ * that qualified is out of that Category for the rest of the Styling, for every Style Icon, as if
+ * already used in it (ADR-0008): the Category takes the Style Icon's next usable Brand under the same
+ * pick rules, which may move its other Categories too, and a Style Icon left with none can't
+ * complete an Outfit, so it's skipped. A Brand is never searched twice for one Style Icon's Category.
  */
 export function planOutfitBrands(
   styleIcons: readonly StyleIconBrands[],
@@ -279,18 +284,24 @@ export function planOutfitBrands(
   searched: PieceSearches,
 ): OutfitBrandPlan {
   const plan: OutfitBrandPlan = { picked: [], skipped: [], lookUpBrands: [], searches: [] };
-  const usedSoFar = { top: new Set(used.top), bottom: new Set(used.bottom), shoes: new Set(used.shoes) };
+  // The Brands each Category can't take: those the Outfits already built use, and those its searches found nothing for.
+  const takenOrPassedOver = () => {
+    const passedOver = (category: BrandCategory) => searched.flatMap((search) => (search.category === category && !search.found ? [search.brandEntityId] : []));
+    return {
+      top: new Set([...used.top, ...passedOver("top")]),
+      bottom: new Set([...used.bottom, ...passedOver("bottom")]),
+      shoes: new Set([...used.shoes, ...passedOver("shoes")]),
+    };
+  };
+  const usedOrFoundNothing: UsedBrands = takenOrPassedOver();
+  // Then those this plan's own picks take too.
+  const usedSoFar = takenOrPassedOver();
   for (const { styleIconId, line, brands } of styleIcons) {
     if (plan.picked.length >= wanted) break;
     const picks = pickBrands(brands, line, budgetTier, usedSoFar, matches);
     if (!picks) {
       // Brands not looked up yet count as known, so it can't complete one whatever the lookups find.
-      if (!pickBrands(brands, line, budgetTier, used, matches)) plan.skipped.push(styleIconId);
-      continue;
-    }
-    const foundNothing = BRAND_CATEGORIES.some((category) => searched.get(pieceSearchKey(styleIconId, category, picks[category].entityId)) === false);
-    if (foundNothing) {
-      plan.skipped.push(styleIconId);
+      if (!pickBrands(brands, line, budgetTier, usedOrFoundNothing, matches)) plan.skipped.push(styleIconId);
       continue;
     }
     plan.picked.push({ styleIconId, brands: picks });
@@ -300,8 +311,10 @@ export function planOutfitBrands(
     }
   }
   if (plan.lookUpBrands.length > 0) return plan;
+  const isSearched = (styleIconId: string, category: BrandCategory, brand: PickedBrand) =>
+    searched.some((search) => search.styleIconId === styleIconId && search.category === category && search.brandEntityId === brand.entityId);
   plan.searches = plan.picked.flatMap(({ styleIconId, brands }) =>
-    BRAND_CATEGORIES.filter((category) => !searched.has(pieceSearchKey(styleIconId, category, brands[category].entityId))).map((category) => ({
+    BRAND_CATEGORIES.filter((category) => !isSearched(styleIconId, category, brands[category])).map((category) => ({
       styleIconId,
       category,
       brand: brands[category],

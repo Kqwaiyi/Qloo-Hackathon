@@ -84,11 +84,14 @@ async function lookUpBrand(stylingId: string, brand: BrandToLookUp): Promise<voi
 }
 lookUpBrand.maxRetries = PRODUCT_SEARCH_STEP_MAX_RETRIES;
 
-/** One product-search call. */
+/**
+ * One product-search call. Errors get the retries; one still failing on the last try passes the
+ * Piece's Brand over, unless the product search refused the key.
+ */
 async function searchProducts(stylingId: string, search: PieceSearch): Promise<void> {
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.searchProducts(stylingId, search));
+  return runWorkflowStep((steps) => steps.searchProducts(stylingId, search), { maxRetries: PRODUCT_SEARCH_STEP_MAX_RETRIES });
 }
 searchProducts.maxRetries = PRODUCT_SEARCH_STEP_MAX_RETRIES;
 

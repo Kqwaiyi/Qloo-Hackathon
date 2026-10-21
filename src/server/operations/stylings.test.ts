@@ -25,6 +25,7 @@ import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { readUsageSummary } from "@/server/operations/usage";
 import { neverAnswering, type ProductPhotoFormat, productPhoto, productPhotoBytes } from "@/server/product-photos/fake";
 import {
+  channel3Forbidden,
   channel3Offer,
   channel3Product,
   type Channel3Search,
@@ -91,6 +92,7 @@ beforeEach(async () => {
   harness.productPhotos.requests.length = 0;
   harness.productPhotos.respond = (url) => productPhoto(url);
   harness.stylings.previewRetries = 0;
+  harness.stylings.searchRetries = 0;
   await harness.db.delete(qlooCache);
   await harness.db.delete(brandMatch);
   // The app-wide caps count every user's Outfits, so each test starts with none made.
@@ -984,9 +986,8 @@ describe("a body photo's Products", () => {
     ]);
   });
 
-  it("must each be found for an Outfit: a Style Icon one of whose searches finds none that qualify is skipped for the next, without counting as a tailoring failure", async () => {
-    // Bolt's tops are all shown on a model. Bea Marsh's and Cleo Hart's fans don't favour Bolt.
-    harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) => (styleIconId === "w-1" ? BRANDS : BRANDS.filter((b) => b.name !== "Bolt")));
+  it("come from the Style Icon's next Brand for a Piece whose search finds none that qualify, which stays out of that Category for the rest of the Styling", async () => {
+    // Bolt's tops are all shown on a model.
     harness.channel3.respond = channel3SellingEveryBrand({
       products: (search) =>
         search.brandId === "c3-bolt" && search.category === "top"
@@ -998,6 +999,66 @@ describe("a body photo's Products", () => {
     const consultationId = await start(browser, "body_only");
     await harness.stylings.runPending();
 
+    // Bolt would otherwise be Ava Stone's Top, and Dune Bea Marsh's. Bolt can still be a Bottom.
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Ava Stone", ["Dune", "Jeanery", "Stride"]],
+      ["Bea Marsh", ["Jeanery", "Bolt", "Sole"]],
+    ]);
+    expect(await styleIconStatuses(consultationId)).toEqual([
+      ["Ava Stone", "used"],
+      ["Bea Marsh", "used"],
+      ["Cleo Hart", "unused"],
+    ]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 0 })]);
+    expect(productSearchesSent().filter(({ brandId, category }) => brandId === "c3-bolt" && category === "top")).toHaveLength(1);
+    // The Brands are fixed before tailoring, which is never offered a Brand whose search found nothing.
+    expect(harness.ai.tailoringRequests.flatMap((request) => request.pieces.flatMap((p) => (p.category === "top" ? [p.brand.name] : [])))).toEqual(["Dune", "Jeanery"]);
+    expect(
+      await harness.db
+        .select({ top: outfit.topBrandEntityId, bottom: outfit.bottomBrandEntityId, shoes: outfit.shoesBrandEntityId })
+        .from(outfit)
+        .where(eq(outfit.consultationId, consultationId))
+        .orderBy(asc(outfit.position)),
+    ).toEqual([
+      { top: "b-dune", bottom: "b-jeanery", shoes: "b-stride" },
+      { top: "b-jeanery", bottom: "b-bolt", shoes: "b-sole" },
+    ]);
+  });
+
+  it("come from the Style Icon's next Brand for a Piece whose search still errors after its retries, as when it finds none", async () => {
+    const selling = channel3SellingEveryBrand();
+    harness.channel3.respond = (request) =>
+      request.url.pathname === "/v1/browse" && channel3Search(request).brandId === "c3-bolt" && channel3Search(request).category === "top"
+        ? Response.json({ detail: "Internal error" }, { status: 500 })
+        : selling(request);
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Ava Stone", ["Dune", "Jeanery", "Stride"]],
+      ["Bea Marsh", ["Jeanery", "Bolt", "Sole"]],
+    ]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 0 })]);
+    expect(productSearchesSent().filter(({ brandId, category }) => brandId === "c3-bolt" && category === "top")).toHaveLength(1);
+  });
+
+  it("must each be found for an Outfit: a Style Icon left with no Brand for a Piece is skipped for the next, without counting as a tailoring failure", async () => {
+    // Stride is the only footwear Brand Ava Stone's fans favour, and it sells no women's shoes.
+    harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) => (styleIconId === "w-1" ? BRANDS.filter((b) => b.name !== "Sole" && b.name !== "Pace") : BRANDS));
+    harness.channel3.respond = channel3SellingEveryBrand({
+      products: (search) => (search.brandId === "c3-stride" && search.category === "shoes" ? [] : channel3SmallCatalogue(search)),
+    });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Bea Marsh", ["Bolt", "Jeanery", "Sole"]],
+      ["Cleo Hart", ["Dune", "Bolt", "Pace"]],
+    ]);
     expect(await styleIconStatuses(consultationId)).toEqual([
       ["Ava Stone", "skipped"],
       ["Bea Marsh", "used"],
@@ -1005,10 +1066,91 @@ describe("a body photo's Products", () => {
     ]);
     expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 0 })]);
     expect(harness.ai.tailoringRequests.map((request) => request.styleIconName)).not.toContain("Ava Stone");
+    expect(productSearchesSent().filter(({ brandId, category }) => brandId === "c3-stride" && category === "shoes")).toHaveLength(1);
   });
 
-  it("break the Styling when a search still fails after its retries, so the user can Try again", async () => {
+  it("are never searched for more loosely to fill a gap: each next Brand's search keeps the market, its own price range, new and in stock, and none is searched again", async () => {
+    // Bolt's tops are all shown on a model, and Stride's shoes search keeps failing.
+    harness.channel3.respond = channel3SellingEveryBrand({
+      products: (search) => {
+        if (search.brandId === "c3-stride" && search.category === "shoes") throw new Error("Channel3 is failing.");
+        return search.brandId === "c3-bolt" && search.category === "top"
+          ? [channel3Product("bolt-on-model", { brandIds: ["c3-bolt"], images: [{ url: "https://images.example/bolt.jpg", cleaned_url: null, shot_type: "on_model" }] })]
+          : channel3SmallCatalogue(search);
+      },
+    });
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.pieces.map((p) => p.brand?.name))).toEqual([
+      ["Dune", "Jeanery", "Sole"],
+      ["Jeanery", "Bolt", "Pace"],
+    ]);
+    expect(productSearchesSent().map(({ brandId, category, gender, market, priceRange }) => [brandId, category, gender, market, priceRange])).toEqual([
+      ["c3-bolt", "bottom", "female", "US", { min: 20, max: 120 }],
+      ["c3-bolt", "top", "female", "US", { min: 20, max: 120 }],
+      ["c3-dune", "top", "female", "US", null],
+      ["c3-jeanery", "bottom", "female", "US", { min: 50, max: 110 }],
+      ["c3-jeanery", "top", "female", "US", { min: 50, max: 110 }],
+      ["c3-pace", "shoes", "female", "US", { min: 30, max: 70 }],
+      ["c3-sole", "shoes", "female", "US", { min: 40, max: 90 }],
+      ["c3-stride", "shoes", "female", "US", { min: 60, max: 180 }],
+    ]);
+    for (const { body } of browseRequests()) {
+      expect(body).toMatchObject({ filters: { conditions: ["new"], availability: ["InStock"] }, config: { country: "US" } });
+    }
+  });
+
+  it("keep a Piece's Brand whose search errors on a try the step will retry and then answers", async () => {
     harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    harness.stylings.searchRetries = 2;
+    const selling = channel3SellingEveryBrand();
+    let boltTopTries = 0;
+    harness.channel3.respond = (request) => {
+      if (request.url.pathname === "/v1/browse" && channel3Search(request).brandId === "c3-bolt" && channel3Search(request).category === "top") {
+        boltTopTries += 1;
+        if (boltTopTries <= 2) return Response.json({ detail: "Internal error" }, { status: 500 });
+      }
+      return selling(request);
+    };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(boltTopTries).toBe(3);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.pieces.map((p) => p.brand?.name))).toEqual([
+      ["Bolt", "Jeanery", "Stride"],
+    ]);
+  });
+
+  it("pass a Piece's Brand over only once its search still errors on the step's last try, each try asking for exactly the same", async () => {
+    harness.stylings.searchRetries = 2;
+    const selling = channel3SellingEveryBrand();
+    harness.channel3.respond = (request) =>
+      request.url.pathname === "/v1/browse" && channel3Search(request).brandId === "c3-bolt" && channel3Search(request).category === "top"
+        ? Response.json({ detail: "Internal error" }, { status: 500 })
+        : selling(request);
+    const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    const boltTopTries = browseRequests().filter((request) => channel3Search(request).brandId === "c3-bolt" && channel3Search(request).category === "top");
+    expect(boltTopTries.map(({ body }) => body)).toEqual(Array(3).fill(boltTopTries[0]!.body));
+    expect(boltTopTries[0]!.body).toMatchObject({
+      filters: { brand_ids: ["c3-bolt"], gender: "female", conditions: ["new"], availability: ["InStock"], price: { min_price: 20, max_price: 120 } },
+      config: { country: "US" },
+    });
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.pieces.map((p) => p.brand?.name))).toEqual([
+      ["Dune", "Jeanery", "Stride"],
+      ["Jeanery", "Bolt", "Sole"],
+    ]);
+  });
+
+  it("break the Styling once every search it sent still errors after its retries, none answering, so the user can Try again rather than get other Brands", async () => {
     const selling = channel3SellingEveryBrand();
     harness.channel3.respond = (request) => (request.url.pathname === "/v1/browse" ? Response.json({ detail: "Internal error" }, { status: 500 }) : selling(request));
     const browser = await signedInUser({ stylePreference: "womenswear" });
@@ -1021,6 +1163,36 @@ describe("a body photo's Products", () => {
       state: "no_outfits",
       failedStyling: { kind: "first", reason: "something_broke" },
     });
+    // Ava Stone's Top, Bottom and Shoes, 3 at once, and no next Brand's.
+    expect(productSearchesSent().map(({ brandId, category }) => [brandId, category])).toEqual([
+      ["c3-bolt", "top"],
+      ["c3-jeanery", "bottom"],
+      ["c3-stride", "shoes"],
+    ]);
+    expect(harness.ai.tailoringRequests).toEqual([]);
+  });
+
+  it.each([
+    ["on a try the step would retry", 2],
+    ["on the step's last try", 0],
+  ])("break the Styling at once when the product search refuses the key %s, retrying no search and passing no Brand over", async (_, retries) => {
+    harness.stylings.searchRetries = retries;
+    const selling = channel3SellingEveryBrand();
+    harness.channel3.respond = (request) =>
+      request.url.pathname === "/v1/browse" && channel3Search(request).category === "top" ? channel3Forbidden() : selling(request);
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "failed", failureReason: "something_broke", outfitsMade: 0 })]);
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ failedStyling: { kind: "first", reason: "something_broke" } });
+    // Ava Stone's Top, Bottom and Shoes, 3 at once: the Top's tried once, and no next Brand's.
+    expect(productSearchesSent().map(({ brandId, category }) => [brandId, category])).toEqual([
+      ["c3-bolt", "top"],
+      ["c3-jeanery", "bottom"],
+      ["c3-stride", "shoes"],
+    ]);
     expect(harness.ai.tailoringRequests).toEqual([]);
   });
 

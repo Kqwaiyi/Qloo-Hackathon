@@ -46,8 +46,7 @@ import {
   isThinPool,
   needsBrands,
   type PickedBrand,
-  type PieceSearches,
-  pieceSearchKey,
+  type PieceSearchMade,
   planOutfitBrands,
 } from "@/server/outfit-assembly/brands";
 import { outfitCategories, type PhotoCategoryFacts } from "@/server/outfit-assembly/categories";
@@ -56,7 +55,7 @@ import { type Candidate, qualifyingCandidates, searchPriceFilter } from "@/serve
 import { rankStyleIcons, styleIconLines, styleIconQuery } from "@/server/outfit-assembly/style-icons";
 import type { ProductPhotos } from "@/server/product-photos/photos";
 import { lookUpBrandMatch, readBrandMatches } from "@/server/product-search/brand-matches";
-import type { ProductSearch } from "@/server/product-search/provider";
+import { type ProductSearch, UnretryableProductSearchError } from "@/server/product-search/provider";
 import type { QlooBrand, QlooClient } from "@/server/qloo/client";
 import { recordUsage } from "@/server/usage/records";
 
@@ -84,12 +83,20 @@ export class StylingNotRunningError extends Error {
   }
 }
 
+/** Every product search the Styling sent still errored after its retries, none answering: the product search is down. */
+export class ProductSearchDownError extends Error {
+  constructor(stylingId: string) {
+    super(`Every product search Styling ${stylingId} sent still failed after its retries: the product search is down.`);
+    this.name = "ProductSearchDownError";
+  }
+}
+
 /** How a step is being tried. */
 export interface StepTry {
   /**
    * Whether this is the step's last try, so that throwing now leaves it failed rather than tried
-   * again. Only the Preview step reads it, and its runner says. Unsaid, every try counts as the
-   * last, as when tests' inline runner retries nothing.
+   * again. Only the Preview and product search steps read it, and their runners say. Unsaid, every
+   * try counts as the last, as when tests' inline runner retries nothing.
    */
   lastTry?: boolean;
 }
@@ -189,6 +196,9 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
           ready.flatMap(({ brands }) => brands.map((brand) => brand.entityId)),
         );
         const searched = await readPieceSearches(tx, stylingId);
+        // Brands are never passed over for a product search that's down, every search the Styling
+        // sent having failed, none answering: it breaks instead, for Try again.
+        if (searched.length > 0 && searched.every((search) => !search.answered)) throw new ProductSearchDownError(stylingId);
         const plan = planOutfitBrands(ready, budgetTier, count, brandsUsedBy([...beside.outfits, ...made]), matches, searched);
         // Skipped quietly, and not a tailoring failure: the next Style Icon takes its place.
         if (plan.skipped.length > 0) await tx.update(styleIcon).set({ status: "skipped" }).where(inArray(styleIcon.id, plan.skipped));
@@ -248,7 +258,8 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
     },
 
     // The search is in the Styling's market, the Outfit's line and the Piece's Category, for the
-    // Brand alone, new and in stock. It's never loosened.
+    // Brand alone, new and in stock. It's never loosened: one that finds nothing, or still errors
+    // on the step's last try, passes the Brand over for the Category instead.
     async searchProducts(stylingId, { styleIconId, category, brand }) {
       const running = await readRunningStyling(ctx.db, stylingId);
       const [icon] = await ctx.db
@@ -260,8 +271,18 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
       if (!brandId) throw new Error(`The product search doesn't know Brand ${brand.entityId}, or it hasn't been looked up.`);
       const market = stylingMarket(running);
       const priceFilter = searchPriceFilter(brand, market);
-      const products = await ctx.productSearch.searchProducts({ brandId, category, line: icon.line, market, priceRange: priceFilter });
-      const candidates = qualifyingCandidates(products, { brandId, line: icon.line, priceFilter, officialSite: brand.officialSite });
+      let candidates: Candidate[] | null;
+      try {
+        const products = await ctx.productSearch.searchProducts({ brandId, category, line: icon.line, market, priceRange: priceFilter });
+        candidates = qualifyingCandidates(products, { brandId, line: icon.line, priceFilter, officialSite: brand.officialSite });
+      } catch (error) {
+        // A refused key fails the Styling at once; any other error is the step's to retry first.
+        if (!lastTry || error instanceof UnretryableProductSearchError) throw error;
+        console.warn(
+          `A ${CATEGORY_LABELS[category]} search still failed after its retries, so its Brand is passed over: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
+        candidates = null;
+      }
       await whileRunning(ctx.db, stylingId, async (tx) => {
         await tx
           .insert(pieceCandidates)
@@ -462,27 +483,27 @@ function stylingMarket({ market, countryCode }: { market: ProductSearchMarket | 
 }
 
 /**
- * Whether each of the Styling's Pieces' searches so far found a Product that qualified, by
- * `pieceSearchKey`.
+ * The Styling's Pieces' searches so far, whether each found a Product that qualified, and whether it
+ * answered at all rather than still erroring after its retries.
  */
-async function readPieceSearches(tx: Transaction, stylingId: string): Promise<PieceSearches> {
+async function readPieceSearches(tx: Transaction, stylingId: string): Promise<(PieceSearchMade & { answered: boolean })[]> {
   const rows = await tx
     .select({
       styleIconId: pieceCandidates.styleIconId,
       category: pieceCandidates.category,
       brandEntityId: pieceCandidates.brandEntityId,
-      found: sql<boolean>`jsonb_array_length(${pieceCandidates.candidates}) > 0`,
+      found: sql<boolean>`coalesce(jsonb_array_length(${pieceCandidates.candidates}), 0) > 0`,
+      answered: sql<boolean>`${pieceCandidates.candidates} is not null`,
     })
     .from(pieceCandidates)
     .where(eq(pieceCandidates.stylingId, stylingId));
-  return new Map(
-    rows.flatMap(({ styleIconId, category, brandEntityId, found }) =>
-      category === "hairstyle" ? [] : [[pieceSearchKey(styleIconId, category, brandEntityId), found] as const],
-    ),
-  );
+  return rows.flatMap(({ category, ...search }) => (category === "hairstyle" ? [] : [{ ...search, category }]));
 }
 
-/** Each Brand Piece's candidates, as its search for the Outfit's Brand found them, and when. Throws for a Piece not yet searched. */
+/**
+ * Each Brand Piece's candidates, as its search for the Outfit's Brand found them, and when. Throws
+ * for a Piece not yet searched, or whose search never answered.
+ */
 async function readCandidates(db: Database, stylingId: string, styleIconId: string, brands: BrandPicks) {
   const rows = await db
     .select({
@@ -495,7 +516,7 @@ async function readCandidates(db: Database, stylingId: string, styleIconId: stri
     .where(and(eq(pieceCandidates.stylingId, stylingId), eq(pieceCandidates.styleIconId, styleIconId)));
   const searchFor = (category: BrandCategory) => {
     const found = rows.find((row) => row.category === category && row.brandEntityId === brands[category].entityId);
-    if (!found) throw new Error(`The ${category} of Style Icon ${styleIconId}'s Outfit hasn't been searched.`);
+    if (!found?.candidates) throw new Error(`The ${category} of Style Icon ${styleIconId}'s Outfit hasn't been searched, or its search never answered.`);
     return { candidates: found.candidates, searchedAt: found.searchedAt };
   };
   return { top: searchFor("top"), bottom: searchFor("bottom"), shoes: searchFor("shoes") };

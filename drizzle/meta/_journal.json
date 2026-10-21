@@ -127,6 +127,13 @@
       "when": 1792572221527,
       "tag": "0017_product_pieces",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792576528992,
+      "tag": "0018_errored_searches",
+      "breakpoints": true
     }
   ]
 }

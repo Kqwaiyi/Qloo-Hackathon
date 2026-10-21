@@ -8,7 +8,7 @@ import { ProductSearchRateLimitedError, UnretryableProductSearchError } from "@/
 import { QlooError, QlooRateLimitedError } from "@/server/qloo/client";
 
 import type { BuildOutfitsSteps } from "./build-outfits";
-import { StylingNotRunningError, stylingSteps } from "./steps";
+import { ProductSearchDownError, StylingNotRunningError, stylingSteps } from "./steps";
 
 /**
  * Runs one "build Outfits" step for the Workflow: on the app's services, telling the Workflow which
@@ -26,8 +26,9 @@ export async function runWorkflowStep<T>(step: (steps: BuildOutfitsSteps) => Pro
 
 /** Other failures keep the Workflow's own retries. */
 function asWorkflowError(error: unknown): unknown {
-  // A Styling that has finished, or been cancelled, stops: retrying can't change that.
-  if (error instanceof StylingNotRunningError) return new FatalError(error.message);
+  // A Styling that has finished, or been cancelled, stops: retrying can't change that. Nor can it
+  // change that every product search it sent failed after their own retries.
+  if (error instanceof StylingNotRunningError || error instanceof ProductSearchDownError) return new FatalError(error.message);
   // "Too many requests" from Qloo or the product search: wait as long as it asks, or back off
   // longer each time.
   if (error instanceof QlooRateLimitedError || error instanceof ProductSearchRateLimitedError) {
