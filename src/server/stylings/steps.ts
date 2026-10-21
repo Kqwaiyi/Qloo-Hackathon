@@ -10,6 +10,7 @@ import {
   MAX_BRAND_FETCHES_PER_STYLING,
   MAX_TAILORING_SUBSTITUTES,
   type PreviewRefusalReason,
+  PRODUCT_CALLS_AT_ONCE,
   QLOO_CALLS_AT_ONCE,
   type StylingStage,
   TAILORING_ATTEMPTS,
@@ -34,10 +35,12 @@ import {
 } from "@/server/outfit-assembly/brands";
 import { outfitCategories, type PhotoCategoryFacts } from "@/server/outfit-assembly/categories";
 import { rankStyleIcons, styleIconLines, styleIconQuery } from "@/server/outfit-assembly/style-icons";
+import { lookUpBrandMatch, readBrandMatches } from "@/server/product-search/brand-matches";
+import type { ProductSearch } from "@/server/product-search/provider";
 import type { QlooBrand, QlooClient } from "@/server/qloo/client";
 import { recordUsage } from "@/server/usage/records";
 
-import type { BuildOutfitsSteps, StylingOutcome } from "./build-outfits";
+import type { BuildOutfitsSteps, OutfitPlan, OutfitTry, StylingOutcome } from "./build-outfits";
 import { readBuildingBeside } from "./current-outfits";
 
 /** What the steps run on. The Workflow gives them the app's services; tests give them fakes. */
@@ -48,6 +51,7 @@ export interface StylingContext {
   ai: AiProvider;
   /** Where the Consultation's photo and Previews are kept. Steps pass their pathnames, never their bytes. */
   blob: BlobStore;
+  productSearch: ProductSearch;
 }
 
 /** The Styling has finished, been cancelled or deleted, so its steps stop without saving. */
@@ -129,29 +133,37 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
         // Each failed tailoring was a try beyond the Outfits wanted: a substitute.
         const triesLeft = running.outfitsWanted + MAX_TAILORING_SUBSTITUTES - made.length - planning!.tailoringFailures;
         const count = Math.min(open.length, triesLeft);
-        if (count <= 0 || !beside.styleIconList) return { fetchBrandsFor: [], tries: [] };
+        if (count <= 0 || !beside.styleIconList) return tailoring([]);
         const icons = await tx
           .select({ id: styleIcon.id, line: styleIcon.line })
           .from(styleIcon)
           .where(and(eq(styleIcon.stylingId, beside.styleIconList), eq(styleIcon.status, "unused")))
           .orderBy(asc(styleIcon.position));
         if (!needsBrands(outfitCategories(planning!))) {
-          return { fetchBrandsFor: [], tries: icons.slice(0, count).map((icon, index) => ({ position: open[index]!, styleIconId: icon.id, brands: null })) };
+          return tailoring(icons.slice(0, count).map((icon, index) => ({ position: open[index]!, styleIconId: icon.id, brands: null })));
         }
 
         const budgetTier = brandsBudgetTier(stylingId, planning!.budgetTier);
         // Style Icons are planned in order, so one whose Brands haven't come back holds up the rest.
         const firstUnfetched = icons.findIndex((icon) => !(icon.id in brandsByStyleIcon));
-        const ready = firstUnfetched === -1 ? icons : icons.slice(0, firstUnfetched);
-        const plan = planOutfitBrands(
-          ready.map((icon) => ({ styleIconId: icon.id, line: icon.line, brands: brandsByStyleIcon[icon.id]! })),
-          budgetTier,
-          count,
-          brandsUsedBy([...beside.outfits, ...made]),
+        const ready = (firstUnfetched === -1 ? icons : icons.slice(0, firstUnfetched)).map((icon) => ({
+          styleIconId: icon.id,
+          line: icon.line,
+          brands: brandsByStyleIcon[icon.id]!,
+        }));
+        const matches = await readBrandMatches(
+          tx,
+          ctx.clock.now(),
+          ready.flatMap(({ brands }) => brands.map((brand) => brand.entityId)),
         );
+        const plan = planOutfitBrands(ready, budgetTier, count, brandsUsedBy([...beside.outfits, ...made]), matches);
         // Skipped quietly, and not a tailoring failure: the next Style Icon takes its place.
         if (plan.skipped.length > 0) await tx.update(styleIcon).set({ status: "skipped" }).where(inArray(styleIcon.id, plan.skipped));
+        // The picks' Brands are looked up a few at a time, in the order the picks use them: a later
+        // pick may change once an earlier pick's Brand turns out unknown.
+        const lookUpBrands = plan.lookUpBrands.slice(0, PRODUCT_CALLS_AT_ONCE);
         const stillWanted = count - plan.picked.length;
+        let fetchBrandsFor: string[] = [];
         if (stillWanted > 0) {
           const fetchedSoFar = Object.keys(brandsByStyleIcon).length;
           // A first Styling fetches a spare up front, in case a Style Icon can't complete an Outfit.
@@ -160,14 +172,11 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
             MAX_BRAND_FETCHES_PER_STYLING - fetchedSoFar,
             QLOO_CALLS_AT_ONCE,
           );
-          const toFetch = icons.slice(ready.length, ready.length + Math.max(fetchCount, 0)).map((icon) => icon.id);
-          if (toFetch.length > 0) return { fetchBrandsFor: toFetch, tries: [] };
+          fetchBrandsFor = icons.slice(ready.length, ready.length + Math.max(fetchCount, 0)).map((icon) => icon.id);
         }
+        if (fetchBrandsFor.length > 0 || lookUpBrands.length > 0) return { fetchBrandsFor, lookUpBrands, tries: [] };
         if (plan.picked.length > 0 && planning!.stage === "brands") await moveStage(tx, ctx.clock, stylingId, "building_outfits");
-        return {
-          fetchBrandsFor: [],
-          tries: plan.picked.map((picked, index) => ({ position: open[index]!, styleIconId: picked.styleIconId, brands: picked.brands })),
-        };
+        return tailoring(plan.picked.map((picked, index) => ({ position: open[index]!, styleIconId: picked.styleIconId, brands: picked.brands })));
       });
     },
 
@@ -192,6 +201,12 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
         if (!isThinPool(brands, icon.line, budgetTier)) break;
       }
       return fullestPool(tried, icon.line, budgetTier);
+    },
+
+    async lookUpBrand(stylingId, brand) {
+      // A Styling that stopped meanwhile makes no more product-search calls.
+      await readRunningStyling(ctx.db, stylingId);
+      await lookUpBrandMatch(ctx, brand);
     },
 
     async tailorOutfit(stylingId, { position, styleIconId, brands }, attempt) {
@@ -317,6 +332,11 @@ export function stylingSteps(ctx: StylingContext): BuildOutfitsSteps {
 /** Where a Styling's Outfits start: at Brands for a body photo, whose Outfits are built on them, or straight at Building Outfits. */
 export function outfitsStage(photo: PhotoCategoryFacts): StylingStage {
   return needsBrands(outfitCategories(photo)) ? "brands" : "building_outfits";
+}
+
+/** A plan that tailors these Outfits, with nothing to fetch or look up first. With none, Building Outfits is done. */
+function tailoring(tries: OutfitTry[]): OutfitPlan {
+  return { fetchBrandsFor: [], lookUpBrands: [], tries };
 }
 
 /** The Budget Tier a Styling's Brands are fetched and picked at. Only a Face Photo's Styling has none, and it has no Brands. */

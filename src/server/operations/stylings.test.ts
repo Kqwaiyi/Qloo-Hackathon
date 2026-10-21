@@ -7,7 +7,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type BudgetTier, byCategoryOrder, type PhotoType } from "@/config/consultations";
 import type { StylingKind } from "@/config/stylings";
 import type { AiProvider } from "@/server/ai/provider";
-import { consultation, outfit, piece, qlooCache, styleIcon, styling, usageRecord, user } from "@/server/db/schema";
+import { brandMatch, consultation, outfit, piece, qlooCache, styleIcon, styling, usageRecord, user } from "@/server/db/schema";
 import { listConsultations, readConsultation, startConsultation } from "@/server/operations/consultations";
 import { readSignedInUser } from "@/server/operations/session";
 import {
@@ -22,6 +22,7 @@ import {
 } from "@/server/operations/stylings";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { readUsageSummary } from "@/server/operations/usage";
+import { channel3KnowingEveryBrand } from "@/server/product-search/fake-channel3";
 import { qlooBrand, qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
 import { recordUsage } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
@@ -75,7 +76,11 @@ beforeEach(async () => {
   harness.qloo.requests.length = 0;
   harness.qloo.respond = qlooAnswering({ female: WOMEN, male: MEN });
   harness.qloo.duringRequest = undefined;
+  harness.channel3.requests.length = 0;
+  harness.channel3.respond = channel3KnowingEveryBrand();
+  harness.channel3.duringRequest = undefined;
   await harness.db.delete(qlooCache);
+  await harness.db.delete(brandMatch);
   // The app-wide caps count every user's Outfits, so each test starts with none made.
   await harness.db.delete(usageRecord);
 });
@@ -767,6 +772,117 @@ describe("the Brand calls", () => {
       ["Dana Reed", ["Dune", "Bolt", "Sole"]],
     ]);
     expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 2 })]);
+  });
+});
+
+describe("the Brands the product search knows", () => {
+  it("are the only ones an Outfit is built on: one it doesn't know is passed over for the next in Qloo's order", async () => {
+    harness.channel3.respond = channel3KnowingEveryBrand({ except: ["Bolt"] });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    // Bolt, the highest-affinity apparel Brand, would otherwise be the first Outfit's Top and the second's Bottom.
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Ava Stone", ["Dune", "Jeanery", "Stride"]],
+      ["Bea Marsh", ["Jeanery", "Dune", "Sole"]],
+    ]);
+  });
+
+  it("are looked up only as a pick is about to use them: the next in Qloo's order only once one before it isn't known", async () => {
+    harness.channel3.respond = channel3KnowingEveryBrand({ except: ["Bolt"] });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    // Dune was looked up for the first Outfit's Top once Bolt wasn't known. Ember, Pace, Hem, Loom
+    // and Weft were never about to be used, nor were the Brands of Cleo Hart, whose fans' Brands were
+    // fetched as a spare.
+    expect(brandLookups().toSorted()).toEqual(["Bolt", "Dune", "Jeanery", "Sole", "Stride"]);
+  });
+
+  it("are looked up at most 3 at once", async () => {
+    let inFlight = 0;
+    let mostInFlight = 0;
+    harness.channel3.duringRequest = async () => {
+      inFlight += 1;
+      mostInFlight = Math.max(mostInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+    };
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    // The two Outfits' picks use 5 Brands: Stride, Bolt and Jeanery, then Sole, Dune and Bolt.
+    expect(brandLookups()).toHaveLength(5);
+    expect(mostInFlight).toBe(3);
+  });
+
+  it("are looked up once in 30 days, whether the product search knew them or not", async () => {
+    harness.channel3.respond = channel3KnowingEveryBrand({ except: ["Bolt"] });
+    await start(await signedInUser({ stylePreference: "womenswear" }), "body_only");
+    await harness.stylings.runPending();
+    // Channel3 knows Bolt from now on.
+    harness.channel3.respond = channel3KnowingEveryBrand();
+    harness.channel3.requests.length = 0;
+
+    harness.clock.set("2026-11-15T11:59:59Z");
+    const later = await signedInUser({ stylePreference: "womenswear" });
+    const laterConsultationId = await start(later, "body_only");
+    await harness.stylings.runPending();
+
+    expect(brandLookups()).toEqual([]);
+    expect((await readConsultation(harness.context(later), laterConsultationId))!.outfits.map((o) => o.pieces.map((p) => p.brand?.name))).toEqual([
+      ["Dune", "Jeanery", "Stride"],
+      ["Jeanery", "Dune", "Sole"],
+    ]);
+
+    harness.clock.set("2026-11-15T12:00:00Z");
+    const latest = await signedInUser({ stylePreference: "womenswear" });
+    const latestConsultationId = await start(latest, "body_only");
+    await harness.stylings.runPending();
+
+    expect(brandLookups().toSorted()).toEqual(["Bolt", "Dune", "Jeanery", "Sole", "Stride"]);
+    expect((await readConsultation(harness.context(latest), latestConsultationId))!.outfits.map((o) => o.pieces.map((p) => p.brand?.name))).toEqual([
+      ["Bolt", "Jeanery", "Stride"],
+      ["Dune", "Bolt", "Sole"],
+    ]);
+  });
+
+  it("must complete an Outfit, or its Style Icon is skipped for the next, without counting as a tailoring failure", async () => {
+    // Stride is the only footwear Brand Ava Stone's fans favour, and the product search doesn't know it.
+    harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) => (styleIconId === "w-1" ? BRANDS.filter((b) => b.name !== "Sole" && b.name !== "Pace") : BRANDS));
+    harness.channel3.respond = channel3KnowingEveryBrand({ except: ["Stride"] });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Bea Marsh", ["Bolt", "Jeanery", "Sole"]],
+      ["Cleo Hart", ["Dune", "Bolt", "Pace"]],
+    ]);
+    expect(await styleIconStatuses(consultationId)).toEqual([
+      ["Ava Stone", "skipped"],
+      ["Bea Marsh", "used"],
+      ["Cleo Hart", "used"],
+    ]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 0 })]);
+    expect(harness.ai.tailoringRequests.map((request) => request.styleIconName)).not.toContain("Ava Stone");
+  });
+
+  it("are never looked up for a Face Photo, whose Outfits have no Brands", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "face");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toHaveLength(2);
+    expect(harness.channel3.requests).toEqual([]);
   });
 });
 
@@ -2396,6 +2512,11 @@ function personCalls(): URLSearchParams[] {
 /** The Qloo requests that went out for Brands. */
 function brandCalls(): URLSearchParams[] {
   return harness.qloo.requests.map((request) => request.url.searchParams).filter((params) => params.get("filter.type") === "urn:entity:brand");
+}
+
+/** The names of the Brands looked up in the product search, Channel3, in the order the lookups went out. */
+function brandLookups(): string[] {
+  return harness.channel3.requests.filter(({ url }) => url.pathname === "/v1/brands/search").map(({ url }) => url.searchParams.get("query") ?? "");
 }
 
 /** What a page polling the Styling status would show: `seen` holds each change, in order, as `look()` finds it. */

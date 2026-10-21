@@ -61,6 +61,9 @@ export const MAX_BRAND_FETCHES_PER_STYLING = 6;
 /** A Styling never has more Qloo calls than this waiting at once. There's no shared rate limiter. */
 export const QLOO_CALLS_AT_ONCE = 3;
 
+/** A Styling never has more product-search calls than this waiting at once, Brand lookups included. */
+export const PRODUCT_CALLS_AT_ONCE = 3;
+
 /** How often a page waiting on a Styling asks for its status. */
 export const STYLING_STATUS_POLL_INTERVAL_MS = 1000;
 

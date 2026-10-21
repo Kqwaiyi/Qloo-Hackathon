@@ -421,6 +421,16 @@ export const qlooCache = pgTable("qloo_cache", {
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
 });
 
+// The Brand matches: whether the product search knows each Qloo Brand, found or not, for
+// BRAND_MATCH_LIFETIME_DAYS. A later lookup of the Brand replaces its match.
+
+export const brandMatch = pgTable("brand_match", {
+  qlooEntityId: text("qloo_entity_id").primaryKey(),
+  // The product search's own ID for the Brand, or null when it doesn't know the Brand.
+  productSearchBrandId: text("product_search_brand_id"),
+  lookedUpAt: timestamp("looked_up_at", { withTimezone: true }).notNull(),
+});
+
 // The Qloo limit state: what Qloo last reported of this month's calls, which the Qloo backstop reads.
 
 export const qlooLimitState = pgTable(

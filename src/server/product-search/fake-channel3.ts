@@ -41,6 +41,18 @@ function knowsNothing({ url }: RecordedChannel3Request): Response {
   return channel3NotFound();
 }
 
+/**
+ * Channel3 knowing every Brand but those named in `except`, each under its own name: its Brand
+ * lookup lists the one Brand with the name looked up. It knows no website or Product.
+ */
+export function channel3KnowingEveryBrand({ except = [] }: { except?: readonly string[] } = {}) {
+  return (request: RecordedChannel3Request): Response => {
+    if (request.url.pathname !== "/v1/brands/search") return knowsNothing(request);
+    const name = request.url.searchParams.get("query") ?? "";
+    return channel3Brands(except.includes(name) ? [] : [channel3Brand(`c3-${encodeURIComponent(name.toLowerCase())}`, name)]);
+  };
+}
+
 /** A Brand, as Channel3's Brand lookup sends it. */
 export function channel3Brand(id: string, name: string, { logoUrl = `https://cdn.channel3.test/logo-brand-${id}` } = {}) {
   return { id, name, logo_url: logoUrl, description: `${name} makes clothes.`, best_commission_rate: 0 };

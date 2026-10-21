@@ -28,7 +28,15 @@ import { systemClock } from "@/server/clock";
 import { closeDatabase, connectDatabase } from "@/server/db/connect";
 import type { Database } from "@/server/db/database";
 import { qlooCache } from "@/server/db/schema";
-import { brandPriceRange, brandQueries, pickBrands, type PickedBrand, usableBrands, type UsedBrands } from "@/server/outfit-assembly/brands";
+import {
+  type BrandMatches,
+  brandPriceRange,
+  brandQueries,
+  pickBrands,
+  type PickedBrand,
+  usableBrands,
+  type UsedBrands,
+} from "@/server/outfit-assembly/brands";
 import { productSearchMarket } from "@/server/outfit-assembly/markets";
 import { lineGender } from "@/server/outfit-assembly/signals";
 import { rankStyleIcons, styleIconQuery } from "@/server/outfit-assembly/style-icons";
@@ -53,6 +61,9 @@ const FRESH_AGE_GROUP = "25_29";
 const FRESH_PHOTO_STYLE: PhotoStyleWords = ["casual"];
 
 const NOTHING_USED: UsedBrands = { top: new Set(), bottom: new Set(), shoes: new Set() };
+
+/** The first picks are made as if Channel3 knew every Brand: the check is whether it does. */
+const NONE_LOOKED_UP: BrandMatches = new Map();
 
 /** One Brand call's Brands, with the line and market of the users it was made for. */
 interface BrandResponse {
@@ -206,7 +217,7 @@ async function checkCoverage(responses: readonly BrandResponse[]): Promise<void>
 function firstPicks(responses: readonly BrandResponse[]): BrandPick[] {
   const picks = new Map<string, BrandPick>();
   for (const { line, market, brands } of responses) {
-    const picked = pickBrands(brands, line, "no_budget", NOTHING_USED);
+    const picked = pickBrands(brands, line, "no_budget", NOTHING_USED, NONE_LOOKED_UP);
     if (!picked) continue;
     for (const category of BRAND_CATEGORIES) {
       const brand = picked[category];

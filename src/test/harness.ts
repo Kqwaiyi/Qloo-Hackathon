@@ -11,7 +11,8 @@ import { createEmailSender, type EmailSender } from "@/server/email/send-email";
 import { type CookieToSet, forwardSetCookies, type ResponseCookies } from "@/server/http/cookies";
 import type { PhotoConsentTicks } from "@/server/operations/consultations";
 import type { OperationContext } from "@/server/operations/context";
-import { FakeChannel3Transport } from "@/server/product-search/fake-channel3";
+import { Channel3ProductSearch } from "@/server/product-search/channel3";
+import { channel3KnowingEveryBrand, FakeChannel3Transport } from "@/server/product-search/fake-channel3";
 import { QlooClient } from "@/server/qloo/client";
 import { FakeQlooTransport } from "@/server/qloo/fake";
 import { InlineStylingRunner } from "@/server/stylings/inline-runner";
@@ -118,7 +119,10 @@ export interface TestHarness {
   blob: MemoryBlobStore;
   /** Qloo: it answers with no one until a test sets `respond`, and records every request. */
   qloo: FakeQlooTransport;
-  /** Channel3, the product search: it knows no Brand and finds nothing until a test sets `respond`, and records every request. */
+  /**
+   * Channel3, the product search: until a test sets `respond`, it knows every Brand under its own
+   * name and finds nothing. It records every request.
+   */
   channel3: FakeChannel3Transport;
   /** Cloudflare Turnstile, for the Bot Check: it passes every token until a test sets `answer`, and records every request. */
   turnstile: FakeTurnstileTransport;
@@ -162,7 +166,9 @@ export async function createTestHarness({
   const qloo = new FakeQlooTransport();
   const qlooClient = new QlooClient({ db, clock, transport: qloo.send, apiUrl: "https://qloo.test", apiKey: "test-qloo-key" });
   const channel3 = new FakeChannel3Transport();
-  const stylings = new InlineStylingRunner({ db, clock, qloo: qlooClient, ai, blob });
+  channel3.respond = channel3KnowingEveryBrand();
+  const productSearch = new Channel3ProductSearch({ transport: channel3.send, apiKey: "test-channel3-key" });
+  const stylings = new InlineStylingRunner({ db, clock, qloo: qlooClient, ai, blob, productSearch });
   const emails = new CapturingEmailTransport();
   const emailSender = createEmailSender({ db, clock, transport: emails });
   const turnstile = new FakeTurnstileTransport();

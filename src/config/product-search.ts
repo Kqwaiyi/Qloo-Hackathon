@@ -69,6 +69,15 @@ export const PRODUCT_SEARCH_MARKET_CURRENCIES: Record<ProductSearchMarket, strin
  */
 export const PRODUCTS_PER_SEARCH = 30;
 
+/**
+ * Whether the product search knows a Qloo Brand, found or not, is kept this long by the Brand's
+ * Qloo entity ID, so Stylings don't keep looking up the same Brands.
+ */
+export const BRAND_MATCH_LIFETIME_DAYS = 30;
+
+/** A Styling retries each product-search call this many times, backing off longer each time on "too many requests". */
+export const PRODUCT_SEARCH_STEP_MAX_RETRIES = 5;
+
 /** The kinds of One-Piece (ADR-0003). */
 export type OnePieceKind = "dress" | "jumpsuit" | "overalls";
 
