@@ -93,10 +93,13 @@ function PieceRow({ piece, styleIconName }: { piece: PieceView; styleIconName: s
   );
 }
 
-/** A link that opens in a new tab, with the ↗ that says so, and nothing passed to the page it opens. */
-function NewTabLink({ href, children }: { href: string; children: ReactNode }) {
+/**
+ * A link that opens in a new tab, with the ↗ that says so, and nothing passed to the page it opens:
+ * in the app's link style unless `className` gives another, as the landing page's does.
+ */
+export function NewTabLink({ href, children, className = textLink }: { href: string; children: ReactNode; className?: string }) {
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className={textLink}>
+    <a href={href} target="_blank" rel="noopener noreferrer" className={className}>
       {children}
       {/* U+FE0E keeps the arrow a plain glyph, not an emoji. */}
       <span aria-hidden="true"> {"↗︎"}</span>

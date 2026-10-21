@@ -1,6 +1,6 @@
 // The landing page's frozen sample Consultations, one of each Photo Type. Written by
-// `npm run team:export-landing-sample` (see the README): edit by hand only to fix a typo. A sample
-// whose `images` is null is a placeholder, shown with no pictures.
+// `npm run team:make-landing-sample` or `npm run team:export-landing-sample` (see the README): edit
+// by hand only to fix a typo. A sample whose `images` is null is a placeholder, shown with no pictures.
 
 import type { LandingSamples } from "@/server/operations/landing";
 

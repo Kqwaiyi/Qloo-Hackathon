@@ -1,19 +1,26 @@
 import { isAPIError } from "better-auth/api";
 import { and, asc, eq } from "drizzle-orm";
+import { randomBytes } from "node:crypto";
 
-import { DEMO_ACCOUNT_BIRTH_DATE, DEMO_ACCOUNT_PROFILE, isAllowedPassword } from "@/config/accounts";
-import { byCategoryOrder } from "@/config/consultations";
-import { LANDING_SAMPLES_FOLDER, LANDING_STYLE_ICONS } from "@/config/landing";
+import { DEMO_ACCOUNT_BIRTH_DATE, DEMO_ACCOUNT_PROFILE, isAllowedPassword, type StylePreference } from "@/config/accounts";
+import { type BudgetTier, byCategoryOrder, type PhotoType } from "@/config/consultations";
+import { LANDING_SAMPLE_COUNTRY_CODE, LANDING_SAMPLES_FOLDER, LANDING_STYLE_ICONS } from "@/config/landing";
 import { judgeAge, parseIsoBirthDate, storeBirthYearAndMonth } from "@/server/accounts/birth-date";
 import { type AccountDeletionContext, deleteAccountOf } from "@/server/accounts/deletion";
 import { checkProfile, usernameProblem } from "@/server/accounts/profile";
+import type { PhotoRejection } from "@/server/consultations/photo-check";
 import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
-import { storedPiece, storedPieceColumns } from "@/server/operations/consultations";
+import type { ResponseCookies } from "@/server/http/cookies";
+import { updateProfile } from "@/server/operations/account";
+import { startConsultation, storedPiece, storedPieceColumns } from "@/server/operations/consultations";
 import type { OperationContext, Result } from "@/server/operations/context";
 import type { LandingSample } from "@/server/operations/landing";
+import { signIn } from "@/server/operations/sign-in";
+import type { StylingRunner } from "@/server/stylings/runner";
 
 // The team's own operations, which its scripts run by hand. There's no request and no sign-in:
-// whoever runs a script holds the production credentials.
+// whoever runs a script holds the production credentials. Making a landing sample is the one
+// exception: it signs in to a Demo Account of its own, on a fresh app that lives only while it runs.
 
 /** What a team script's operations need. */
 export type TeamContext = AccountDeletionContext & Pick<OperationContext, "auth">;
@@ -179,6 +186,96 @@ export async function exportLandingSample(
       images: { photoPath: photo.path, previewPath: preview.path },
     },
     images: [photo, preview],
+  };
+}
+
+/** One of the landing page's sample photos, to run the pipeline on once and freeze as its Photo Type's sample. */
+export interface LandingSampleMaking {
+  photoType: PhotoType;
+  photo: Blob;
+  /** The sample's Style Preference, which decides its Outfits' lines. */
+  stylePreference: StylePreference;
+  /** A body photo's Budget Tier, No Budget when none is given. A Face Photo has none. */
+  budgetTier?: BudgetTier;
+  /** Which of its Outfits the sample shows, as "Outfit N" numbers it. The first unless given. */
+  outfitPosition?: number;
+}
+
+/**
+ * What making a landing sample runs on: a fresh app of its own, with no Demo Account in it yet, the
+ * Qloo, product search and AI it should call, and Stylings run in this process when it says.
+ */
+export type LandingSampleApp = Omit<OperationContext, "requestHeaders" | "responseCookies" | "stylings"> & {
+  /** Runs Stylings in this process: each one started runs to its end when `runPending()` is called. */
+  stylings: StylingRunner & { runPending(): Promise<void> };
+};
+
+export type MakeLandingSampleRefusal =
+  /** The photo check couldn't read the photo or errored, or it rejected the photo, as it would tell a user. */
+  | { refusal: "unusable-file" | "check-errored" }
+  | { refusal: "photo-rejected"; rejection: PhotoRejection }
+  /** The Styling made no such Outfit, or that Outfit has no Preview. */
+  | { refusal: "no-outfit" | "no-preview" };
+
+/**
+ * Runs the real pipeline once on one of the landing page's sample photos, and freezes what it makes
+ * (spec: "Landing sample"). On its own fresh app it does what the team would do by hand: it creates
+ * the Demo Account and signs in to it, sets its Style Preference to the sample's and its Country to
+ * the United States, presses "Get my Outfits" with the photo, runs that first Styling to its end, and
+ * exports one of its Outfits as `exportLandingSample` does. Every call goes to the Qloo, product
+ * search and AI the app was given, as the app's own would. It writes nothing outside the app.
+ */
+export async function makeLandingSample(
+  app: LandingSampleApp,
+  { photoType, photo, stylePreference, budgetTier, outfitPosition }: LandingSampleMaking,
+): Promise<Result<{ sample: LandingSample; images: LandingSampleImage[] }, MakeLandingSampleRefusal>> {
+  // Nobody else ever signs in to the fresh app, so its password is thrown away with it.
+  const password = randomBytes(24).toString("base64url");
+  const created = await createDemoAccount(app, { password });
+  if (!created.ok) throw new Error(`The landing sample's app isn't fresh: its Demo Account couldn't be created (${created.refusal}).`);
+  const email = app.auth.demoAccountEmail;
+  const judgesRequest = await judgesRequests(app);
+  const signedIn = await signIn(judgesRequest(), { identifier: email, password });
+  if (!signedIn.ok) throw new Error(`Couldn't sign in to the landing sample's Demo Account (${signedIn.refusal}).`);
+  const profile = { username: DEMO_ACCOUNT_PROFILE.username, stylePreference, countryCode: LANDING_SAMPLE_COUNTRY_CODE };
+  const profileSet = await updateProfile(judgesRequest(), profile);
+  if (!profileSet.ok) throw new Error(`Couldn't set the landing sample's profile (${profileSet.refusal}).`);
+
+  // The team agrees to the photo notice for the AI-generated sample person, as a judge does each time.
+  const started = await startConsultation(judgesRequest(), { photo, photoType, budgetTier, consent: { storeAndProcess: true, sendToGemini: true } });
+  if (!started.ok) {
+    switch (started.refusal) {
+      case "unusable-file":
+      case "check-errored":
+        return { ok: false, refusal: started.refusal };
+      case "photo-rejected":
+        return { ok: false, refusal: started.refusal, rejection: started.rejection };
+      default:
+        throw new Error(`The landing sample's app refused to start its Consultation (${started.refusal}).`);
+    }
+  }
+  await app.stylings.runPending();
+
+  const exported = await exportLandingSample(app, { email, consultationId: started.consultationId, outfitPosition });
+  if (exported.ok) return exported;
+  if (exported.refusal === "no-outfit" || exported.refusal === "no-preview") return { ok: false, refusal: exported.refusal };
+  throw new Error(`The landing sample's Consultation couldn't be exported (${exported.refusal}).`);
+}
+
+/**
+ * The requests the Demo Account's judge's browser makes on the landing sample's app: a context for
+ * each next one, from the app's own origin, carrying the cookies Better Auth has set so far.
+ */
+async function judgesRequests(app: LandingSampleApp): Promise<() => OperationContext> {
+  const origin = new URL((await app.auth.$context).baseURL).origin;
+  const cookies = new Map<string, string>();
+  const responseCookies: ResponseCookies = {
+    // A cookie set to expire at once is Better Auth clearing it.
+    set: ({ name, value, maxAge }) => (maxAge === 0 ? cookies.delete(name) : cookies.set(name, value)),
+  };
+  return () => {
+    const cookie = [...cookies].map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join("; ");
+    return { ...app, requestHeaders: new Headers({ origin, cookie }), responseCookies };
   };
 }
 

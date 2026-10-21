@@ -6,19 +6,12 @@
 //
 //   npm run team:export-landing-sample -- <demo-account-email> <consultation-id> [outfit-number]
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { PHOTO_TYPE_LABELS } from "@/config/consultations";
-import { LANDING_SAMPLES } from "@/server/landing-samples";
-import type { LandingSamples } from "@/server/operations/landing";
 import { exportLandingSample, type ExportLandingSampleRefusal } from "@/server/operations/team";
 
+import { writeLandingSample } from "./landing-sample-files";
 import { exitWithUsage, runTeamScript } from "./team-script";
 
-const SAMPLES_FILE = fileURLToPath(new URL("../src/server/landing-samples.ts", import.meta.url));
-const PUBLIC_FOLDER = fileURLToPath(new URL("../public", import.meta.url));
 const USAGE = "npm run team:export-landing-sample -- <demo-account-email> <consultation-id> [outfit-number]";
 
 const [email, consultationId, outfitNumber = "1"] = process.argv.slice(2);
@@ -32,14 +25,9 @@ await runTeamScript(async (ctx) => {
     return false;
   }
   const { sample, images } = result;
-  // A sample exported again replaces its images, whose photo may now have another format.
-  const folder = path.join(PUBLIC_FOLDER, path.dirname(images[0]!.path));
-  await rm(folder, { recursive: true, force: true });
-  await mkdir(folder, { recursive: true });
-  for (const image of images) await writeFile(path.join(PUBLIC_FOLDER, image.path), image.bytes);
-  await writeFile(SAMPLES_FILE, samplesSource({ ...LANDING_SAMPLES, [sample.photoType]: sample }));
+  const folder = await writeLandingSample(sample, images);
   console.log(
-    `Wrote the photo and Outfit ${outfitPosition}'s Preview into public${path.posix.dirname(images[0]!.path)}/, and the ` +
+    `Wrote the photo and Outfit ${outfitPosition}'s Preview into public${folder}/, and the ` +
       `${PHOTO_TYPE_LABELS[sample.photoType]} sample into src/server/landing-samples.ts. Check the diff, then commit and deploy it.`,
   );
   // So whoever runs it can tell it's the Outfit they meant.
@@ -58,16 +46,4 @@ function refusalText(refusal: ExportLandingSampleRefusal["refusal"]): string {
     case "no-preview":
       return `That Consultation's Outfit ${outfitPosition} has no Preview. Pick an Outfit that has one.`;
   }
-}
-
-/** The samples file, as this script writes it. */
-function samplesSource(samples: LandingSamples): string {
-  return `// The landing page's frozen sample Consultations, one of each Photo Type. Written by
-// \`npm run team:export-landing-sample\` (see the README): edit by hand only to fix a typo. A sample
-// whose \`images\` is null is a placeholder, shown with no pictures.
-
-import type { LandingSamples } from "@/server/operations/landing";
-
-export const LANDING_SAMPLES: LandingSamples = ${JSON.stringify(samples, null, 2)};
-`;
 }

@@ -7,9 +7,10 @@ import type { StylingRunner } from "./runner";
 import { type StylingContext, StylingNotRunningError, stylingSteps } from "./steps";
 
 /**
- * Stylings in tests: the "build Outfits" Workflow's own steps, in its order, run in this process
- * with no retries unless a test asks for the Preview step's or the product search step's. A started
- * Styling waits until `runPending()`, so a test can look at it running.
+ * Stylings in tests, and in the team's landing sample script: the "build Outfits" Workflow's own
+ * steps, in its order, run in this process with no retries unless a test (or the script) asks for
+ * the Preview step's or the product search step's. A started Styling waits until `runPending()`, so
+ * a test can look at it running.
  */
 export class InlineStylingRunner implements StylingRunner {
   /** The Stylings started and not yet run, oldest first. */
@@ -17,13 +18,13 @@ export class InlineStylingRunner implements StylingRunner {
   /**
    * How many times a Preview step that throws is tried again, as the Workflow retries it, each try
    * knowing whether it's the last: one of the steps whose last try behaves differently. None unless
-   * a test says.
+   * a test (or the script) says.
    */
   previewRetries = 0;
   /**
    * How many times a product search step that throws is tried again, as the Workflow retries it,
    * each try knowing whether it's the last: the other step whose last try behaves differently. None
-   * unless a test says.
+   * unless a test (or the script) says.
    */
   searchRetries = 0;
   /** The IDs of the runs cancelled, oldest first. */

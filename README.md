@@ -84,9 +84,21 @@ No usage limit applies to the Demo Account: not the Outfit Allowance, the photo-
 
 ## Landing page samples
 
-The landing page walks visitors through three frozen Consultations, one of each Photo Type: a Full-Body Photo for the walkthrough, then a Face Photo and a Body-Only Photo. Their text ships with the page in [src/server/landing-samples.ts](src/server/landing-samples.ts), and their photo and Preview in `public/landing/samples/<Photo Type>/`, so the page never calls Qloo, the AI or the Blob store. Every sample person is AI-generated, which is why their images can live in the repo. Until they're captured, the samples are placeholders shown with plain figures.
+The landing page walks visitors through three frozen Consultations, one of each Photo Type: a Full-Body Photo for the walkthrough, then a Face Photo and a Body-Only Photo. Their text ships with the page in [src/server/landing-samples.ts](src/server/landing-samples.ts), and their photo and Preview in `public/landing/samples/<Photo Type>/`, so the page never calls Qloo, the AI, the product search or the Blob store. A sample's Products keep the offers, prices and dates they were found with: the page never checks them again. Every sample person is AI-generated, which is why their images can live in the repo. Until they're captured, the samples are placeholders shown with plain figures.
 
-To capture a sample, with an AI-generated photo from ticket 05:
+### Making a sample with real Products
+
+Once a sample has its photo, the team makes it again with real Products by running the real pipeline once on that photo, with live Qloo, Channel3 and Gemini and the United States as the Country. This costs money (a photo check, a tailoring and a Preview for each of its 2 Outfits, and around 8 product searches), so get the team's go-ahead first. With `QLOO_API_URL`, `QLOO_API_KEY`, `CHANNEL3_API_KEY` and `GEMINI_API_KEY` in `.env.local`, whatever `AI_PROVIDER` and `PRODUCT_SEARCH` say, run this, leaving out the Outfit number for the first:
+
+```bash
+npm run team:make-landing-sample -- <full_body | face | body_only> <Outfit number>
+```
+
+It runs on an app of its own that lives only while it runs, its database and Blob store in memory, so it reads and writes no other database and sends no email, and its Qloo calls and product searches count towards no backstop but that app's own. There it creates the Demo Account, gives it the sample's Style Preference and the United States, presses "Get my Outfits" with the photo in `public/landing/samples/<Photo Type>/` and the sample's Budget Tier, and runs that Styling to its end. Then it freezes the picked Outfit as `team:export-landing-sample` below does, replacing the sample's photo, Preview and text, and ends by naming that Outfit's Style Icon and Products, with their prices, dates and shops. The Full-Body sample's Style Preference is No preference, whose Style Icons alternate lines, womenswear first, so its menswear Outfit is usually Outfit 2. Pick one with a separate Top and Bottom, for the reason in step 2 below. A run that fails partway writes nothing, so run it again: here, unlike in the Workflow, a Qloo call or a tailoring that errors isn't tried again. Check the Preview and the diff by eye, then commit them.
+
+### Capturing a sample from a Consultation
+
+To capture a sample from a Consultation on the Demo Account, with an AI-generated photo from ticket 05:
 
 1. Sign in to the Demo Account in production and run a Consultation with the photo. Between them, the Face Photo and Body-Only Photo should cover the Style Preference the Full-Body Photo's doesn't, so change the Demo Account's Style Preference in Settings as you go.
 2. Pick the Outfit the page will show, one with a Preview that looks right, and note its number ("Outfit N"). The first is the default. For the Full-Body Photo, pick one with a separate Top and Bottom, since the walkthrough lists the Brands Qloo picked from its Pieces, and a One-Piece leaves out the Bottom Brand. Copy the Consultation's ID from the end of its page's address, `/consultations/<id>`.

@@ -21,7 +21,8 @@
     "team:create-demo-account": "tsx scripts/create-demo-account.ts",
     "team:delete-account": "tsx scripts/delete-account.ts",
     "team:correct-birth-date": "tsx scripts/correct-birth-date.ts",
-    "team:export-landing-sample": "tsx scripts/export-landing-sample.ts"
+    "team:export-landing-sample": "tsx scripts/export-landing-sample.ts",
+    "team:make-landing-sample": "tsx --env-file=.env.local scripts/make-landing-sample.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "4.0.95",

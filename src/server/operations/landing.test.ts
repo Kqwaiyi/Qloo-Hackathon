@@ -7,7 +7,8 @@ import { refreshExchangeRates } from "@/server/exchange-rates/rates";
 import { type ConsultationView, deleteConsultation, readConsultation, startConsultation } from "@/server/operations/consultations";
 import { type LandingSample, type LandingSamples, readLandingPage } from "@/server/operations/landing";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
-import { exportLandingSample } from "@/server/operations/team";
+import { exportLandingSample, makeLandingSample } from "@/server/operations/team";
+import { channel3Search } from "@/server/product-search/fake-channel3";
 import { qlooBrand, qlooPerson, qlooResponse } from "@/server/qloo/fake";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
@@ -21,6 +22,8 @@ beforeEach(() => {
   harness.clock.set("2026-10-16T12:00:00Z");
   harness.blob.objects.clear();
   harness.qloo.requests.length = 0;
+  harness.channel3.requests.length = 0;
+  harness.productPhotos.requests.length = 0;
 });
 
 // Frozen sample Consultations as the landing page ships them, made up for these tests.
@@ -103,6 +106,60 @@ const BODY_ONLY: LandingSample = {
 
 const SAMPLES: LandingSamples = { full_body: FULL_BODY, face: FACE, body_only: BODY_ONLY };
 
+// The walkthrough's sample as the team's script freezes it now: made in the United States, each
+// Top, Bottom and Shoes a real Product, priced as its seller listed it on the day it was found.
+const FULL_BODY_WITH_PRODUCTS: LandingSample = {
+  ...FULL_BODY,
+  stylePreference: "no_preference",
+  countryCode: "US",
+  budgetTier: "no_budget",
+  outfit: {
+    styleIconName: "Dev Rowe",
+    pieces: [
+      FULL_BODY.outfit.pieces[0]!,
+      {
+        category: "top",
+        item: "Heavyweight Pocket Tee - Sage",
+        why: "A boxy pocket tee keeps Dev Rowe's look relaxed.",
+        brand: { name: "Bolt", priceRange: null, visitUrl: null },
+        product: {
+          available: true,
+          price: { amount: 38, currency: "USD" },
+          pricedOn: "2026-10-02",
+          url: "https://bolt.example/products/pocket-tee",
+          shopDomain: "bolt.example",
+        },
+      },
+      {
+        category: "bottom",
+        item: "90s Straight Jean in Mid Wash",
+        why: "Mid-wash denim grounds the tee.",
+        brand: { name: "Jeanery", priceRange: null, visitUrl: null },
+        product: {
+          available: true,
+          price: { amount: 89.5, currency: "USD" },
+          pricedOn: "2026-10-02",
+          url: "https://shop.example/jeanery-90s-straight",
+          shopDomain: "shop.example",
+        },
+      },
+      {
+        category: "shoes",
+        item: "Retro Runner Suede - Grey",
+        why: "Grey suede finishes it quietly.",
+        brand: { name: "Stride", priceRange: null, visitUrl: null },
+        product: {
+          available: true,
+          price: { amount: 120, currency: "USD" },
+          pricedOn: "2026-10-02",
+          url: "https://stride.example/retro-runner",
+          shopDomain: "stride.example",
+        },
+      },
+    ],
+  },
+};
+
 describe("the landing page", () => {
   it("shows each frozen Consultation's text, with its photo and Preview as they ship with the page", async () => {
     const page = await readLandingPage(harness.context(new TestBrowser()), SAMPLES);
@@ -144,6 +201,43 @@ describe("the landing page", () => {
     });
   });
 
+  it("shows a frozen sample's Products as the app's card does: each by its seller's name, with its Brand, its shop and its dated price", async () => {
+    const page = await readLandingPage(harness.context(new TestBrowser()), { ...SAMPLES, full_body: FULL_BODY_WITH_PRODUCTS });
+
+    expect(page.samples.full_body).toMatchObject({ countryName: "United States", stylePreference: "no_preference", budgetTier: "no_budget" });
+    // Each price in whole US dollars, as its seller listed it, on the day it was found; the total adds them up.
+    expect(page.samples.full_body.outfit).toEqual({
+      position: 1,
+      styleIconName: "Dev Rowe",
+      total: "$248",
+      leftOutOfTotal: 0,
+      pieces: [
+        FULL_BODY.outfit.pieces[0],
+        {
+          category: "top",
+          item: "Heavyweight Pocket Tee - Sage",
+          why: "A boxy pocket tee keeps Dev Rowe's look relaxed.",
+          brand: { name: "Bolt", priceRange: null, visitUrl: null },
+          product: { available: true, price: "$38", pricedOn: "2026-10-02", url: "https://bolt.example/products/pocket-tee", shopDomain: "bolt.example" },
+        },
+        {
+          category: "bottom",
+          item: "90s Straight Jean in Mid Wash",
+          why: "Mid-wash denim grounds the tee.",
+          brand: { name: "Jeanery", priceRange: null, visitUrl: null },
+          product: { available: true, price: "$90", pricedOn: "2026-10-02", url: "https://shop.example/jeanery-90s-straight", shopDomain: "shop.example" },
+        },
+        {
+          category: "shoes",
+          item: "Retro Runner Suede - Grey",
+          why: "Grey suede finishes it quietly.",
+          brand: { name: "Stride", priceRange: null, visitUrl: null },
+          product: { available: true, price: "$120", pricedOn: "2026-10-02", url: "https://stride.example/retro-runner", shopDomain: "stride.example" },
+        },
+      ],
+    });
+  });
+
   it("shows a placeholder sample, whose images haven't been captured yet, with no images", async () => {
     const page = await readLandingPage(harness.context(new TestBrowser()), { ...SAMPLES, face: { ...FACE, images: null } });
 
@@ -158,12 +252,30 @@ describe("the landing page", () => {
     expect(await readLandingPage(harness.context(new TestBrowser()), SAMPLES)).toMatchObject({ signedIn: false });
   });
 
-  it("makes no Qloo or AI call, so a visit costs nothing", async () => {
-    await readLandingPage(harness.context(new TestBrowser()), SAMPLES);
-    await readLandingPage(harness.context(await signedInUser()), SAMPLES);
+  it("makes no Qloo, AI or product-search call, so a visit costs nothing", async () => {
+    const samples = { ...SAMPLES, full_body: FULL_BODY_WITH_PRODUCTS };
+
+    await readLandingPage(harness.context(new TestBrowser()), samples);
+    await readLandingPage(harness.context(await signedInUser()), samples);
 
     expect(harness.qloo.requests).toEqual([]);
     expect(harness.ai).toMatchObject({ photoCheckCount: 0, tailoringRequests: [], previewRequests: [] });
+    expect(harness.channel3.requests).toEqual([]);
+  });
+
+  it("never refreshes a frozen sample's Products: they keep the prices and dates they were found with, however old", async () => {
+    // It's 16 October, two weeks after they were found: an Outfit of the app's own would be checked again by now.
+    const page = await readLandingPage(harness.context(await signedInUser()), { ...SAMPLES, full_body: FULL_BODY_WITH_PRODUCTS });
+
+    expect(page.samples.full_body.outfit.pieces.map(({ product }) => product)).toEqual([
+      null,
+      expect.objectContaining({ available: true, price: "$38", pricedOn: "2026-10-02" }),
+      expect.objectContaining({ available: true, price: "$90", pricedOn: "2026-10-02" }),
+      expect.objectContaining({ available: true, price: "$120", pricedOn: "2026-10-02" }),
+    ]);
+    // Nothing asks the product search about them, nor fetches their photos.
+    expect(harness.channel3.requests).toEqual([]);
+    expect(harness.productPhotos.requests).toEqual([]);
   });
 });
 
@@ -361,6 +473,125 @@ describe("the team exporting a Demo Account Consultation as a landing page sampl
   });
 });
 
+describe("the team making a landing page sample by running the pipeline once on its photo", () => {
+  // Each makes it on a fresh app of its own, as the script does, with Qloo, Channel3 and the AI faked.
+  let fresh: TestHarness;
+
+  beforeEach(async () => {
+    fresh = await createTestHarness();
+    fresh.qloo.respond = (request) =>
+      qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
+  });
+
+  it("styles the photo as the Demo Account in the United States, in the sample's line, and freezes its first Outfit's Products and Preview", async () => {
+    const photo = await jpegPhoto();
+
+    const result = await makeLandingSample(freshApp(), { photoType: "full_body", photo, stylePreference: "menswear", budgetTier: "no_budget" });
+
+    // Each Product as the fake Channel3 sells it in the United States, on the day the pipeline ran:
+    // at 45 US dollars, or the nearest price within its Brand's own range.
+    const product = (id: string, amount: number) => ({
+      available: true,
+      price: { amount, currency: "USD" },
+      pricedOn: "2026-10-16",
+      url: `https://shop.example/products/${id}`,
+      shopDomain: "shop.example",
+    });
+    expect(result).toEqual({
+      ok: true,
+      sample: {
+        photoType: "full_body",
+        stylePreference: "menswear",
+        // The Demo Account's, born January 2000.
+        ageGroup: "25_29",
+        countryCode: "US",
+        budgetTier: "no_budget",
+        photoStyle: ["casual"],
+        styleIcons: ["Ava Stone", "Bea Marsh", "Cleo Hart", "Dana Reed", "Esme Vale"],
+        outfit: {
+          styleIconName: "Ava Stone",
+          pieces: [
+            {
+              category: "hairstyle",
+              item: "Casual textured cut with soft layers",
+              why: "Ava Stone's signature cut, reworked so your current hair carries it with your casual Photo Style.",
+              brand: null,
+              product: null,
+            },
+            {
+              category: "top",
+              item: "Product c3-bolt-top-1",
+              why: "An easy top layer in the spirit of Ava Stone, at home with your casual Photo Style.",
+              brand: { name: "Bolt", priceRange: null, visitUrl: null },
+              product: product("c3-bolt-top-1", 45),
+            },
+            {
+              category: "bottom",
+              item: "Product c3-jeanery-bottom-1",
+              why: "A grounding Bottom in the spirit of Ava Stone, at home with your casual Photo Style.",
+              brand: { name: "Jeanery", priceRange: null, visitUrl: null },
+              product: product("c3-jeanery-bottom-1", 50),
+            },
+            {
+              category: "shoes",
+              item: "Product c3-stride-shoes-1",
+              why: "Shoes that finish the Outfit in the spirit of Ava Stone, at home with your casual Photo Style.",
+              brand: { name: "Stride", priceRange: null, visitUrl: null },
+              product: product("c3-stride-shoes-1", 60),
+            },
+          ],
+        },
+        images: { photoPath: "/landing/samples/full_body/photo.jpg", previewPath: "/landing/samples/full_body/preview.webp" },
+      },
+      // The photo exactly as it was given, and the Preview drawn from it.
+      images: [
+        { path: "/landing/samples/full_body/photo.jpg", bytes: new Uint8Array(await photo.arrayBuffer()) },
+        { path: "/landing/samples/full_body/preview.webp", bytes: expect.any(Uint8Array) },
+      ],
+    });
+    // Every search was in the menswear line, in the United States.
+    const searches = fresh.channel3.requests.filter(({ url }) => url.pathname === "/v1/browse").map(channel3Search);
+    expect(searches).not.toEqual([]);
+    expect(new Set(searches.map(({ gender, market }) => `${gender} in ${market}`))).toEqual(new Set(["male in US"]));
+  });
+
+  it("freezes another of its Outfits when the team picks one", async () => {
+    const result = await makeLandingSample(freshApp(), {
+      photoType: "full_body",
+      photo: await jpegPhoto(),
+      stylePreference: "menswear",
+      budgetTier: "no_budget",
+      outfitPosition: 2,
+    });
+
+    expect(result).toMatchObject({ ok: true, sample: { outfit: { styleIconName: "Bea Marsh" } } });
+  });
+
+  it("says why when the photo check rejects the photo, styling nothing", async () => {
+    fresh.ai.scenario = "more-than-one-person";
+
+    const result = await makeLandingSample(freshApp(), { photoType: "full_body", photo: await jpegPhoto(), stylePreference: "menswear" });
+
+    expect(result).toEqual({ ok: false, refusal: "photo-rejected", rejection: { reason: "more-than-one-person" } });
+    expect(fresh.qloo.requests).toEqual([]);
+    expect(fresh.channel3.requests).toEqual([]);
+  });
+
+  it("says so when its Styling makes no Outfit to freeze", async () => {
+    // Qloo knows no Style Icon for the sample.
+    fresh.qloo.respond = () => qlooResponse([]);
+
+    const result = await makeLandingSample(freshApp(), { photoType: "full_body", photo: await jpegPhoto(), stylePreference: "menswear" });
+
+    expect(result).toEqual({ ok: false, refusal: "no-outfit" });
+  });
+
+  /** The fresh app, as the script hands it over: its services, with Stylings run in this process. */
+  function freshApp() {
+    return { ...fresh.context(new TestBrowser()), stylings: fresh.stylings };
+  }
+});
+
 /** The Blob pathname a test store's signed link points at. */
 function blobPathnameOf(signedUrl: string): string {
   return new URL(signedUrl).pathname.slice(1);
@@ -398,14 +629,15 @@ function teamContext() {
 
 /** Presses "Get my Outfits" with a plain JPEG, agreeing on the consent sheet, returning the new Consultation's id. */
 async function start(browser: TestBrowser, photoType: PhotoType): Promise<string> {
-  const bytes = await sharp({ create: { width: 30, height: 40, channels: 3, background: "#8a7f72" } }).jpeg().toBuffer();
-  const result = await startConsultation(harness.context(browser), {
-    photo: new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }),
-    photoType,
-    consent: BOTH_CONSENT_BOXES_TICKED,
-  });
+  const result = await startConsultation(harness.context(browser), { photo: await jpegPhoto(), photoType, consent: BOTH_CONSENT_BOXES_TICKED });
   if (!result.ok) throw new Error(`Couldn't start a Consultation: ${result.refusal}`);
   return result.consultationId;
+}
+
+/** A plain JPEG, as a photo file. */
+async function jpegPhoto(): Promise<Blob> {
+  const bytes = await sharp({ create: { width: 30, height: 40, channels: 3, background: "#8a7f72" } }).jpeg().toBuffer();
+  return new Blob([new Uint8Array(bytes)], { type: "image/jpeg" });
 }
 
 let userCount = 0;

@@ -19,19 +19,22 @@ const PRODUCT_SEARCHES: Record<string, ProductSearchSetup> = {
 
 /**
  * The product search PRODUCT_SEARCH names: the fake unless it says channel3, so Channel3, which
- * costs credits, runs only when explicitly switched on.
+ * costs credits, runs only when explicitly switched on. A team script running live names its own.
  */
-export function productSearchFromEnvironment(): ProductSearch {
-  return productSearchSetup().search();
+export function productSearchFromEnvironment(name = productSearchName()): ProductSearch {
+  return productSearchSetup(name).search();
 }
 
-/** Where Previews fetch Product photos: wherever the product search PRODUCT_SEARCH names gets them. */
-export function productPhotosFromEnvironment(): ProductPhotos {
-  return new ProductPhotos({ transport: productSearchSetup().photos });
+/** Where Previews fetch Product photos: wherever the product search PRODUCT_SEARCH (or a live team script) names gets them. */
+export function productPhotosFromEnvironment(name = productSearchName()): ProductPhotos {
+  return new ProductPhotos({ transport: productSearchSetup(name).photos });
 }
 
-function productSearchSetup(): ProductSearchSetup {
-  const name = process.env.PRODUCT_SEARCH || "fake";
+function productSearchName(): string {
+  return process.env.PRODUCT_SEARCH || "fake";
+}
+
+function productSearchSetup(name: string): ProductSearchSetup {
   const setup = Object.hasOwn(PRODUCT_SEARCHES, name) ? PRODUCT_SEARCHES[name] : undefined;
   if (!setup) throw new Error(`PRODUCT_SEARCH must be one of: ${Object.keys(PRODUCT_SEARCHES).join(", ")}.`);
   return setup;
