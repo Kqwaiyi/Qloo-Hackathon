@@ -10,3 +10,4 @@ Charting allowed sign-up from 13, but the Gemini API terms forbid any app "direc
 
 - Outfit assembly loses its teen age rows. The youngest group is Qloo's `24_and_younger`.
 - Lowering the age later means another provider and a full children's-privacy review, not a config change.
+- Still holds after [ADR-0011](0011-claude-runs-every-model-but-the-image-model.md) moves the photo check and the Stylist to Claude: Previews stay on Gemini.
