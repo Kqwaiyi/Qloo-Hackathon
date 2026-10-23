@@ -1,15 +1,23 @@
 import { type AnthropicLanguageModelOptions, createAnthropic } from "@ai-sdk/anthropic";
-import { generateText, type LanguageModel, NoObjectGeneratedError, Output } from "ai";
+import type { LanguageModelV4, LanguageModelV4GenerateResult, LanguageModelV4Prompt, SharedV4ProviderOptions } from "@ai-sdk/provider";
+import { generateText, type LanguageModel, type LanguageModelMiddleware, NoObjectGeneratedError, Output, wrapLanguageModel } from "ai";
 import * as z from "zod";
 
-import { CLAUDE_PHOTO_CHECK_EFFORT, CLAUDE_PHOTO_CHECK_MODEL } from "@/config/ai";
+import {
+  CLAUDE_PHOTO_CHECK_EFFORT,
+  CLAUDE_PHOTO_CHECK_MODEL,
+  CLAUDE_STYLIST_EFFORT,
+  CLAUDE_STYLIST_MAX_OUTPUT_TOKENS,
+  CLAUDE_STYLIST_MODEL,
+} from "@/config/ai";
 import { PHOTO_STYLES, type PhotoStyle, type PhotoStyleWords } from "@/config/consultations";
 
-import { photoPart, withoutRequest } from "./ai-sdk";
-import type { AiProvider, PhotoCheckInput, PhotoCheckResult } from "./provider";
+import { photoPart, withoutRequest, withoutRequestStillRetryable } from "./ai-sdk";
+import { type AiProvider, type PhotoCheckInput, type PhotoCheckResult, UnretryableAiError } from "./provider";
 
-// The Anthropic adapter (ADR-0011): the photo check on Claude, through the AI SDK's Anthropic
-// provider. It owns its prompt. Photos are always sent inline, as the request's own bytes.
+// The Anthropic adapter (ADR-0011): the photo check and the Stylist's model on Claude, through the
+// AI SDK's Anthropic provider. It owns the photo check's prompt; the Stylist's comes from the
+// Stylist, with its tools and its brief. Photos are always sent inline, as the request's own bytes.
 
 export interface AnthropicAiOptions {
   apiKey: string;
@@ -18,15 +26,22 @@ export interface AnthropicAiOptions {
 }
 
 /**
- * The photo check on real Claude, which costs money: it runs only when AI_PROVIDER switches real
- * AI on. It relies on the AI SDK's own retries, 2 by default.
+ * The photo check and the Stylist on real Claude, which costs money: they run only when AI_PROVIDER
+ * switches real AI on. Both rely on the AI SDK's own retries, 2 by default: the photo check's around
+ * its whole call, and the Stylist's, the Workflow agent's around each turn.
  */
-export class AnthropicAiProvider implements Pick<AiProvider, "checkPhoto"> {
+export class AnthropicAiProvider implements Pick<AiProvider, "checkPhoto" | "stylistModel"> {
   private readonly photoCheckModel: LanguageModel;
+  private readonly claudeStylistModel: LanguageModelV4;
 
   constructor({ apiKey, fetch }: AnthropicAiOptions) {
     const anthropic = createAnthropic({ apiKey, fetch });
     this.photoCheckModel = anthropic(CLAUDE_PHOTO_CHECK_MODEL);
+    this.claudeStylistModel = wrapLanguageModel({ model: anthropic(CLAUDE_STYLIST_MODEL), middleware: STYLIST_MIDDLEWARE });
+  }
+
+  stylistModel(): LanguageModelV4 {
+    return this.claudeStylistModel;
   }
 
   // The model isn't told which Photo Type was chosen, so it can't lean towards it: it reports what
@@ -60,6 +75,70 @@ const PHOTO_CHECK_OPTIONS = {
   effort: CLAUDE_PHOTO_CHECK_EFFORT,
   thinking: { type: "adaptive", display: "omitted" },
 } satisfies AnthropicLanguageModelOptions;
+
+/**
+ * How each of the Stylist's turns is asked for: at its effort, thinking as Claude sees fit, with no
+ * thinking text sent back, since nothing shows or stores it, and the conversation so far cached, so
+ * the next turn reads it from cache. No temperature and no prefill, which Claude rejects. Nothing
+ * here forces a tool call, which would make Claude skip its thinking.
+ */
+const STYLIST_OPTIONS = {
+  effort: CLAUDE_STYLIST_EFFORT,
+  thinking: { type: "adaptive", display: "omitted" },
+  cacheControl: { type: "ephemeral" },
+} satisfies AnthropicLanguageModelOptions;
+
+/**
+ * What makes Claude's model the Stylist's: each turn asked for as STYLIST_OPTIONS says, with its
+ * stable prefix cached. A turn that fails throws an error with nothing of its request, the whole
+ * conversation and the photo, before the Workflow agent's retries, its step's stored error or a
+ * log can see it: one worth retrying still is, for those retries, and one Anthropic will give again
+ * is an UnretryableAiError. A turn Claude refuses comes back as a refusal, its finish reason
+ * content-filter, with none of the tool calls it had written so far, so nothing it asked for runs.
+ * Turns are whole: nothing streams one, which couldn't take back a refused turn's tool calls.
+ */
+const STYLIST_MIDDLEWARE: LanguageModelMiddleware = {
+  transformParams: async ({ params }) => ({
+    ...params,
+    prompt: withStablePrefixCached(params.prompt),
+    maxOutputTokens: params.maxOutputTokens ?? CLAUDE_STYLIST_MAX_OUTPUT_TOKENS,
+    providerOptions: withAnthropicOptions(params.providerOptions, STYLIST_OPTIONS),
+  }),
+  wrapGenerate: async ({ doGenerate }) => {
+    let turn: LanguageModelV4GenerateResult;
+    try {
+      turn = await doGenerate();
+    } catch (error) {
+      throw withoutRequestStillRetryable("The Stylist's turn", error);
+    }
+    if (turn.finishReason.unified !== "content-filter") return turn;
+    return { ...turn, content: turn.content.filter(({ type }) => type !== "tool-call") };
+  },
+  wrapStream: async () => {
+    throw new UnretryableAiError("The Stylist's model answers whole turns only.");
+  },
+};
+
+/**
+ * The prompt with a cache breakpoint at the end of its first message, the brief and the photo,
+ * which never change. Claude caches everything up to it, the Stylist's tools and prompt included,
+ * so every turn reads the photo from cache, whatever happens later in the conversation.
+ */
+function withStablePrefixCached(prompt: LanguageModelV4Prompt): LanguageModelV4Prompt {
+  const first = prompt.findIndex(({ role }) => role === "user");
+  return prompt.map((message, index) => {
+    if (index !== first || message.role !== "user" || message.content.length === 0) return message;
+    const content = [...message.content];
+    const last = content.at(-1)!;
+    content[content.length - 1] = { ...last, providerOptions: withAnthropicOptions(last.providerOptions, { cacheControl: { type: "ephemeral" } }) };
+    return { ...message, content };
+  });
+}
+
+/** `providerOptions` with `options` added to Anthropic's, keeping everything else. */
+function withAnthropicOptions(providerOptions: SharedV4ProviderOptions | undefined, options: SharedV4ProviderOptions[string]): SharedV4ProviderOptions {
+  return { ...providerOptions, anthropic: { ...providerOptions?.anthropic, ...options } };
+}
 
 /**
  * What the photo check asks Claude for: just what the interface's report holds. The Photo Style

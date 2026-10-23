@@ -1,13 +1,14 @@
+import { generateText } from "ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { aiFromEnvironment } from "./environment";
 import { FakeAiProvider } from "./fake";
-import { anthropicJson, FakeAnthropic } from "./fake-anthropic";
+import { anthropicJson, anthropicText, FakeAnthropic } from "./fake-anthropic";
 import { FakeGemini, geminiJson } from "./fake-gemini";
 import type { Photo, PhotoCheckReport, TailoredPieces, TailoringInput } from "./provider";
 
-// Which AI the environment switches on. Real AI is two adapters together: the photo check on
-// Claude, tailoring and Previews on Gemini (ADR-0011). Every request goes to a fake API.
+// Which AI the environment switches on. Real AI is two adapters together: the photo check and the
+// Stylist on Claude, tailoring and Previews on Gemini (ADR-0011). Every request goes to a fake API.
 
 const PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a photo of someone's face"), mediaType: "image/jpeg" };
 
@@ -84,6 +85,20 @@ describe("switching real AI on", () => {
 
     expect(anthropic.requests.map(({ headers }) => headers.get("x-api-key"))).toEqual(["anthropic-key-from-the-environment"]);
     expect(gemini.requests.map(({ headers }) => headers.get("x-goog-api-key"))).toEqual(["gemini-key-from-the-environment"]);
+  });
+
+  it("runs the Stylist on Claude, with ANTHROPIC_API_KEY, when AI_PROVIDER says real", async () => {
+    vi.stubEnv("AI_PROVIDER", "real");
+    vi.stubEnv("ANTHROPIC_API_KEY", "anthropic-key-from-the-environment");
+    vi.stubEnv("GEMINI_API_KEY", "gemini-key-from-the-environment");
+    anthropic.respond = () => anthropicText("Finding your Style Icons first.");
+    const ai = aiFromEnvironment();
+
+    const { text } = await generateText({ model: ai.stylistModel(), prompt: "This Styling's brief." });
+
+    expect(text).toBe("Finding your Style Icons first.");
+    expect(anthropic.requests.map(({ headers, body }) => [headers.get("x-api-key"), body.model])).toEqual([["anthropic-key-from-the-environment", "claude-haiku-5-5"]]);
+    expect(gemini.requests).toEqual([]);
   });
 
   it.each([

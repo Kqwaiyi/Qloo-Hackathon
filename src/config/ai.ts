@@ -6,6 +6,21 @@ export const CLAUDE_PHOTO_CHECK_MODEL = "claude-haiku-5-5";
 /** How hard Claude works at each photo check: enough to judge the photo, while it stays quick. */
 export const CLAUDE_PHOTO_CHECK_EFFORT = "medium";
 
+/**
+ * The Claude model the Stylist runs on (ADR-0011). Its prompt cache is the model's own, so changing
+ * it part-way through a Styling would miss the cache.
+ */
+export const CLAUDE_STYLIST_MODEL = "claude-haiku-5-5";
+
+/** How hard Claude works at each of the Stylist's turns: it judges what suits the photo. */
+export const CLAUDE_STYLIST_EFFORT = "high";
+
+/**
+ * The most Claude writes in one of the Stylist's turns, thinking included: far more than a note and
+ * a few tool calls need, while each turn, one durable step, stays well inside a function's time.
+ */
+export const CLAUDE_STYLIST_MAX_OUTPUT_TOKENS = 16_000;
+
 /** The Gemini model that tailors each Outfit's Pieces. */
 export const GEMINI_TAILORING_MODEL = "gemini-3.5-flash-lite";
 

@@ -19,3 +19,20 @@ export function withoutRequest(call: string, error: unknown): Error {
   const last = RetryError.isInstance(error) ? error.lastError : error;
   return APICallError.isInstance(last) && !last.isRetryable ? new UnretryableAiError(message) : new Error(message);
 }
+
+/**
+ * A failed AI call as `withoutRequest` makes it, for a call the AI SDK still retries around it: one
+ * worth retrying stays the AI SDK's own API call error, so its retries still see it, keeping only
+ * the status and the response's headers, which say how long to wait.
+ */
+export function withoutRequestStillRetryable(call: string, error: unknown): Error {
+  if (!APICallError.isInstance(error) || !error.isRetryable) return withoutRequest(call, error);
+  return new APICallError({
+    message: `${call} failed: ${error.message}`,
+    url: error.url,
+    requestBodyValues: undefined,
+    statusCode: error.statusCode,
+    responseHeaders: error.responseHeaders,
+    isRetryable: true,
+  });
+}

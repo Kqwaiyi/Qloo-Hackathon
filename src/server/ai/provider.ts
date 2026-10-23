@@ -181,9 +181,17 @@ export interface AiProvider {
   checkPhoto(input: PhotoCheckInput): Promise<PhotoCheckResult>;
   /**
    * The model the Stylist runs on (ADR-0011): the AI SDK's Workflow agent calls it once per turn,
-   * with the whole conversation so far, the photo included, and the Stylist's tools. It acts only
-   * through those tools, which check every rule, so whatever it asks for is checked by our code.
-   * A Face Photo's Stylings run on it; a body photo's still tailor each Outfit with `tailorPieces`.
+   * with the Stylist's prompt, the whole conversation so far, the photo included, and the Stylist's
+   * tools. It acts only through those tools, which check every rule, so whatever it asks for is
+   * checked by our code. A Face Photo's Stylings run on it; a body photo's still tailor each Outfit
+   * with `tailorPieces`.
+   *
+   * It answers whole turns, through `doGenerate`, and is configured for the Stylist: the prompt,
+   * the tools and the conversation's first message, the brief and the photo, never change within a
+   * Styling, so a real model caches them. Nothing of its thinking comes back but what the model
+   * needs given back. A turn it refuses comes back with finish reason content-filter and no tool
+   * calls. A turn that fails throws an error with nothing of the request in it: one worth retrying
+   * for the AI SDK's retries, or an `UnretryableAiError`.
    */
   stylistModel(): LanguageModelV4;
   /**

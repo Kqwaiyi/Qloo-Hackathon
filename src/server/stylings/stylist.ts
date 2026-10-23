@@ -8,6 +8,7 @@ import type { Photo } from "@/server/ai/provider";
 
 import { type BuildOutfitsSteps, findStyleIcons, renderPreviewOrPlaceholder, type StylingOutcome } from "./build-outfits";
 import { type StylistBrief, stylistBriefText, type StylistStyleIcon } from "./stylist-brief";
+import { STYLIST_PROMPT } from "./stylist-prompt";
 
 // The Stylist (ADR-0010, ADR-0011): the AI SDK's Workflow agent, carrying out a Face Photo's
 // Styling through its tools. The loop is the agent's: each turn is one call to the Stylist's
@@ -115,6 +116,8 @@ export async function runStylist(stylingId: string, steps: StylistSteps, model: 
     const run = stylistTools(stylingId, steps);
     const agent = new WorkflowAgent({
       model,
+      instructions: STYLIST_PROMPT,
+      // The model chooses among its tools, never forced to call one: some models skip their thinking when they are.
       tools: run.tools,
       // Only a Styling that ranks its own Style Icons finds them: any other has its list in its brief.
       activeTools: brief.styleIcons ? ["saveOutfit", "startPreviews", "renderPreview", "finish"] : undefined,
@@ -127,7 +130,9 @@ export async function runStylist(stylingId: string, steps: StylistSteps, model: 
       ],
     });
     if (run.broken !== null) throw run.broken;
-    if (run.finished || turns.length >= MAX_STYLIST_TURNS) outcome = "completed";
+    // A turn the model refused has no tool calls, so it's the last.
+    if (turns.at(-1)?.finishReason === "content-filter") console.error("The Stylist's model refused a turn.");
+    else if (run.finished || turns.length >= MAX_STYLIST_TURNS) outcome = "completed";
     else console.error("The Stylist stopped without finishing.");
   } catch (error) {
     console.error("The Stylist's Styling broke:", error instanceof Error ? error.message : "unknown error");

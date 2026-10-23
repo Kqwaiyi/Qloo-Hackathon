@@ -214,9 +214,11 @@ export default function Page() {
         <ul className={bulletList}>
           <li>
             <strong>Anthropic&apos;s Claude</strong>, one of our two AI providers, gets your photos as our processor, to check
-            each one and read its Photo Style. It gets nothing else about you: never your username, email, Country or Budget
-            Tier. Anthropic deletes what it gets within 30 days, but keeps anything its trust and safety team flags as breaking
-            its usage policy for up to 2 years. It doesn&apos;t use any of it to train its models.
+            each one and read its Photo Style, and runs your AI Stylist. As your AI Stylist, it gets with your photo only what
+            it needs to make your Outfits: the Photo Type, your age group, the Photo Style, the Style Icons&apos; names and
+            whether each Outfit is menswear or womenswear. It never gets your username, email, Country or Budget Tier.
+            Anthropic deletes what it gets within 30 days, but keeps anything its trust and safety team flags as breaking its
+            usage policy for up to 2 years. It doesn&apos;t use any of it to train its models.
           </li>
           <li>
             <strong>Google&apos;s Gemini</strong>, our other AI provider, gets your photos as our processor. With each one it

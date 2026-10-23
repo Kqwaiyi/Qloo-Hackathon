@@ -57,6 +57,75 @@ describe("the Stylist's conversation", () => {
   });
 });
 
+describe("the Stylist's prompt", () => {
+  /** The prompt the Stylist's model was sent on a first Styling's turns, which must be the same on each. */
+  async function promptSent(): Promise<string> {
+    const browser = await signedInUser();
+    await start(browser);
+    await harness.stylings.runPending();
+    const prompts = new Set(harness.ai.stylistRequests.map(({ instructions }) => instructions));
+    expect(prompts.size).toBe(1);
+    return [...prompts][0]!;
+  }
+
+  it("is sent on every turn, unchanged, and tells the Stylist it's an AI Stylist", async () => {
+    const prompt = await promptSent();
+
+    expect(harness.ai.stylistRequests.length).toBeGreaterThan(1);
+    expect(prompt).toMatch(/you are the AI Stylist in a styling app/i);
+  });
+
+  it("styles only the Main Person, named as the most prominent person in the photo", async () => {
+    const prompt = await promptSent();
+
+    expect(prompt).toMatch(/you style only the most prominent person in the photo/i);
+    expect(prompt).toMatch(/anyone else in the photo isn't styled/i);
+    expect(prompt).toMatch(/match colours to what they're wearing, never to anyone else/i);
+  });
+
+  it("never guesses age or gender, never infers ethnicity, skin tone, body measurements or health, and never states a price", async () => {
+    const prompt = await promptSent();
+
+    expect(prompt).toContain("Never guess the person's age or gender from the photo");
+    expect(prompt).toContain("Never infer their ethnicity, skin tone, body measurements or health");
+    expect(prompt).toMatch(/nothing you write states a price, currency or cost/i);
+  });
+
+  it("prefers separates to a One-Piece", async () => {
+    const prompt = await promptSent();
+
+    expect(prompt).toMatch(/prefer separates/i);
+  });
+
+  it("carries the Hairstyle's rules: the Style Icon's signature cut when known, achievable from the person's own hair", async () => {
+    const prompt = await promptSent();
+
+    expect(prompt).toMatch(/work from the Style Icon's name alone/i);
+    expect(prompt).toMatch(/if you know the Style Icon's signature haircut, base the cut on it, and set cutKnown to true/i);
+    expect(prompt).toMatch(/set cutKnown to false and base the cut on the Outfit and the Photo Style/i);
+    expect(prompt).toMatch(/achievable from the person's current hair/i);
+    expect(prompt).toMatch(/keep their own hair colour/i);
+  });
+
+  it("asks for notes to the user: in the second person, in English, short and about style, naming Qloo but no other service", async () => {
+    const prompt = await promptSent();
+
+    expect(prompt).toMatch(/notes/i);
+    expect(prompt).toMatch(/to the user as "you"/i);
+    expect(prompt).toMatch(/in English/);
+    expect(prompt).toMatch(/one or two short sentences/i);
+    expect(prompt).toMatch(/about style/i);
+    expect(prompt).toMatch(/Qloo/);
+    expect(prompt).toMatch(/never name any other service/i);
+  });
+
+  it("covers every tool the Stylist has", async () => {
+    const prompt = await promptSent();
+
+    for (const tool of harness.ai.stylistRequests[0]!.tools) expect(prompt).toContain(tool);
+  });
+});
+
 describe("each kind of Styling's brief", () => {
   it("has a first Styling find its own Style Icons", async () => {
     const browser = await signedInUser({ birthDate: { day: "2", month: "2", year: "1992" } });
@@ -353,6 +422,42 @@ describe("a Styling the Stylist can't carry out", () => {
       state: "ready",
       outfits: [{ styleIconName: "Ava Stone", preview: { state: "failed" } }],
     });
+  });
+
+  it("breaks when the model refuses a turn part-way, keeping the earlier Outfits and offering Try again", async () => {
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    await harness.stylings.runPending();
+    harness.ai.stylistRequests.length = 0;
+    harness.clock.set("2026-10-16T12:05:00Z");
+    // The Photo Style change's Stylist finds new Style Icons, then is refused on its second turn.
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? { refused: true } : undefined);
+
+    await changePhotoStyle(harness.context(browser), consultationId, ["edgy"]);
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests).toHaveLength(2);
+    expect((await stylingsOf(consultationId)).toSorted((a, b) => a.startedAt.getTime() - b.startedAt.getTime())).toEqual([
+      expect.objectContaining({ kind: "first", status: "succeeded" }),
+      expect.objectContaining({ kind: "photo_style_change", status: "failed", failureReason: "something_broke" }),
+    ]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.styleIconName)).toEqual([
+      "Ava Stone",
+      "Bea Marsh",
+    ]);
+    expect(await tryAgain(harness.context(browser), consultationId)).toEqual({ ok: true });
+  });
+
+  it("breaks, for Try again, when the model refuses its last turn, the 30th, rather than finishing at the turn cap", async () => {
+    // Having found the Style Icons, it keeps asking for a Preview before saving anything, then refuses its 30th turn.
+    harness.ai.stylistTurn = ({ turn }) => (turn === 30 ? { refused: true } : turn > 1 ? call("renderPreview", { outfit: 1 }) : undefined);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests).toHaveLength(30);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "failed", failureReason: "something_broke" })]);
   });
 
   it("breaks, for Try again, when the Stylist stops without finishing, having saved nothing", async () => {

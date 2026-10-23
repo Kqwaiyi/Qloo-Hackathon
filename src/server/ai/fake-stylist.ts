@@ -34,6 +34,8 @@ export interface FakeStylistToolResult {
 export interface FakeStylistRequest {
   /** The turn's number, from 1. */
   turn: number;
+  /** The Stylist's prompt, as the conversation's system messages give it. */
+  instructions: string;
   /** The brief in the conversation's first message, or null when there's none. */
   brief: StylistBrief | null;
   /** Every image in the conversation, in order. */
@@ -50,8 +52,8 @@ export interface FakeStylistCall {
   input: unknown;
 }
 
-/** What the fake does with a turn: call some tools, at once, or write text and stop. */
-export type FakeStylistTurn = { calls: FakeStylistCall[] } | { text: string };
+/** What the fake does with a turn: call some tools, at once, write text and stop, or refuse the turn, as Claude can. */
+export type FakeStylistTurn = { calls: FakeStylistCall[] } | { text: string } | { refused: true };
 
 /** How the fake's scenario plays the Stylist: making the fixed pipeline's choices, or one of its tailoring scenarios. */
 export type FakeStylistScenario = "pass" | "unknown-cut" | "tailoring-fails";
@@ -154,6 +156,7 @@ function requestOf({ prompt, tools = [] }: LanguageModelV4CallOptions): FakeStyl
   const firstText = prompt.flatMap((message) => (message.role === "user" ? message.content : [])).find((part) => part.type === "text");
   return {
     turn: prompt.filter((message) => message.role === "assistant").length + 1,
+    instructions: prompt.flatMap((message) => (message.role === "system" ? [message.content] : [])).join("\n"),
     brief: firstText?.type === "text" ? readStylistBrief(firstText.text) : null,
     images: imagesIn(prompt),
     tools: tools.map((offered) => offered.name),
@@ -208,9 +211,10 @@ function outputOf(output: LanguageModelV4ToolResultOutput): { output: unknown; e
   }
 }
 
-/** The fake's turn as the model's result: its tool calls, or its text. */
+/** The fake's turn as the model's result: its tool calls, its text, or its refusal, which comes back as Claude's does. */
 function resultOf(turn: number, played: FakeStylistTurn): LanguageModelV4GenerateResult {
   const usage = { inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 0, text: 0, reasoning: 0 } };
+  if ("refused" in played) return { content: [], finishReason: { unified: "content-filter", raw: "refusal" }, usage, warnings: [] };
   if ("text" in played) return { content: [{ type: "text", text: played.text }], finishReason: { unified: "stop", raw: "end_turn" }, usage, warnings: [] };
   return {
     content: played.calls.map(({ tool, input }, index) => ({ type: "tool-call", toolCallId: `turn-${turn}-call-${index + 1}`, toolName: tool, input: JSON.stringify(input) })),

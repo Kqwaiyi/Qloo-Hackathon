@@ -20,6 +20,7 @@ export interface AnthropicContentBlock {
   type: string;
   text?: string;
   source?: { type: string; media_type?: string; data?: string; url?: string };
+  [key: string]: unknown;
 }
 
 /**
@@ -44,7 +45,7 @@ export class FakeAnthropic {
  * first, with no text, as it does with thinking display omitted.
  */
 export function anthropicText(text: string): Response {
-  return anthropicMessage([{ type: "thinking", thinking: "", signature: "a-signature" }, { type: "text", text }], "end_turn");
+  return anthropicMessage([THINKING, { type: "text", text }], "end_turn");
 }
 
 /** Claude's reply carrying `value` as JSON, as structured output sends it. */
@@ -52,9 +53,29 @@ export function anthropicJson(value: unknown): Response {
   return anthropicText(JSON.stringify(value));
 }
 
-/** Claude refusing to answer, with whatever it had written so far. */
-export function anthropicRefusal(writtenSoFar?: string): Response {
-  return anthropicMessage(writtenSoFar === undefined ? [] : [{ type: "text", text: writtenSoFar }], "refusal");
+/** One tool call Claude makes: its ID, the tool's name and its input. */
+export interface AnthropicToolCall {
+  id: string;
+  name: string;
+  input: unknown;
+}
+
+/** Claude's reply calling tools, after thinking with no text, as it does with thinking display omitted, and a note. */
+export function anthropicToolUse(calls: AnthropicToolCall[], note?: string): Response {
+  return anthropicMessage([THINKING, ...textAndToolUse(note, calls)], "tool_use");
+}
+
+/** Claude refusing to answer, with whatever it had written so far: text, and any tool calls it had finished. */
+export function anthropicRefusal(writtenSoFar?: string, calls: AnthropicToolCall[] = []): Response {
+  return anthropicMessage(textAndToolUse(writtenSoFar, calls), "refusal");
+}
+
+/** Claude's thinking with thinking display omitted: no text, only its signature. */
+const THINKING = { type: "thinking", thinking: "", signature: "a-signature" };
+
+/** Claude's text, if it wrote any, then its tool calls, as content blocks. */
+function textAndToolUse(text: string | undefined, calls: AnthropicToolCall[]): unknown[] {
+  return [...(text === undefined ? [] : [{ type: "text", text }]), ...calls.map(({ id, name, input }) => ({ type: "tool_use", id, name, input }))];
 }
 
 function anthropicMessage(content: unknown[], stopReason: string): Response {
