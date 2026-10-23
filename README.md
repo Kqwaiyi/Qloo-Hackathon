@@ -11,7 +11,7 @@ Take one photo of yourself and get complete Outfits: a hairstyle, top, bottom an
 
 Have you ever wanted to change your style but had no idea where to start? There are thousands of brands, endless haircuts, a new style icon every week, and trends that disappear within a month. Finding what suits you is like looking for a needle in a haystack.
 
-Gen Z and Millennials have it hardest. Social media and hyper-fast trend cycles push them to balance their own taste against whatever the feed says is in. Most of us end up with wardrobes full of clothes we never wear and online carts we abandon because we can't decide.
+Research shows 82% of the clothes in people's wardrobes go completely unworn for at least 12 months and 74% of online shoppers abandon their carts simply because they feel overwhelmed by the choices. Additionally, Millennials and Gen Z report the highest rates of clothing indecision. Constant exposure to social media and hyper-fast trend cycles forces them into a daily balancing act between personal taste and online influence, making outfit selection much harder.
 
 Most style apps answer this with a generic AI that guesses what looks good, so they give everyone the same "smart casual" advice. We wanted recommendations grounded in what real people, in your age group and your country, actually love.
 
