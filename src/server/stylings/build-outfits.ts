@@ -1,5 +1,5 @@
 import type { Line } from "@/config/accounts";
-import { PREVIEWS_AT_ONCE } from "@/config/stylings";
+import { PREVIEWS_AT_ONCE, type PreviewState } from "@/config/stylings";
 import type { BrandPicks, BrandToLookUp, PieceSearch } from "@/server/outfit-assembly/brands";
 import type { QlooBrand, QlooPerson } from "@/server/qloo/client";
 
@@ -90,11 +90,11 @@ export interface BuildOutfitsSteps {
   planPreviews(stylingId: string): Promise<string[]>;
   /**
    * One AI call: fetches the Outfit's Product photos, then renders its Preview and saves it, or
-   * saves its refusal, which is final. Throws on errors worth retrying, leaving the Preview pending,
-   * as when a Product photo can't be fetched before the step's last try; on that last try, its
-   * Product is drawn from its title instead.
+   * saves its refusal, which is final, returning which. Throws on errors worth retrying, leaving the
+   * Preview pending, as when a Product photo can't be fetched before the step's last try; on that
+   * last try, its Product is drawn from its title instead.
    */
-  renderPreview(stylingId: string, outfitId: string): Promise<void>;
+  renderPreview(stylingId: string, outfitId: string): Promise<Extract<PreviewState, "ready" | "refused">>;
   /**
    * Switches in the Outfits made all at once, marking any Preview not ready failed, or fails the
    * Styling if it made none.
@@ -105,16 +105,7 @@ export interface BuildOutfitsSteps {
 export async function buildOutfits(stylingId: string, steps: BuildOutfitsSteps): Promise<void> {
   let outcome: StylingOutcome = "completed";
   try {
-    if (await steps.ranksStyleIcons(stylingId)) {
-      const lines = await steps.styleIconLines(stylingId);
-      const peopleByLine: PeopleByLine = {};
-      await Promise.all(
-        lines.map(async (line) => {
-          peopleByLine[line] = await steps.fetchStyleIcons(stylingId, line);
-        }),
-      );
-      await steps.saveStyleIcons(stylingId, peopleByLine);
-    }
+    await findStyleIcons(stylingId, steps);
     // Building Outfits: each round tailors the open positions at once, and a failed one's
     // substitute waits for the next round. A body photo's Style Icons need their Brands first,
     // fetched as the plan asks, the Brands it picks need looking up in the product search, and
@@ -141,23 +132,48 @@ export async function buildOutfits(stylingId: string, steps: BuildOutfitsSteps):
         }),
       );
     }
-    // Previews, a few at a time. One still failing after its retries leaves its Outfit with a
-    // placeholder, not a broken Styling: finishing marks it failed.
+    // Previews, a few at a time.
     const outfitIds = await steps.planPreviews(stylingId);
     for (let next = 0; next < outfitIds.length; next += PREVIEWS_AT_ONCE) {
-      await Promise.all(
-        outfitIds.slice(next, next + PREVIEWS_AT_ONCE).map((outfitId) =>
-          steps.renderPreview(stylingId, outfitId).catch((error: unknown) => {
-            console.error("A Preview step failed:", error instanceof Error ? error.message : "unknown error");
-          }),
-        ),
-      );
+      await Promise.all(outfitIds.slice(next, next + PREVIEWS_AT_ONCE).map((outfitId) => renderPreviewOrPlaceholder(stylingId, outfitId, steps)));
     }
   } catch (error) {
     console.error("A Styling step failed:", error instanceof Error ? error.message : "unknown error");
     outcome = "broke";
   }
   await steps.finish(stylingId, outcome);
+}
+
+/**
+ * Finding Style Icons: asks Qloo for the Styling's, one person call per line, all at once, and saves
+ * them ranked, unless it builds on Style Icons it has already, the current ones or its own copy.
+ */
+export async function findStyleIcons(
+  stylingId: string,
+  steps: Pick<BuildOutfitsSteps, "ranksStyleIcons" | "styleIconLines" | "fetchStyleIcons" | "saveStyleIcons">,
+): Promise<void> {
+  if (!(await steps.ranksStyleIcons(stylingId))) return;
+  const lines = await steps.styleIconLines(stylingId);
+  const peopleByLine: PeopleByLine = {};
+  await Promise.all(
+    lines.map(async (line) => {
+      peopleByLine[line] = await steps.fetchStyleIcons(stylingId, line);
+    }),
+  );
+  await steps.saveStyleIcons(stylingId, peopleByLine);
+}
+
+/**
+ * Renders one Outfit's Preview, returning how it came out. One still failing after its retries
+ * leaves its Outfit with a placeholder, not a broken Styling: finishing marks it failed.
+ */
+export async function renderPreviewOrPlaceholder(stylingId: string, outfitId: string, steps: Pick<BuildOutfitsSteps, "renderPreview">): Promise<PreviewState> {
+  try {
+    return await steps.renderPreview(stylingId, outfitId);
+  } catch (error) {
+    console.error("A Preview step failed:", error instanceof Error ? error.message : "unknown error");
+    return "failed";
+  }
 }
 
 /** Waits for every step, so an Outfit saved beside a failing one still counts, then rethrows the first failure. */

@@ -39,6 +39,7 @@ beforeEach(async () => {
   harness.blob.objects.clear();
   harness.ai.scenario = "pass";
   harness.ai.styleIconScenarios = {};
+  harness.ai.stylistTurn = undefined;
   harness.ai.duringCall = undefined;
   harness.ai.photoCheckCount = 0;
   harness.stylings.pending.length = 0;
@@ -104,13 +105,15 @@ describe("the Outfit Allowance", () => {
     expect(await readUsageSummary(harness.context(browser))).toMatchObject({ outfitsLeft: 9 });
   });
 
-  it("counts nothing for a Styling that failed, or for a Style Icon skipped after its tailoring failed", async () => {
+  it("counts nothing for a Styling that failed, or for an Outfit the Stylist tried to save and was refused", async () => {
     const browser = await signedInUser();
     harness.qloo.respond = () => qlooResponse([]);
     await styleAt(browser, "2026-10-16T12:30:00Z");
     await harness.db.delete(qlooCache);
     harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
-    harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails" };
+    // Its first try at Ava Stone's Outfit states a price, and is refused.
+    const priced = { styleIcon: 1, hairstyle: { cut: "Soft layered cut", details: "A soft layered cut.", cutKnown: true, why: "Yours for about $40." } };
+    harness.ai.stylistTurn = (request) => (request.turn === 2 ? { calls: [{ tool: "saveOutfit", input: priced }] } : undefined);
 
     const consultationId = await styleAt(browser, "2026-10-16T12:40:00Z");
 

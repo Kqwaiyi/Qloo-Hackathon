@@ -27,10 +27,13 @@
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.79",
     "@ai-sdk/google": "4.0.95",
+    "@ai-sdk/provider": "4.0.27",
+    "@ai-sdk/workflow": "2.0.72",
     "@electric-sql/pglite": "0.5.10",
     "@gsap/react": "2.1.2",
     "@vercel/blob": "2.8.1",
     "@vercel/functions": "3.10.1",
+    "@workflow/serde": "5.0.0",
     "ai": "7.0.140",
     "better-auth": "1.7.10",
     "drizzle-orm": "0.45.4",

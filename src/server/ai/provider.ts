@@ -1,3 +1,4 @@
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import * as z from "zod";
 
 import type { Line } from "@/config/accounts";
@@ -12,7 +13,8 @@ import {
 import type { PreviewRefusalReason } from "@/config/stylings";
 
 // Our own AI provider interface (spec: "AI provider interface"). The domain depends only on this,
-// never on the AI SDK or a provider. Nothing it returns guesses age, ethnicity, skin tone, body
+// never on a provider: only the Stylist's model is one of the AI SDK's own, since the AI SDK's
+// Workflow agent calls it (ADR-0011). Nothing it returns guesses age, ethnicity, skin tone, body
 // measurements or health (ADR-0005): the age group tailoring receives comes from sign-up.
 
 export const PHOTO_MEDIA_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
@@ -178,10 +180,17 @@ export interface AiProvider {
   /** Checks a photo and reads its Photo Style. Throws if the check still errors after the AI SDK's own retries. */
   checkPhoto(input: PhotoCheckInput): Promise<PhotoCheckResult>;
   /**
-   * Tailors one Outfit's Pieces to the photo, returning the model's reply as it came: meant to match
-   * `tailoredPiecesSchema`, but unchecked. A reply that doesn't match still comes back rather than
-   * throwing, since our code checks it and asks again. Throws only on errors worth retrying, or an
-   * `UnretryableAiError` for one that isn't.
+   * The model the Stylist runs on (ADR-0011): the AI SDK's Workflow agent calls it once per turn,
+   * with the whole conversation so far, the photo included, and the Stylist's tools. It acts only
+   * through those tools, which check every rule, so whatever it asks for is checked by our code.
+   * A Face Photo's Stylings run on it; a body photo's still tailor each Outfit with `tailorPieces`.
+   */
+  stylistModel(): LanguageModelV4;
+  /**
+   * Tailors one of a body photo's Outfits' Pieces to the photo, returning the model's reply as it
+   * came: meant to match `tailoredPiecesSchema`, but unchecked. A reply that doesn't match still
+   * comes back rather than throwing, since our code checks it and asks again. Throws only on errors
+   * worth retrying, or an `UnretryableAiError` for one that isn't.
    *
    * Each Brand Piece is one of its candidates, real Products of its Brand (ADR-0008): the model picks
    * one per Category, by their words alone, so the Outfit goes together and suits the user, and says

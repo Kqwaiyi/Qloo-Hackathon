@@ -82,6 +82,8 @@ beforeEach(async () => {
   harness.ai.tailoringRequests.length = 0;
   harness.ai.previewRequests.length = 0;
   harness.ai.previewScenarios = [];
+  harness.ai.stylistRequests.length = 0;
+  harness.ai.stylistTurn = undefined;
   harness.ai.duringCall = undefined;
   harness.stylings.pending.length = 0;
   harness.stylings.cancelled.length = 0;
@@ -325,58 +327,7 @@ describe("each Outfit's Pieces", () => {
     ]);
   });
 
-  it("come from the next Style Icon, quietly taking the place of one whose tailoring failed after its retry", async () => {
-    harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails" };
-    const browser = await signedInUser({ stylePreference: "womenswear" });
-
-    const consultationId = await start(browser, "face");
-    await harness.stylings.runPending();
-
-    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toEqual([
-      expect.objectContaining({ position: 1, styleIconName: "Cleo Hart", pieces: [expect.objectContaining({ category: "hairstyle" })] }),
-      expect.objectContaining({ position: 2, styleIconName: "Bea Marsh", pieces: [expect.objectContaining({ category: "hairstyle" })] }),
-    ]);
-    expect(await styleIconStatuses(consultationId)).toEqual([
-      ["Ava Stone", "skipped"],
-      ["Bea Marsh", "used"],
-      ["Cleo Hart", "used"],
-    ]);
-    expect(await stylingsOf(consultationId)).toEqual([
-      expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 1 }),
-    ]);
-    expect(harness.ai.tailoringRequests.map((request) => request.styleIconName).toSorted()).toEqual([
-      "Ava Stone",
-      "Ava Stone",
-      "Bea Marsh",
-      "Cleo Hart",
-    ]);
-  });
-
-  it("stop coming from substitutes after 2, so a broken model can't burn through the Style Icons", async () => {
-    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
-    harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails", "Cleo Hart": "tailoring-fails", "Dana Reed": "tailoring-fails" };
-    const browser = await signedInUser({ stylePreference: "womenswear" });
-
-    const consultationId = await start(browser, "face");
-    await harness.stylings.runPending();
-
-    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toEqual([
-      expect.objectContaining({ position: 1, styleIconName: "Bea Marsh" }),
-    ]);
-    expect(await styleIconStatuses(consultationId)).toEqual([
-      ["Ava Stone", "skipped"],
-      ["Bea Marsh", "used"],
-      ["Cleo Hart", "skipped"],
-      ["Dana Reed", "skipped"],
-      ["Esme Vale", "unused"],
-      ["Fay Lowe", "unused"],
-    ]);
-    expect(await stylingsOf(consultationId)).toEqual([
-      expect.objectContaining({ status: "succeeded", outfitsWanted: 2, outfitsMade: 1, tailoringFailures: 3 }),
-    ]);
-  });
-
-  it("fail the Styling as nothing could be built when tailoring keeps failing, after 2 substitutes", async () => {
+  it("fail the Styling as nothing could be built when every Outfit the Stylist saves breaks a rule, once its 30 turns are used up", async () => {
     harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
     harness.ai.scenario = "tailoring-fails";
     const browser = await signedInUser({ stylePreference: "womenswear" });
@@ -386,18 +337,11 @@ describe("each Outfit's Pieces", () => {
 
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "no_outfits", outfits: [] });
     expect(await stylingsOf(consultationId)).toEqual([
-      expect.objectContaining({ status: "failed", failureReason: "nothing_built", outfitsMade: 0, tailoringFailures: 4 }),
+      expect.objectContaining({ status: "failed", failureReason: "nothing_built", outfitsMade: 0, tailoringFailures: 0 }),
     ]);
-    expect((await styleIconStatuses(consultationId)).map(([, status]) => status)).toEqual([
-      "skipped",
-      "skipped",
-      "skipped",
-      "skipped",
-      "unused",
-      "unused",
-    ]);
-    // Each Style Icon's bad reply was retried once.
-    expect(harness.ai.tailoringRequests).toHaveLength(8);
+    expect((await styleIconStatuses(consultationId)).map(([, status]) => status)).toEqual(["unused", "unused", "unused", "unused", "unused", "unused"]);
+    expect(harness.ai.stylistRequests).toHaveLength(30);
+    expect(harness.ai.previewRequests).toEqual([]);
   });
 
   it("are tailored from the photo itself and the Outfit, with each Brand Piece's Brand and candidate Products by their words alone, the Top Brand's One-Pieces beside the Top's, never the Country or the Budget Tier", async () => {
@@ -2239,9 +2183,12 @@ describe("the Styling status", () => {
     await harness.stylings.runPending();
 
     expect(checklist.seen).toEqual([
+      { kind: "first", stage: "style_icons", previews: { done: 0, of: 2 }, slow: false },
       { kind: "first", stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
       { kind: "first", stage: "previews", previews: { done: 0, of: 2 }, slow: false },
       { kind: "first", stage: "previews", previews: { done: 1, of: 2 }, slow: false },
+      // As the Stylist finishes.
+      { kind: "first", stage: "previews", previews: { done: 2, of: 2 }, slow: false },
     ]);
   });
 
@@ -2257,8 +2204,10 @@ describe("the Styling status", () => {
     await harness.stylings.runPending();
 
     expect(checklist.seen).toEqual([
+      { kind: "first", stage: "style_icons", previews: { done: 0, of: 2 }, slow: false },
       { kind: "first", stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
       { kind: "first", stage: "previews", previews: { done: 0, of: 1 }, slow: false },
+      { kind: "first", stage: "previews", previews: { done: 1, of: 1 }, slow: false },
     ]);
   });
 
@@ -2283,8 +2232,9 @@ describe("the Styling status", () => {
     harness.clock.set("2026-10-16T12:32:00Z");
     const seen: (boolean | undefined)[] = [];
     let looked = false;
+    // The Stylist's second turn is its first at Building Outfits, once it has found the Style Icons.
     harness.ai.duringCall = async (call) => {
-      if (call !== "tailorPieces" || looked) return;
+      if (call !== "stylistModel" || harness.ai.stylistRequests.at(-1)?.turn !== 2 || looked) return;
       looked = true;
       seen.push(await slow());
       harness.clock.set("2026-10-16T12:33:01Z");
@@ -2520,10 +2470,12 @@ describe("a Photo Style change", () => {
       [1, "Gwen Black"],
       [2, "Hope Lark"],
     ]);
-    expect(harness.ai.tailoringRequests.slice(-2)).toEqual([
-      expect.objectContaining({ styleIconName: "Gwen Black", photoStyle: ["edgy", "chic"] }),
-      expect.objectContaining({ styleIconName: "Hope Lark", photoStyle: ["edgy", "chic"] }),
-    ]);
+    // The Stylist built them for the new Photo Style, from the Style Icons it found for it.
+    const lastTurn = harness.ai.stylistRequests.at(-1)!;
+    expect(lastTurn.brief).toMatchObject({ styling: "Photo Style change", photoStyle: ["edgy", "chic"] });
+    expect(lastTurn.toolResults.find((result) => result.toolName === "findStyleIcons")?.output).toMatchObject({
+      styleIcons: [{ name: "Gwen Black" }, { name: "Hope Lark" }, { name: "Iris Moon" }],
+    });
     expect(await stylingsOfKind(consultationId, "photo_style_change")).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2 })]);
     // Each Outfit switched in counts, the first Styling's 2 and these 2.
     expect(await readUsageSummary(harness.context(browser))).toMatchObject({ outfitsLeft: 6 });
@@ -2589,7 +2541,6 @@ describe("a Photo Style change", () => {
     harness.clock.set("2026-10-16T12:10:00Z");
     await changePhotoStyle(harness.context(browser), consultationId, ["edgy"]);
     await harness.stylings.runPending();
-    const tailoredSoFar = harness.ai.tailoringRequests.length;
     harness.clock.set("2026-10-16T12:20:00Z");
 
     await changePhotoStyle(harness.context(browser), consultationId, ["casual"]);
@@ -2599,7 +2550,7 @@ describe("a Photo Style change", () => {
     expect(backAgain).toMatchObject({ photoStyle: ["casual"], outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }] });
     expect(backAgain.outfits.map((o) => o.id)).not.toContain(firstOutfitIds[0]);
     expect(backAgain.outfits.map((o) => o.id)).not.toContain(firstOutfitIds[1]);
-    expect(harness.ai.tailoringRequests).toHaveLength(tailoredSoFar + 2);
+    expect(harness.ai.stylistRequests.at(-1)!.toolResults.filter((result) => result.toolName === "saveOutfit" && result.error === null)).toHaveLength(2);
     // The casual person call came from the cache.
     expect(personCalls()).toHaveLength(2);
   });
@@ -3084,16 +3035,16 @@ describe("Try again", () => {
     harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
     const browser = await signedInUser({ stylePreference: "womenswear" });
     const consultationId = await start(browser, "face");
-    // Ava Stone's tailoring fails, and the model goes down while tailoring Bea Marsh's.
-    harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails" };
+    // Once the Stylist has found the Style Icons, Ava Stone is passed over, and the model goes down.
     harness.ai.duringCall = async (call) => {
-      if (call === "tailorPieces" && harness.ai.tailoringRequests.at(-1)?.styleIconName === "Bea Marsh") throw new Error("The model is down.");
+      if (call !== "stylistModel" || harness.ai.stylistRequests.at(-1)?.turn !== 2) return;
+      await harness.db.update(styleIcon).set({ status: "skipped" }).where(and(eq(styleIcon.consultationId, consultationId), eq(styleIcon.name, "Ava Stone")));
+      throw new Error("The model is down.");
     };
     await harness.stylings.runPending();
     expect(await stylingsOfKind(consultationId, "first")).toEqual([
       expect.objectContaining({ status: "failed", failureReason: "something_broke", stage: "building_outfits" }),
     ]);
-    harness.ai.styleIconScenarios = {};
     harness.ai.duringCall = undefined;
     harness.qloo.requests.length = 0;
     const photoChecks = harness.ai.photoCheckCount;
@@ -3454,15 +3405,16 @@ describe("a stuck Styling", () => {
     const browser = await signedInUser({ stylePreference: "womenswear" });
     harness.clock.set("2026-10-16T12:30:00Z");
     const consultationId = await start(browser, "face");
-    // Finding Style Icons takes 8 minutes, then tailoring hangs.
+    // Finding Style Icons takes 8 minutes, then the Stylist's next turn hangs.
     harness.clock.set("2026-10-16T12:38:00Z");
     const seen: (string | undefined)[] = [];
-    whileEveryAiCall("tailorPieces", async () => {
+    harness.ai.duringCall = async (call) => {
+      if (call !== "stylistModel" || harness.ai.stylistRequests.at(-1)?.turn !== 2) return;
       harness.clock.set("2026-10-16T12:47:59Z");
       seen.push((await readStylingStatus(harness.context(browser), consultationId))?.state);
       harness.clock.set("2026-10-16T12:48:00Z");
       seen.push((await readStylingStatus(harness.context(browser), consultationId))?.state);
-    });
+    };
 
     await harness.stylings.runPending();
 

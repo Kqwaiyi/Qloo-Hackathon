@@ -27,6 +27,11 @@ type ExpectedPiece = { category: "hairstyle" } | { category: ProductCategory; ca
 // A price: a currency sign or code beside a number, or a number of dollars, euros, pounds…
 const PRICE = /[$€£¥₹]\s?\d|\b(?:usd|eur|gbp)\s?\d|\d\s?(?:[$€£¥₹]|(?:usd|eur|gbp|dollars?|euros?|pounds?|bucks)\b)/i;
 
+/** Whether `text` states a price, which nothing the AI writes may: tailoring's replies, or the Stylist's Outfits. */
+export function statesAPrice(text: string): boolean {
+  return PRICE.test(text);
+}
+
 /**
  * The reply's Pieces, trimmed and in the order asked, when it matches the schema and our rules:
  * exactly one Piece per Category asked for, or one One-Piece in place of the Top and Bottom when the

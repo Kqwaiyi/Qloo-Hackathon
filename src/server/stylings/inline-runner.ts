@@ -2,15 +2,18 @@ import { UnretryableAiError } from "@/server/ai/provider";
 import { NoExchangeRateError } from "@/server/outfit-assembly/products";
 import { UnretryableProductSearchError } from "@/server/product-search/provider";
 
-import { type BuildOutfitsSteps, buildOutfits } from "./build-outfits";
 import type { StylingRunner } from "./runner";
-import { type StylingContext, StylingNotRunningError, stylingSteps } from "./steps";
+import { runStyling, type StylingSteps } from "./run-styling";
+import { type StylingContext, StylingNotRunningError } from "./steps";
+import { allStylingSteps } from "./stylist-steps";
 
 /**
  * Stylings in tests, and in the team's landing sample script: the "build Outfits" Workflow's own
  * steps, in its order, run in this process with no retries unless a test (or the script) asks for
- * the Preview step's or the product search step's. A started Styling waits until `runPending()`, so
- * a test can look at it running.
+ * the Preview step's or the product search step's. A Face Photo's runs the Stylist the same way:
+ * outside the Workflow compiler its directives do nothing, so the Workflow agent's own steps, each
+ * call to the Stylist's model, run here too, on the context's AI. A started Styling waits until
+ * `runPending()`, so a test can look at it running.
  */
 export class InlineStylingRunner implements StylingRunner {
   /** The Stylings started and not yet run, oldest first. */
@@ -61,14 +64,14 @@ export class InlineStylingRunner implements StylingRunner {
   /** Runs every pending Styling to its finish, one after another. */
   async runPending(): Promise<void> {
     for (let stylingId = this.pending.shift(); stylingId !== undefined; stylingId = this.pending.shift()) {
-      await buildOutfits(stylingId, this.steps());
+      await runStyling(stylingId, this.steps(), this.ctx.ai.stylistModel());
     }
   }
 
   /** The steps, the Preview and product search steps tried again as many times as the test says. */
-  private steps(): BuildOutfitsSteps {
+  private steps(): StylingSteps {
     return {
-      ...stylingSteps(this.ctx),
+      ...allStylingSteps(this.ctx),
       searchProducts: (stylingId, search) => this.retried(this.searchRetries, (steps) => steps.searchProducts(stylingId, search)),
       renderPreview: (stylingId, outfitId) => this.retried(this.previewRetries, (steps) => steps.renderPreview(stylingId, outfitId)),
     };
@@ -79,11 +82,11 @@ export class InlineStylingRunner implements StylingRunner {
    * a step for: its Styling stopped, an AI call failed for good, the product search refused the key,
    * or no rate is stored for the market's currency.
    */
-  private async retried(retries: number, step: (steps: BuildOutfitsSteps) => Promise<void>): Promise<void> {
+  private async retried<T>(retries: number, step: (steps: StylingSteps) => Promise<T>): Promise<T> {
     for (let attempt = 1; ; attempt += 1) {
       const lastTry = attempt > retries;
       try {
-        return await step(stylingSteps(this.ctx, { lastTry }));
+        return await step(allStylingSteps(this.ctx, { lastTry }));
       } catch (error) {
         if (
           lastTry ||

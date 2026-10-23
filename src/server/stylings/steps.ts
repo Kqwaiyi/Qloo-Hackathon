@@ -433,8 +433,8 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
 
     async renderPreview(stylingId, outfitId) {
       const toRender = await readOutfitToRender(ctx.db, stylingId, outfitId);
-      // A retry after the save went through has nothing left to do.
-      if (toRender.previewState !== "pending") return;
+      // A retry after the save went through has nothing left to do. Only finishing marks a Preview failed.
+      if (toRender.previewState !== "pending") return toRender.previewState === "ready" ? "ready" : "refused";
       const pieces = await ctx.db
         .select({ category: piece.category, item: piece.item, details: piece.details, productPhotoUrl: piece.productPhotoUrl })
         .from(piece)
@@ -467,7 +467,7 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
       });
       if (preview.refused) {
         await savePreview(ctx.db, stylingId, outfitId, { previewState: "refused", previewRefusalReason: preview.reason });
-        return;
+        return "refused";
       }
       // The image model took a while: a Styling stopped or deleted meanwhile stores no Preview.
       await readRunningStyling(ctx.db, stylingId);
@@ -483,6 +483,7 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
         if (error instanceof StylingNotRunningError) await ctx.blob.delete(pathname).catch(() => {});
         throw error;
       }
+      return "ready";
     },
 
     async finish(stylingId, outcome) {
@@ -684,7 +685,7 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
 }
 
 /** The running Styling with what its steps build from, or throws if it isn't running. */
-async function readRunningStyling(db: Database, stylingId: string) {
+export async function readRunningStyling(db: Database, stylingId: string) {
   const [row] = await db
     .select({
       consultationId: styling.consultationId,
@@ -693,6 +694,7 @@ async function readRunningStyling(db: Database, stylingId: string) {
       photoStyle: styling.photoStyle,
       budgetTier: styling.budgetTier,
       market: styling.market,
+      outfitsWanted: styling.outfitsWanted,
       stylePreference: consultation.stylePreference,
       countryCode: consultation.countryCode,
       ageGroup: consultation.ageGroup,
@@ -747,14 +749,14 @@ async function readOutfitToRender(db: Database, stylingId: string, outfitId: str
 }
 
 /** The Consultation's photo, exactly as it was stored. */
-async function readPhoto(blob: BlobStore, pathname: string): Promise<Photo> {
+export async function readPhoto(blob: BlobStore, pathname: string): Promise<Photo> {
   const { bytes, contentType } = await blob.get(pathname);
   if (!isPhotoMediaType(contentType)) throw new Error("The stored photo isn't a JPEG, PNG or WebP image.");
   return { bytes, mediaType: contentType };
 }
 
 /** Saves in one transaction, holding the Styling so it can't finish meanwhile, and only while it runs. */
-async function whileRunning<T>(
+export async function whileRunning<T>(
   db: Database,
   stylingId: string,
   save: (tx: Transaction, running: { consultationId: string; outfitsWanted: number }) => Promise<T>,
@@ -784,6 +786,6 @@ async function lockRunningStyling(tx: Transaction, stylingId: string) {
   return row;
 }
 
-async function moveStage(tx: Transaction, clock: Clock, stylingId: string, stage: StylingStage): Promise<void> {
+export async function moveStage(tx: Transaction, clock: Clock, stylingId: string, stage: StylingStage): Promise<void> {
   await tx.update(styling).set({ stage, stageMovedAt: clock.now() }).where(eq(styling.id, stylingId));
 }

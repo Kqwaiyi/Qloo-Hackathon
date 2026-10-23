@@ -94,11 +94,22 @@ export function isStuck(stageMovedAt: Date, now: Date): boolean {
   return now.getTime() - stageMovedAt.getTime() >= STUCK_STYLING_MS;
 }
 
-/** The AI gets this many tries at an Outfit's Pieces: bad output is retried once, then tailoring has failed. */
+/**
+ * The Stylist gets at most this many turns, each one call to its model, per Styling, so one
+ * Styling's cost is bounded. A Styling that reaches it finishes with the Outfits it saved. For a
+ * Face Photo, it takes the place of the tailoring attempts and substitutes below: a Stylist that keeps
+ * getting an Outfit wrong is bounded by its turns instead.
+ */
+export const MAX_STYLIST_TURNS = 30;
+
+/**
+ * A body photo's AI gets this many tries at an Outfit's Pieces: bad output is retried once, then
+ * tailoring has failed.
+ */
 export const TAILORING_ATTEMPTS = 2;
 
 /**
- * A Style Icon whose tailoring failed is skipped for the next unused one, at most this many times
- * per Styling, so a broken model can't burn through the Style Icons.
+ * A body photo's Style Icon whose tailoring failed is skipped for the next unused one, at most this
+ * many times per Styling, so a broken model can't burn through the Style Icons.
  */
 export const MAX_TAILORING_SUBSTITUTES = 2;

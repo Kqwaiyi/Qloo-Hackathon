@@ -34,7 +34,7 @@ export interface GeminiAiOptions {
  * real AI on. Tailoring relies on the AI SDK's own retries, 2 by default. A Preview has none: its
  * Workflow step retries it.
  */
-export class GeminiAiProvider implements Omit<AiProvider, "checkPhoto"> {
+export class GeminiAiProvider implements Pick<AiProvider, "tailorPieces" | "renderPreview"> {
   private readonly tailoringModel: LanguageModel;
   private readonly previewModel: LanguageModel;
 

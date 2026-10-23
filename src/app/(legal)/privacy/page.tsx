@@ -316,9 +316,10 @@ export default function Page() {
             <strong>Google&apos;s abuse-monitoring copy</strong> of what Gemini receives and makes: 55 days.
           </li>
           <li>
-            <strong>Workflow run data</strong>, Vercel&apos;s record of each Styling&apos;s steps: deleted as soon as the
-            Styling ends. It holds where photos and Previews are stored, the Style Icons and the Pieces&apos; text, never
-            the images themselves, Product photos included.
+            <strong>Workflow run data</strong>, Vercel&apos;s record of each Styling&apos;s steps: while a Styling runs, it
+            holds your photo, its Previews and the AI Stylist&apos;s conversation, with the Style Icons and the Pieces&apos;
+            text, all encrypted. None of it can be read once the Styling ends, and every copy is gone within 36 days. It
+            never holds the Product photos themselves.
           </li>
           <li>
             <strong>Database backups</strong>: Neon&apos;s restore window keeps earlier states of the database for 6 hours.
@@ -400,8 +401,8 @@ export default function Page() {
                 gone="Immediately, and from backups within 6 hours"
               />
               <PhotoScheduleRow
-                where="Workflow run data: where the photo and Previews were stored, never the images"
-                gone="Already gone once its Styling finished, or as soon as a running Styling is stopped"
+                where="Workflow run data: the photo, its Previews and the AI Stylist's conversation, encrypted, while a Styling runs"
+                gone="Unreadable once its Styling ends or is stopped, and every copy gone within 36 days"
               />
               <PhotoScheduleRow where="Runtime logs, which never hold the images" gone="Within a day" />
               <PhotoScheduleRow
