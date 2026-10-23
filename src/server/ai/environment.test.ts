@@ -1,8 +1,9 @@
 import { generateText } from "ai";
+import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { aiFromEnvironment } from "./environment";
-import { FakeAiProvider } from "./fake";
+import { aiForBrowser, FakeAiProvider } from "./fake";
 import { anthropicJson, anthropicText, FakeAnthropic } from "./fake-anthropic";
 import { FakeGemini, geminiImage } from "./fake-gemini";
 import type { Photo, PhotoCheckReport } from "./provider";
@@ -101,3 +102,27 @@ describe("switching real AI on", () => {
     expect(() => aiFromEnvironment()).toThrow("AI_PROVIDER must be one of: fake, real.");
   });
 });
+
+describe("a browser's fake AI scenario in local development", () => {
+  it("plays in the Previews of each photo the browser checked, which its Stylings draw on the app's own fake", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("AI_PROVIDER", "");
+    vi.stubEnv("FAKE_AI_SCENARIO", "");
+    vi.stubEnv("FAKE_AI_DELAY_MS", "0");
+    const app = aiFromEnvironment();
+    const [browsersPhoto, anotherPhoto] = await Promise.all(["#8a7f72", "#3b4a5c"].map(jpeg));
+    const preview = (photo: Photo) => app.renderPreview({ photo, photoType: "face", pieces: [{ category: "hairstyle", details: "A short textured crop." }] });
+
+    await aiForBrowser(app, "preview-refused").checkPhoto({ photo: browsersPhoto!, photoType: "face" });
+    await app.checkPhoto({ photo: anotherPhoto!, photoType: "face" });
+
+    expect(await preview(browsersPhoto!)).toEqual({ refused: true, reason: "image_safety" });
+    expect(await preview(anotherPhoto!)).toMatchObject({ refused: false });
+  });
+});
+
+/** A plain JPEG of this colour. */
+async function jpeg(background: string): Promise<Photo> {
+  const bytes = await sharp({ create: { width: 30, height: 40, channels: 3, background } }).jpeg().toBuffer();
+  return { bytes: new Uint8Array(bytes), mediaType: "image/jpeg" };
+}

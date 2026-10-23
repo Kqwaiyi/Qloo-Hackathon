@@ -12,6 +12,7 @@ import { getUsageSummary } from "@/server/data/usage";
 import type { ConsultationView, FailedStyling, PreviewView } from "@/server/operations/consultations";
 
 import { Stepper } from "../stepper";
+import { FailedStylingNotes, StylistNotesByStyling } from "../stylist-notes";
 import { AllowanceLine } from "./allowance-line";
 import { BudgetTierDropdown } from "./budget-tier-dropdown";
 import { MoreOutfits } from "./more-outfits";
@@ -97,6 +98,8 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           {consultation.failedStyling.reason === "something_broke" && (
             <TryAgain consultationId={consultation.id} stylingStart={usage.stylingStart} outfitsLeft={usage.outfitsLeft} />
           )}
+          {/* None for a Styling made before the Stylist's Notes. */}
+          {consultation.failedStyling.notes.length > 0 && <FailedStylingNotes notes={consultation.failedStyling.notes} className="mt-3" />}
         </div>
       )}
       {consultation.outfits.length > 0 ? (
@@ -113,6 +116,8 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               </li>
             ))}
           </ol>
+          {/* None on a Consultation made before the Stylist's Notes. */}
+          {consultation.stylistNotes.length > 0 && <StylistNotesByStyling entries={consultation.stylistNotes} className="mt-8" />}
           <MoreOutfits
             consultationId={consultation.id}
             running={progress}

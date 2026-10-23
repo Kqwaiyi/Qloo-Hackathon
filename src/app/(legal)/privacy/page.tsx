@@ -131,6 +131,10 @@ export default function Page() {
           <li>your Style Preference and Country;</li>
           <li>your photos and the Previews made from them, with each Consultation&apos;s Outfits;</li>
           <li>
+            your AI Stylist&apos;s notes on each Styling: the short notes it writes to you as it styles you, and a line for each
+            search it makes and Preview it draws;
+          </li>
+          <li>
             what the photo check found: the Photo Style, which parts of you the photo shows (face, hair, upper body, legs and
             feet), and whether your hair is covered, as a yes or no, never what covers it;
           </li>
@@ -287,6 +291,12 @@ export default function Page() {
             consent, or your account is deleted.
           </li>
           <li>
+            <strong>Your AI Stylist&apos;s notes</strong> on a Styling: as long as the Outfits they explain are shown, so
+            they&apos;re deleted once a new Styling&apos;s Outfits replace those. If a Styling makes no Outfits, its notes
+            stay under the line saying so until a later Styling finishes, or go at once for &ldquo;Show 2 more
+            Outfits&rdquo;, which has no such line. Either way, they&apos;re deleted with their Consultation.
+          </li>
+          <li>
             <strong>Your account</strong>: until you delete it. An account with no activity for{" "}
             {INACTIVE_ACCOUNT_LIFETIME_MONTHS} months is deleted with everything in it, after a warning email{" "}
             {INACTIVITY_WARNING_NOTICE_DAYS} days before.
@@ -400,7 +410,7 @@ export default function Page() {
             <tbody className="text-stone-700">
               <PhotoScheduleRow where="Our photo storage (Vercel Blob): the photo and its Previews" gone="Immediately" />
               <PhotoScheduleRow
-                where="Our database: the Consultation, its Outfits and what the check found"
+                where="Our database: the Consultation, its Outfits, the AI Stylist's notes and what the check found"
                 gone="Immediately, and from backups within 6 hours"
               />
               <PhotoScheduleRow

@@ -62,6 +62,16 @@ export const COPY = {
   seeWhatYourStylistIsDoing: "See what your AI Stylist is doing",
   /** In the Stylist's Notes before the Stylist has written any. */
   stylistGettingStarted: "Your AI Stylist is getting started.",
+  /** The collapsed section of the Stylist's Notes below the Outfits, and the control under a failed Styling's line that opens its notes. */
+  yourStylistsNotes: "Your AI Stylist's notes",
+  /** The entry of "Your AI Stylist's notes" for a new Consultation's first Styling. */
+  firstStyling: "First Styling",
+  /** The button below the Outfits, and the entry of "Your AI Stylist's notes" for a Styling it started. */
+  showMoreOutfits: "Show 2 more Outfits",
+  /** The entry of "Your AI Stylist's notes" for a Budget Tier change, given the Budget Tier it changed to. */
+  budgetTierChangedTo: (budgetTier: string) => `Budget Tier changed to ${budgetTier}`,
+  /** The entry of "Your AI Stylist's notes" for a Photo Style change, given the Photo Style it changed to. */
+  photoStyleChangedTo: (photoStyle: string) => `Photo Style changed to ${photoStyle}`,
   aiGenerated: "AI-generated",
   /** On every Outfit card with Product Pieces, whose Preview is drawn from their sellers' photos. */
   productPhotoCredit: "Product photos © their sellers",

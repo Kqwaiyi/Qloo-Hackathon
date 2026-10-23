@@ -69,7 +69,7 @@ export function MoreOutfits({
             aria-describedby="more-outfits-line more-outfits-failed"
             className={`${secondaryButton} disabled:cursor-not-allowed disabled:opacity-40`}
           >
-            Show 2 more Outfits
+            {COPY.showMoreOutfits}
           </button>
           <AllowanceLine id="more-outfits-line" stylingStart={stylingStart} outfitsLeft={outfitsLeft} className="text-sm text-stone-600" />
           {failed && (

@@ -1,12 +1,15 @@
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, lte, ne } from "drizzle-orm";
 
 import type { BudgetTier, PhotoStyleWords } from "@/config/consultations";
 import type { StylingFailureReason, StylingKind, StylingStage } from "@/config/stylings";
 import type { Database, Transaction } from "@/server/db/database";
 import { styling } from "@/server/db/schema";
 
+/** A Styling's kind as the results page names it. A Try again builds as the Styling it tried again would have, so it's that one's kind. */
+type ShownStylingKind = Exclude<StylingKind, "try_again">;
+
 /** A failed Styling's kind, as the results page says it failed and Try again builds. */
-type FailedStylingKind = Exclude<StylingKind, "more" | "try_again">;
+type FailedStylingKind = Exclude<ShownStylingKind, "more">;
 
 /**
  * The Consultation's latest Styling, when it made no Outfit, so the Consultation kept what it had.
@@ -35,6 +38,7 @@ export async function readLatestFailedStyling(db: Database | Transaction, consul
       photoStyle: styling.photoStyle,
       reason: styling.failureReason,
       stage: styling.stage,
+      startedAt: styling.startedAt,
     })
     .from(styling)
     .where(eq(styling.consultationId, consultationId))
@@ -42,36 +46,29 @@ export async function readLatestFailedStyling(db: Database | Transaction, consul
     .limit(1);
   // Only a failed Styling has a failure reason.
   if (!latest?.reason) return null;
-  const kind = await readFailedStylingKind(db, consultationId, latest.kind);
-  return kind && { ...latest, kind, reason: latest.reason };
+  const { startedAt, ...failed } = latest;
+  const kind = await readShownStylingKind(db, consultationId, { kind: failed.kind, startedAt });
+  // A failed "Show 2 more Outfits" isn't one.
+  return kind && kind !== "more" ? { ...failed, kind, reason: latest.reason } : null;
 }
 
 /**
- * What a failed Styling of `kind` counts as, or null for "Show 2 more Outfits". A Try again counts as
- * the Styling it tried again. Try again starts only when the latest Styling broke, so a run of Try
- * agains all try again the Styling just before them: the latest one that isn't a Try again, whose
- * own kind this then reads.
+ * What a Styling of `kind`, started at `startedAt`, counts as on the results page. A Try again
+ * counts as the Styling it tried again. Try again starts only when the latest Styling broke, so a run
+ * of Try agains all try again the Styling just before them: the latest one started by then that
+ * isn't a Try again, whose own kind this then reads. Null only when there's none, as can't happen.
  */
-async function readFailedStylingKind(
+export async function readShownStylingKind(
   db: Database | Transaction,
   consultationId: string,
-  kind: StylingKind,
-): Promise<FailedStylingKind | null> {
-  switch (kind) {
-    case "first":
-    case "budget_tier_change":
-    case "photo_style_change":
-      return kind;
-    case "more":
-      return null;
-    case "try_again": {
-      const [triedAgain] = await db
-        .select({ kind: styling.kind })
-        .from(styling)
-        .where(and(eq(styling.consultationId, consultationId), ne(styling.kind, "try_again")))
-        .orderBy(desc(styling.startedAt))
-        .limit(1);
-      return triedAgain ? readFailedStylingKind(db, consultationId, triedAgain.kind) : null;
-    }
-  }
+  { kind, startedAt }: { kind: StylingKind; startedAt: Date },
+): Promise<ShownStylingKind | null> {
+  if (kind !== "try_again") return kind;
+  const [triedAgain] = await db
+    .select({ kind: styling.kind })
+    .from(styling)
+    .where(and(eq(styling.consultationId, consultationId), ne(styling.kind, "try_again"), lte(styling.startedAt, startedAt)))
+    .orderBy(desc(styling.startedAt))
+    .limit(1);
+  return triedAgain && triedAgain.kind !== "try_again" ? triedAgain.kind : null;
 }

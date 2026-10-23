@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -861,6 +861,175 @@ describe("the Stylist's Notes", () => {
   });
 });
 
+describe("the Stylist's Notes once Outfits appear", () => {
+  it("stay below the Outfits they explain, in an entry for the Styling that made them", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.stylistNotes).toEqual([
+      {
+        styling: { kind: "first" },
+        notes: [
+          { kind: "note", text: "I'll ask Qloo for Style Icons in tune with your casual Photo Style." },
+          { kind: "step", text: "Asked Qloo for Style Icons popular in the United States with a casual Photo Style: 1 found" },
+          { kind: "note", text: "I'm saving an Outfit inspired by Ava Stone, whose style suits your casual Photo Style." },
+          { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
+          { kind: "note", text: "That's every Outfit for this Styling, so next come the Previews." },
+          { kind: "note", text: "I'm drawing the Preview of Outfit 1." },
+          { kind: "step", text: "Drew Outfit 1's Preview" },
+          { kind: "note", text: "Your Outfits are ready." },
+        ],
+      },
+    ]);
+  });
+
+  it('keep both Stylings\' entries once "Show 2 more Outfits" adds to the Outfits, oldest first, each with its own notes', async () => {
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:05:00Z");
+
+    await showMoreOutfits(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    const { stylistNotes } = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(stylistNotes.map(({ styling, notes }) => [styling, notes.flatMap(({ text }) => (text.startsWith("Saved") ? [text] : []))])).toEqual([
+      [{ kind: "first" }, ["Saved Outfit 1, inspired by Ava Stone", "Saved Outfit 2, inspired by Bea Marsh"]],
+      [{ kind: "more" }, ["Saved Outfit 3, inspired by Cleo Hart"]],
+    ]);
+    expect(await kindsWithNotesStored(consultationId)).toEqual(["first", "more"]);
+  });
+
+  it("go with the Outfits a Photo Style change replaces, deleted as its own Outfits switch in", async () => {
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:05:00Z");
+
+    await changePhotoStyle(harness.context(browser), consultationId, ["edgy"]);
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.stylistNotes.map(({ styling }) => styling)).toEqual([
+      { kind: "photo_style_change", photoStyle: ["edgy"] },
+    ]);
+    expect(await kindsWithNotesStored(consultationId)).toEqual(["photo_style_change"]);
+  });
+
+  it("go with the Outfits a Budget Tier change replaces, deleted as its own Outfits switch in", async () => {
+    harness.qloo.respond = qlooWithBrands(SIX_WOMEN);
+    const browser = await signedInUser();
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:05:00Z");
+    await showMoreOutfits(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+    expect(await kindsWithNotesStored(consultationId)).toEqual(["first", "more"]);
+    harness.clock.set("2026-10-16T12:10:00Z");
+
+    await changeBudgetTier(harness.context(browser), consultationId, "low");
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.stylistNotes.map(({ styling }) => styling)).toEqual([
+      { kind: "budget_tier_change", budgetTier: "low" },
+    ]);
+    expect(await kindsWithNotesStored(consultationId)).toEqual(["budget_tier_change"]);
+  });
+
+  it("stay under a failed Styling's line, beside the entries of the Outfits it kept", async () => {
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:05:00Z");
+    // The Photo Style change's Stylist finds new Style Icons, then is refused on its second turn.
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? { refused: true } : undefined);
+
+    await changePhotoStyle(harness.context(browser), consultationId, ["edgy"]);
+    await harness.stylings.runPending();
+
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown.failedStyling).toEqual({
+      kind: "photo_style_change",
+      photoStyle: ["edgy"],
+      reason: "something_broke",
+      notes: [
+        { kind: "note", text: "I'll ask Qloo for Style Icons in tune with your edgy Photo Style." },
+        { kind: "step", text: "Asked Qloo for Style Icons popular in the United States with an edgy Photo Style: 3 found" },
+      ],
+    });
+    expect(shown.stylistNotes.map(({ styling }) => styling)).toEqual([{ kind: "first" }]);
+  });
+
+  it("go from under a failed Styling's line once a later Styling takes its place, and a Try again's entry is the Styling it tried again", async () => {
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:05:00Z");
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? { refused: true } : undefined);
+    await changePhotoStyle(harness.context(browser), consultationId, ["edgy"]);
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:10:00Z");
+    harness.ai.stylistTurn = ({ turn }) => (turn === 1 ? { text: "I've lost my place, so I'll stop here." } : undefined);
+
+    await tryAgain(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    expect((await readConsultation(harness.context(browser), consultationId))!.failedStyling).toMatchObject({
+      notes: [{ kind: "note", text: "I've lost my place, so I'll stop here." }],
+    });
+    expect(await kindsWithNotesStored(consultationId)).toEqual(["first", "try_again"]);
+    harness.clock.set("2026-10-16T12:15:00Z");
+    harness.ai.stylistTurn = undefined;
+
+    await tryAgain(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown.failedStyling).toBeNull();
+    expect(shown.stylistNotes.map(({ styling }) => styling)).toEqual([{ kind: "photo_style_change", photoStyle: ["edgy"] }]);
+    expect(await kindsWithNotesStored(consultationId)).toEqual(["try_again"]);
+  });
+
+  it('leave nothing of a failed "Show 2 more Outfits", which has no line of its own to sit under', async () => {
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:05:00Z");
+    harness.ai.stylistTurn = ({ turn }) => (turn === 1 ? { text: "I've lost my place, so I'll stop here." } : undefined);
+
+    await showMoreOutfits(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      failedStyling: null,
+      everyOutfitBuilt: true,
+      stylistNotes: [{ styling: { kind: "first" } }],
+    });
+    expect(await kindsWithNotesStored(consultationId)).toEqual(["first"]);
+  });
+
+  it("have no entries, and nothing under a failed Styling's line, on a Consultation made before them", async () => {
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    await harness.stylings.runPending();
+    harness.clock.set("2026-10-16T12:05:00Z");
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? { refused: true } : undefined);
+    await changePhotoStyle(harness.context(browser), consultationId, ["edgy"]);
+    await harness.stylings.runPending();
+    // Its Stylings ran before the Stylist's Notes, so they have none.
+    const stylingIds = (await stylingsOf(consultationId)).map(({ id }) => id);
+    await harness.db.delete(stylistNote).where(inArray(stylistNote.stylingId, stylingIds));
+
+    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
+      outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }],
+      failedStyling: { kind: "photo_style_change", notes: [] },
+      stylistNotes: [],
+    });
+  });
+});
+
 describe("a Styling the Stylist can't carry out", () => {
   it("breaks when a turn still fails, keeping the Outfits saved before it", async () => {
     harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? save(hairstyleOutfit(1)) : undefined);
@@ -997,6 +1166,16 @@ function brandCalls(): URLSearchParams[] {
 async function styleIconStatusesOf(consultationId: string) {
   const icons = await harness.db.select({ position: styleIcon.position, status: styleIcon.status }).from(styleIcon).where(eq(styleIcon.consultationId, consultationId));
   return icons.toSorted((a, b) => a.position - b.position).map(({ status }) => status);
+}
+
+/** The kinds of the Consultation's Stylings whose Stylist's Notes are still stored, oldest first. */
+async function kindsWithNotesStored(consultationId: string) {
+  const stored = await harness.db
+    .selectDistinct({ id: styling.id, kind: styling.kind, startedAt: styling.startedAt })
+    .from(stylistNote)
+    .innerJoin(styling, eq(styling.id, stylistNote.stylingId))
+    .where(eq(styling.consultationId, consultationId));
+  return stored.toSorted((a, b) => a.startedAt.getTime() - b.startedAt.getTime()).map(({ kind }) => kind);
 }
 
 async function stylingsOf(consultationId: string) {

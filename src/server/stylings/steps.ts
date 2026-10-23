@@ -22,7 +22,7 @@ import { recordUsage } from "@/server/usage/records";
 
 import { readBuildingBeside } from "./current-outfits";
 import type { StylingOutcome, StylistSteps } from "./stylist";
-import { addSteps, STEPS } from "./stylist-notes";
+import { addSteps, deleteStylistNotesNoLongerShown, STEPS } from "./stylist-notes";
 
 /** What the steps run on. The Workflow gives them the app's services; tests give them fakes. */
 export interface StylingContext {
@@ -281,6 +281,8 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
         .update(consultation)
         .set({ state: "ready", photoStyle: running.photoStyle, budgetTier: running.budgetTier })
         .where(eq(consultation.id, running.consultationId));
+      // The Stylist's Notes of the Outfits it replaced, if any, go with them, as do a failed Styling's with its line.
+      await deleteStylistNotesNoLongerShown(tx, running.consultationId);
       return true;
     }
     const failureReason = how === "completed" ? "nothing_built" : "something_broke";
@@ -302,6 +304,9 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
       .update(consultation)
       .set({ state: shown ? "ready" : "no_outfits" })
       .where(eq(consultation.id, running.consultationId));
+    // Its own line takes the place of any earlier failed Styling's, whose notes go with it. A failed
+    // "Show 2 more Outfits" has no line, so its notes go too.
+    await deleteStylistNotesNoLongerShown(tx, running.consultationId);
     return true;
   });
 }

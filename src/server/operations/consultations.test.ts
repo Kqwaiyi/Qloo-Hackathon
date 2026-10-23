@@ -336,6 +336,7 @@ describe("opening a Consultation", () => {
       // No Outfits yet for "Show 2 more Outfits" to add to.
       everyOutfitBuilt: true,
       failedStyling: null,
+      stylistNotes: [],
       productsToCheck: false,
     });
   });

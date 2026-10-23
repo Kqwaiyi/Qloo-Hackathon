@@ -1,11 +1,12 @@
-import { and, asc, eq, gt, max } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, max, ne, notInArray } from "drizzle-orm";
 
 import { type PhotoStyleWords, photoStyleText, type ProductCategory } from "@/config/consultations";
 import { countryInSentence } from "@/config/countries";
 import { STYLIST_NOTE_MAX_LENGTH, type StylistNoteKind } from "@/config/stylings";
 import type { Database, Transaction } from "@/server/db/database";
-import { stylistNote } from "@/server/db/schema";
+import { outfit, styling, stylistNote } from "@/server/db/schema";
 
+import { readLatestFailedStyling } from "./failed";
 import { statesAPrice } from "./prices-in-text";
 
 // The Stylist's Notes (spec: "Storage" and "The loop"): what the Stylist tells the user as it carries
@@ -39,6 +40,34 @@ export async function addSteps(tx: Transaction, stylingId: string, ...texts: str
   await addStylistNotes(tx, stylingId, texts.map((text) => ({ kind: "step" as const, text })));
 }
 
+/**
+ * Deletes the entries of each of the Consultation's finished Stylings that no longer explain anything
+ * it shows (spec: "Which notes are kept"). Kept are those of each Styling with a current Outfit, and
+ * of the latest Styling if it failed, whose line the Consultation shows. So a Styling whose Outfits
+ * replace the current ones deletes the notes of the Stylings that made them, and a Styling that takes
+ * a failed one's line away deletes that one's. Run in the transaction that finishes a Styling, once
+ * its Outfits, if any, have switched in.
+ */
+export async function deleteStylistNotesNoLongerShown(tx: Transaction, consultationId: string): Promise<void> {
+  const shown = await tx
+    .selectDistinct({ stylingId: outfit.stylingId })
+    .from(outfit)
+    .where(and(eq(outfit.consultationId, consultationId), eq(outfit.current, true)));
+  const failed = await readLatestFailedStyling(tx, consultationId);
+  const finished = tx
+    .select({ id: styling.id })
+    .from(styling)
+    .where(and(eq(styling.consultationId, consultationId), ne(styling.status, "running")));
+  await tx
+    .delete(stylistNote)
+    .where(
+      and(
+        inArray(stylistNote.stylingId, finished),
+        notInArray(stylistNote.stylingId, [...shown.map(({ stylingId }) => stylingId), ...(failed ? [failed.stylingId] : [])]),
+      ),
+    );
+}
+
 /** Whether the Styling has saved notes from this turn of the Stylist's already. */
 export async function hasNotesFromTurn(tx: Transaction, stylingId: string, turn: number): Promise<boolean> {
   const [saved] = await tx
@@ -47,6 +76,19 @@ export async function hasNotesFromTurn(tx: Transaction, stylingId: string, turn:
     .where(and(eq(stylistNote.stylingId, stylingId), eq(stylistNote.turn, turn)))
     .limit(1);
   return saved !== undefined;
+}
+
+/** Each of these Stylings' entries, in order, by the Styling. A Styling with none has no entry in the map. */
+export async function readStylistNotesOf(db: Database | Transaction, stylingIds: readonly string[]): Promise<Map<string, StylistNoteEntry[]>> {
+  const byStyling = new Map<string, StylistNoteEntry[]>();
+  if (stylingIds.length === 0) return byStyling;
+  const rows = await db
+    .select({ stylingId: stylistNote.stylingId, kind: stylistNote.kind, text: stylistNote.text })
+    .from(stylistNote)
+    .where(inArray(stylistNote.stylingId, [...stylingIds]))
+    .orderBy(asc(stylistNote.position));
+  for (const { stylingId, ...entry } of rows) byStyling.set(stylingId, [...(byStyling.get(stylingId) ?? []), entry]);
+  return byStyling;
 }
 
 /** The Styling's entries after its first `after`, in order. */

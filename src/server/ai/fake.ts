@@ -94,15 +94,24 @@ export interface FakeAiOptions {
   scenario?: FakeAiScenario;
   /** How long each call waits. Tests use 0. */
   delayMs?: number;
+  /**
+   * Where the fakes of a local development server keep the scenario each photo was checked under, by
+   * its fingerprint, so its Stylings play it too, whatever `scenario` says: a browser's cookie picks
+   * the scenario of its photo checks alone (`aiForBrowser`), and its Stylings run on the app's own
+   * fake, in the Workflow. None in tests, whose fake plays `scenario`.
+   */
+  photoScenarios?: Map<string, FakeAiScenario>;
 }
 
 /**
  * The AI provider in local development and tests: no network, no cost. Tests set `scenario` in
- * code; local development picks it with the FAKE_AI_SCENARIO environment variable.
+ * code; local development picks it with the FAKE_AI_SCENARIO environment variable, or a browser's
+ * cookie (`aiForBrowser`).
  */
 export class FakeAiProvider implements AiProvider {
   scenario: FakeAiScenario;
   delayMs: number;
+  readonly photoScenarios?: Map<string, FakeAiScenario>;
   /** How many photo checks it has been asked for. Only a count: it never keeps a photo. */
   photoCheckCount = 0;
   /** Scenarios for the Stylist's Outfits of particular Style Icons, by name, in place of `scenario`. */
@@ -118,13 +127,15 @@ export class FakeAiProvider implements AiProvider {
   /** Runs during every call, as if the model were still working, so a test can look at a Styling part-way. */
   duringCall?: (call: keyof AiProvider) => Promise<void>;
 
-  constructor({ scenario = "pass", delayMs = DEFAULT_FAKE_AI_DELAY_MS }: FakeAiOptions = {}) {
+  constructor({ scenario = "pass", delayMs = DEFAULT_FAKE_AI_DELAY_MS, photoScenarios }: FakeAiOptions = {}) {
     this.scenario = scenario;
     this.delayMs = delayMs;
+    this.photoScenarios = photoScenarios;
   }
 
   async checkPhoto(input: PhotoCheckInput): Promise<PhotoCheckResult> {
     this.photoCheckCount += 1;
+    this.photoScenarios?.set(fingerprint(input.photo).sha256, this.scenario);
     await this.wait("checkPhoto");
     if (this.scenario === "check-errors") throw new Error("The fake photo check errored, as its scenario asks.");
     if (this.scenario === "blocked") return { blocked: true };
@@ -135,18 +146,26 @@ export class FakeAiProvider implements AiProvider {
     return fakeStylistModel(async (request) => {
       this.stylistRequests.push(request);
       await this.wait("stylistModel");
-      return this.stylistTurn?.(request) ?? fakeStylistTurn(request, (styleIconName) => this.styleIconScenarios[styleIconName] ?? stylistScenario(this.scenario));
+      // The conversation's first image is the photo.
+      const scenario = this.scenarioOf(request.images[0]?.sha256);
+      return this.stylistTurn?.(request) ?? fakeStylistTurn(request, (styleIconName) => this.styleIconScenarios[styleIconName] ?? stylistScenario(scenario));
     });
   }
 
   async renderPreview(input: PreviewInput): Promise<PreviewResult> {
     const { photo, pieces, ...rest } = input;
-    this.previewRequests.push({ ...rest, photo: fingerprint(photo), pieces: pieces.map(fingerprintedPiece) });
-    const scenario = this.previewScenarios.shift() ?? this.scenario;
+    const photoFingerprint = fingerprint(photo);
+    this.previewRequests.push({ ...rest, photo: photoFingerprint, pieces: pieces.map(fingerprintedPiece) });
+    const scenario = this.previewScenarios.shift() ?? this.scenarioOf(photoFingerprint.sha256);
     await this.wait("renderPreview");
     if (scenario === "preview-fails") throw new Error("The fake Preview failed, as its scenario asks.");
     if (scenario === "preview-refused") return { refused: true, reason: "image_safety" };
     return { refused: false, image: await withFakePreviewBanner(photo) };
+  }
+
+  /** The scenario a Styling of the photo with this fingerprint plays: the one it was checked under, if kept, or `scenario`. */
+  private scenarioOf(photoSha256: string | undefined): FakeAiScenario {
+    return (photoSha256 && this.photoScenarios?.get(photoSha256)) || this.scenario;
   }
 
   private async wait(call: keyof AiProvider): Promise<void> {
@@ -239,20 +258,35 @@ export function fakeAiFromEnvironment(): FakeAiProvider {
   }
   const delayMs = env.FAKE_AI_DELAY_MS ? Number(env.FAKE_AI_DELAY_MS) : DEFAULT_FAKE_AI_DELAY_MS;
   if (!Number.isFinite(delayMs) || delayMs < 0) throw new Error("FAKE_AI_DELAY_MS must be a number of milliseconds.");
-  return new FakeAiProvider({ scenario, delayMs });
+  // Only local development's browsers pick scenarios of their own.
+  return new FakeAiProvider({ scenario, delayMs, photoScenarios: env.NODE_ENV === "development" ? devServerPhotoScenarios() : undefined });
+}
+
+/**
+ * The scenario each photo was checked under in this local development server, by its fingerprint.
+ * Kept on globalThis, as the app's services are, so the browsers' fakes and the app's own share it.
+ */
+function devServerPhotoScenarios(): Map<string, FakeAiScenario> {
+  const store = globalThis as typeof globalThis & { fakeAiPhotoScenarios?: Map<string, FakeAiScenario> };
+  store.fakeAiPhotoScenarios ??= new Map();
+  return store.fakeAiPhotoScenarios;
 }
 
 /**
  * In local development a browser can pick its own scenario with this cookie, so the browser smoke
- * tests can play several scenarios against one dev server. Deployments ignore it.
+ * tests can play several scenarios against one dev server. It plays in the browser's photo checks,
+ * and in the Stylings of each photo it checked. Deployments ignore it.
  */
 export const FAKE_AI_SCENARIO_COOKIE = "fake_ai_scenario";
 
-/** `ai`, or in local development a fake playing the scenario the browser's cookie names. */
+/**
+ * `ai`, or in local development a fake playing the scenario the browser's cookie names, which it
+ * keeps for each photo it checks, so their Stylings, on `ai` in the Workflow, play it too.
+ */
 export function aiForBrowser(ai: AiProvider, cookieScenario: string | undefined): AiProvider {
   if (process.env.NODE_ENV !== "development" || !(ai instanceof FakeAiProvider)) return ai;
   if (!cookieScenario || !isFakeAiScenario(cookieScenario)) return ai;
-  return new FakeAiProvider({ scenario: cookieScenario, delayMs: ai.delayMs });
+  return new FakeAiProvider({ scenario: cookieScenario, delayMs: ai.delayMs, photoScenarios: ai.photoScenarios });
 }
 
 function isFakeAiScenario(value: string): value is FakeAiScenario {

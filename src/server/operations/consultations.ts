@@ -28,10 +28,12 @@ import { photoPathnameFor } from "@/server/consultations/blob-pathnames";
 import { deleteConsultationOf } from "@/server/consultations/deletion";
 import { judgePhotoCheck, type PhotoRejection } from "@/server/consultations/photo-check";
 import { readPhotoFile } from "@/server/consultations/photo-file";
-import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
+import type { Database } from "@/server/db/database";
+import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
 import { readExchangeRates } from "@/server/exchange-rates/rates";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
+import type { StylistNoteView } from "@/server/operations/stylings";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
 import { productSearchMarket } from "@/server/outfit-assembly/markets";
 import { brandPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
@@ -39,9 +41,10 @@ import { isDueForCheck, pricedOn } from "@/server/outfit-assembly/products";
 import { outfitTotalText, type PriceViewer, priceText } from "@/server/outfit-assembly/prices";
 import { isFromSupportedRegion } from "@/server/region-gate";
 import { hasCurrentStyleIconLeft } from "@/server/stylings/current-outfits";
-import { type LatestFailedStyling, readLatestFailedStyling } from "@/server/stylings/failed";
+import { type LatestFailedStyling, readLatestFailedStyling, readShownStylingKind } from "@/server/stylings/failed";
 import { AlreadyStylingError, checkStylingStart, createStyling, launchStyling, type StylingStartRefusal } from "@/server/stylings/start";
 import { finishStuckStylings } from "@/server/stylings/stop";
+import { readStylistNotesOf } from "@/server/stylings/stylist-notes";
 import { readUsageLeft, recordUsage } from "@/server/usage/records";
 
 /** The consent sheet's two boxes, as the user left them when they pressed Continue. */
@@ -210,6 +213,13 @@ export interface ConsultationView {
    */
   failedStyling: FailedStyling | null;
   /**
+   * "Your AI Stylist's notes", below the Outfits: an entry for each Styling behind the current
+   * Outfits, in the order their Outfits are shown, which is oldest first, with its Stylist's Notes. A
+   * Styling made before the Stylist's Notes has none, and no entry, so a Consultation made before
+   * them has no entries at all.
+   */
+  stylistNotes: StylingNotesView[];
+  /**
    * One of its Outfits' Products wasn't found or checked today, so once the page has shown their
    * stored prices it asks for the price refresh in the background.
    */
@@ -218,15 +228,31 @@ export interface ConsultationView {
 
 /**
  * A Styling that made no Outfit: "We couldn't build Outfits … for this photo.", or, when it broke,
- * "Something went wrong while styling.", with Try again. A Try again's kind is the one it tried
- * again.
+ * "Something went wrong while styling.", with Try again, and under that line its Stylist's Notes,
+ * none for a Styling made before them. A Try again's kind is the one it tried again.
  */
-export type FailedStyling = { reason: StylingFailureReason } & (
+export type FailedStyling = { reason: StylingFailureReason; notes: StylistNoteView[] } & (
   /** A new Consultation's: its Budget Tier, or null for a Face Photo, which has none. */
   | { kind: "first"; budgetTier: BudgetTier | null }
   | { kind: "photo_style_change"; photoStyle: PhotoStyleWords }
   | { kind: "budget_tier_change"; budgetTier: BudgetTier }
 );
+
+/** One entry of "Your AI Stylist's notes": a Styling behind the current Outfits, and its Stylist's Notes. */
+export interface StylingNotesView {
+  styling: StylingKindView;
+  notes: StylistNoteView[];
+}
+
+/**
+ * The kind of Styling an entry of "Your AI Stylist's notes" is for, which labels it: "First
+ * Styling", "Show 2 more Outfits", "Budget Tier changed to Medium" or "Photo Style changed to
+ * edgy". A Try again's kind is the one it tried again.
+ */
+export type StylingKindView =
+  | { kind: "first" | "more" }
+  | { kind: "budget_tier_change"; budgetTier: BudgetTier }
+  | { kind: "photo_style_change"; photoStyle: PhotoStyleWords };
 
 export interface OutfitView {
   id: string;
@@ -412,6 +438,7 @@ export async function readConsultation(
   const outfitRows = await ctx.db
     .select({
       id: outfit.id,
+      stylingId: outfit.stylingId,
       position: outfit.position,
       styleIconName: styleIcon.name,
       previewState: outfit.previewState,
@@ -466,24 +493,59 @@ export async function readConsultation(
     outfits,
     everyPreviewRefused: outfits.length > 0 && outfits.every((outfitView) => outfitView.preview.state === "refused"),
     everyOutfitBuilt: !(await hasCurrentStyleIconLeft(ctx.db, row.id)),
-    failedStyling: failedStylingView(await readLatestFailedStyling(ctx.db, row.id)),
+    failedStyling: await failedStylingView(ctx.db, await readLatestFailedStyling(ctx.db, row.id)),
+    // Outfits are shown in the order their Stylings made them, so each Styling's first is oldest first.
+    stylistNotes: await stylistNotesView(ctx.db, row.id, [...new Set(outfitRows.map(({ stylingId }) => stylingId))]),
     productsToCheck: pieceRows.some(({ pricedAt }) => pricedAt !== null && isDueForCheck(pricedAt, ctx.clock.now())),
   };
 }
 
-/** What the page says of the Consultation's latest Styling, if it failed: what it tried to build for. */
-function failedStylingView(failed: LatestFailedStyling | null): FailedStyling | null {
+/** What the page says of the Consultation's latest Styling, if it failed: what it tried to build for, and its Stylist's Notes. */
+async function failedStylingView(db: Database, failed: LatestFailedStyling | null): Promise<FailedStyling | null> {
   if (!failed) return null;
-  const { kind, budgetTier, photoStyle, reason } = failed;
+  const { stylingId, kind, budgetTier, photoStyle, reason } = failed;
+  const notes = (await readStylistNotesOf(db, [stylingId])).get(stylingId) ?? [];
   switch (kind) {
     case "first":
-      return { kind, budgetTier, reason };
+      return { kind, budgetTier, reason, notes };
     case "photo_style_change":
-      return { kind, photoStyle, reason };
+      return { kind, photoStyle, reason, notes };
     case "budget_tier_change":
       // A Budget Tier change always has a Budget Tier to build at.
-      return budgetTier && { kind, budgetTier, reason };
+      return budgetTier && { kind, budgetTier, reason, notes };
   }
+}
+
+/** "Your AI Stylist's notes": an entry for each of these Stylings, in order, that has any. */
+async function stylistNotesView(db: Database, consultationId: string, stylingIds: readonly string[]): Promise<StylingNotesView[]> {
+  const notesOf = await readStylistNotesOf(db, stylingIds);
+  const stylings =
+    stylingIds.length === 0
+      ? []
+      : await db
+          .select({ id: styling.id, kind: styling.kind, budgetTier: styling.budgetTier, photoStyle: styling.photoStyle, startedAt: styling.startedAt })
+          .from(styling)
+          .where(inArray(styling.id, [...stylingIds]));
+  const entries = await Promise.all(
+    stylingIds.map(async (stylingId): Promise<StylingNotesView | null> => {
+      const notes = notesOf.get(stylingId);
+      const behind = stylings.find(({ id }) => id === stylingId);
+      if (!notes || !behind) return null;
+      const kind = await readShownStylingKind(db, consultationId, behind);
+      switch (kind) {
+        case "first":
+        case "more":
+          return { styling: { kind }, notes };
+        case "budget_tier_change":
+          return behind.budgetTier && { styling: { kind, budgetTier: behind.budgetTier }, notes };
+        case "photo_style_change":
+          return { styling: { kind, photoStyle: behind.photoStyle }, notes };
+        case null:
+          return null;
+      }
+    }),
+  );
+  return entries.filter((entry) => entry !== null);
 }
 
 /** One row of My Consultations. */
