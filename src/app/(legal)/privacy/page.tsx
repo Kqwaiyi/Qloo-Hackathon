@@ -170,7 +170,7 @@ export default function Page() {
           </li>
           <li>
             <strong>To keep the app for adults only,</strong> from your birth year and month. Legal basis: our contract with
-            you, and our legitimate interest (Article 6(1)(f)) in following our AI provider&apos;s terms, which don&apos;t
+            you, and our legitimate interest (Article 6(1)(f)) in following Google&apos;s terms for Gemini, which don&apos;t
             allow anyone under {MINIMUM_AGE}.
           </li>
           <li>
@@ -213,8 +213,14 @@ export default function Page() {
       <LegalSection {...section("recipients")}>
         <ul className={bulletList}>
           <li>
-            <strong>Google&apos;s Gemini</strong>, our AI provider, gets your photos as our processor. With each one it gets
-            only what it needs to check the photo, tailor each Outfit and draw its Preview: the Photo Type, your age group, the
+            <strong>Anthropic&apos;s Claude</strong>, one of our two AI providers, gets your photos as our processor, to check
+            each one and read its Photo Style. It gets nothing else about you: never your username, email, Country or Budget
+            Tier. Anthropic deletes what it gets within 30 days, but keeps anything its trust and safety team flags as breaking
+            its usage policy for up to 2 years. It doesn&apos;t use any of it to train its models.
+          </li>
+          <li>
+            <strong>Google&apos;s Gemini</strong>, our other AI provider, gets your photos as our processor. With each one it
+            gets only what it needs to tailor each Outfit and draw its Preview: the Photo Type, your age group, the
             Photo Style, whether the Outfit is menswear or womenswear, the Style Icon&apos;s name, the Brands, the names,
             descriptions and colours of the Brands&apos; Products to pick from, and the sellers&apos; photos of the Products picked (see{" "}
             <a href="#previews" className={textLink}>
@@ -257,10 +263,10 @@ export default function Page() {
 
       <LegalSection {...section("transfers")}>
         <p className={paragraph}>
-          The app, its database and its photo storage run in the eastern United States. Google may handle what Gemini
-          receives in any country where it has facilities, and Cloudflare may handle what it receives for the Bot Check
-          outside your country. So if you&apos;re in the European Economic Area, the UK or another country with rules on
-          sending personal data abroad, your data leaves that country.
+          The app, its database and its photo storage run in the eastern United States. Anthropic and Google may handle what
+          Claude and Gemini receive in any country where they have facilities, and Cloudflare may handle what it receives
+          for the Bot Check outside your country. So if you&apos;re in the European Economic Area, the UK or another country
+          with rules on sending personal data abroad, your data leaves that country.
         </p>
         <p className={paragraph}>
           Those transfers are protected by each provider&apos;s data processing terms, which use safeguards such as the
@@ -301,6 +307,10 @@ export default function Page() {
             {/* Better Auth clears a count once it's older than the longest rate-limit window: sign-up's. */}
             <strong>Counts of repeated attempts from an IP address</strong>: about{" "}
             {count(SIGN_UP_RATE_LIMIT.window / SECONDS_PER_HOUR, "hour")}.
+          </li>
+          <li>
+            <strong>Anthropic&apos;s copy</strong> of what Claude receives: deleted within 30 days, or kept for up to 2 years if
+            its trust and safety team flags it.
           </li>
           <li>
             <strong>Google&apos;s abuse-monitoring copy</strong> of what Gemini receives and makes: 55 days.
@@ -344,14 +354,16 @@ export default function Page() {
           Before your first Consultation, and again whenever this notice changes, the consent sheet asks you to tick two boxes,
           both unticked to start with. Ticking the first is your written release: you agree to us storing your photos and
           Previews and having AI process your face and body, for the purpose and the time described here. Ticking the second
-          agrees to your photos being sent to Google&apos;s Gemini. We record which version you agreed to, and when.
+          agrees to your photos being sent to Anthropic&apos;s Claude and Google&apos;s Gemini. We record which version you
+          agreed to, and when.
         </p>
         <h3 className={subheading}>Other people in your photo</h3>
         <p className={paragraph}>
-          If anyone else is in your photo, they&apos;re stored and sent to Google&apos;s Gemini with it, because your
-          Previews edit the photo as it is. Only its Main Person, the one the photo is clearly of, is styled. Nobody else in it is ever styled, read or
-          identified, nothing about them is kept from the check, and they&apos;re deleted with the Consultation. Your release
-          covers only you, so please make sure you have the consent of everyone else in a photo before you send it.
+          If anyone else is in your photo, they&apos;re stored and sent to Anthropic&apos;s Claude and Google&apos;s Gemini
+          with it, because the check looks at the whole photo and your Previews edit it as it is. Only its Main Person, the
+          one the photo is clearly of, is styled. Nobody else in it is ever styled, read or identified, nothing about them
+          is kept from the check, and they&apos;re deleted with the Consultation. Your release covers only you, so please
+          make sure you have the consent of everyone else in a photo before you send it.
         </p>
         <h3 className={subheading}>Before a photo leaves your device</h3>
         <p className={paragraph}>
@@ -392,6 +404,10 @@ export default function Page() {
                 gone="Already gone once its Styling finished, or as soon as a running Styling is stopped"
               />
               <PhotoScheduleRow where="Runtime logs, which never hold the images" gone="Within a day" />
+              <PhotoScheduleRow
+                where="Anthropic's copy of the photo"
+                gone="Within 30 days of being sent, or up to 2 years if its trust and safety team flags it"
+              />
               <PhotoScheduleRow
                 where="Google's abuse-monitoring copy of the photo and Previews"
                 gone="Within 55 days of being sent or made"

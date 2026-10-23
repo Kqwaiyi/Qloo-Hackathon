@@ -48,8 +48,8 @@ import { readUsageLeft, recordUsage } from "@/server/usage/records";
 const photoConsentTicksSchema = z.object({
   /** Storing their photos and having AI process their face and body. */
   storeAndProcess: z.boolean(),
-  /** Sending their photos to Google's Gemini. */
-  sendToGemini: z.boolean(),
+  /** Sending their photos to Anthropic's Claude and Google's Gemini. */
+  sendToAiProviders: z.boolean(),
 });
 export type PhotoConsentTicks = z.infer<typeof photoConsentTicksSchema>;
 
@@ -94,7 +94,7 @@ export async function startConsultation(
   // otherwise they must already have given. They're recorded on the user, except on the Demo
   // Account, where each judge agrees before every Consultation, which keeps it instead.
   const consentedAt = ctx.clock.now();
-  const ticked = input.consent?.storeAndProcess === true && input.consent.sendToGemini;
+  const ticked = input.consent?.storeAndProcess === true && input.consent.sendToAiProviders;
   if (!ticked && needsPhotoConsent(user)) return { ok: false, refusal: "photo-consent-needed" };
   if (ticked && !user.isDemoAccount) await recordPhotoConsent(ctx.db, user.id, consentedAt);
   const stylingStart = await checkStylingStart(ctx, user);

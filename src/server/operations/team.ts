@@ -242,7 +242,7 @@ export async function makeLandingSample(
   if (!profileSet.ok) throw new Error(`Couldn't set the landing sample's profile (${profileSet.refusal}).`);
 
   // The team agrees to the photo notice for the AI-generated sample person, as a judge does each time.
-  const started = await startConsultation(judgesRequest(), { photo, photoType, budgetTier, consent: { storeAndProcess: true, sendToGemini: true } });
+  const started = await startConsultation(judgesRequest(), { photo, photoType, budgetTier, consent: { storeAndProcess: true, sendToAiProviders: true } });
   if (!started.ok) {
     switch (started.refusal) {
       case "unusable-file":

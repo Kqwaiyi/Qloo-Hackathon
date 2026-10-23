@@ -23,7 +23,7 @@ import type {
  * Which outcome the fake adapter plays. `pass` passes every photo with Photo Style casual: the photo
  * shows just what the chosen Photo Type asks for. The others:
  * - `not-appropriate`: an explicit photo.
- * - `blocked`: Google blocks the photo.
+ * - `blocked`: the model refuses to look at the photo.
  * - `no-person`: nobody in the photo.
  * - `unclear-main-person`: two people in the photo, and no clear Main Person.
  * - `clear-main-person`: two people in the photo, one of them clearly its Main Person. It passes the

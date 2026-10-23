@@ -75,9 +75,9 @@ describe("photo consent on \"Get my Outfits\"", () => {
   });
 
   it.each([
-    ["only the box for storing photos and having AI process them", { storeAndProcess: true, sendToGemini: false }],
-    ["only the box for sending them to Google's Gemini", { storeAndProcess: false, sendToGemini: true }],
-    ["neither box", { storeAndProcess: false, sendToGemini: false }],
+    ["only the box for storing photos and having AI process them", { storeAndProcess: true, sendToAiProviders: false }],
+    ["only the box for sending them to Anthropic's Claude and Google's Gemini", { storeAndProcess: false, sendToAiProviders: true }],
+    ["neither box", { storeAndProcess: false, sendToAiProviders: false }],
   ])("refuses %s ticked, recording nothing and storing nothing", async (_name, consent) => {
     const browser = await signedInUser();
 

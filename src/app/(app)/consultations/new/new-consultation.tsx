@@ -443,7 +443,7 @@ function PhotoStep({
       form.set("photo", new File([shown.blob], "photo.jpg", { type: "image/jpeg" }));
       if (consented) {
         form.set("consentStoreAndProcess", "on");
-        form.set("consentSendToGemini", "on");
+        form.set("consentSendToAiProviders", "on");
       }
       let result;
       try {

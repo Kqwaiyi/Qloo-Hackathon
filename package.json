@@ -25,6 +25,7 @@
     "team:make-landing-sample": "tsx --env-file=.env.local scripts/make-landing-sample.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "4.0.79",
     "@ai-sdk/google": "4.0.95",
     "@electric-sql/pglite": "0.5.10",
     "@gsap/react": "2.1.2",

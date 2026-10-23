@@ -19,7 +19,7 @@ export async function startConsultationAction(form: FormData): Promise<Result<{ 
     budgetTier: form.get("budgetTier") ?? undefined,
     consent: {
       storeAndProcess: form.get("consentStoreAndProcess") === "on",
-      sendToGemini: form.get("consentSendToGemini") === "on",
+      sendToAiProviders: form.get("consentSendToAiProviders") === "on",
     },
   });
   if (!input.success) return { ok: false, refusal: "unusable-file" };

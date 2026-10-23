@@ -1,7 +1,10 @@
 // The AI provider's settings. Every model name lives here so it can change without hunting through code.
 
-/** The Gemini model that checks each photo and reads its Photo Style. */
-export const GEMINI_PHOTO_CHECK_MODEL = "gemini-3.5-flash-lite";
+/** The Claude model that checks each photo and reads its Photo Style (ADR-0011). */
+export const CLAUDE_PHOTO_CHECK_MODEL = "claude-haiku-5-5";
+
+/** How hard Claude works at each photo check: enough to judge the photo, while it stays quick. */
+export const CLAUDE_PHOTO_CHECK_EFFORT = "medium";
 
 /** The Gemini model that tailors each Outfit's Pieces. */
 export const GEMINI_TAILORING_MODEL = "gemini-3.5-flash-lite";

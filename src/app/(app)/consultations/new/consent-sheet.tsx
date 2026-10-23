@@ -39,13 +39,13 @@ export function ConsentSheet({
   const heading = useRef<HTMLHeadingElement>(null);
   const titleId = useId();
   const [storeAndProcess, setStoreAndProcess] = useState(false);
-  const [sendToGemini, setSendToGemini] = useState(false);
+  const [sendToAiProviders, setSendToAiProviders] = useState(false);
 
   useEffect(() => {
     const sheet = dialog.current;
     if (!open || !sheet || sheet.open) return;
     setStoreAndProcess(false);
-    setSendToGemini(false);
+    setSendToAiProviders(false);
     sheet.returnValue = "";
     sheet.showModal();
     // From the top, so the notice is read before the boxes.
@@ -76,7 +76,8 @@ export function ConsentSheet({
             </li>
             <li>
               AI looks at your face and body to check the photo, read its style, tailor each Outfit to you and draw Previews of
-              you wearing them. That AI is Google&apos;s Gemini, so your photo is sent to Google.
+              you wearing them. That AI is Anthropic&apos;s Claude and Google&apos;s Gemini, so your photo is sent to Anthropic
+              and to Google.
             </li>
             <li>
               From the check, we keep only which parts of you the photo shows, whether your hair is covered, and its
@@ -97,8 +98,8 @@ export function ConsentSheet({
               left as it is in your Previews.
             </li>
             <li>
-              If anyone else is in your photo, it&apos;s stored and sent to Google with it, but only the main person is styled.
-              Please make sure you have the consent of everyone else in it.
+              If anyone else is in your photo, it&apos;s stored and sent to Anthropic and Google with it, but only the main person
+              is styled. Please make sure you have the consent of everyone else in it.
             </li>
           </ul>
 
@@ -123,8 +124,8 @@ export function ConsentSheet({
           <ConsentBox checked={storeAndProcess} onChange={setStoreAndProcess}>
             I agree to Qurator storing my photos and having AI process my face and body, as described above.
           </ConsentBox>
-          <ConsentBox checked={sendToGemini} onChange={setSendToGemini}>
-            I agree to my photos being sent to Google&apos;s Gemini.
+          <ConsentBox checked={sendToAiProviders} onChange={setSendToAiProviders}>
+            I agree to my photos being sent to Anthropic&apos;s Claude and Google&apos;s Gemini.
           </ConsentBox>
         </div>
         <div className="flex justify-end gap-2 px-6 pt-3 pb-4 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
@@ -134,7 +135,7 @@ export function ConsentSheet({
           <button
             type="button"
             onClick={() => dialog.current?.close(AGREED)}
-            disabled={!storeAndProcess || !sendToGemini}
+            disabled={!storeAndProcess || !sendToAiProviders}
             className={`${inkPill} max-sm:flex-1`}
           >
             Continue

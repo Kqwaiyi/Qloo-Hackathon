@@ -12,7 +12,7 @@ import {
 import type { PreviewRefusalReason } from "@/config/stylings";
 
 // Our own AI provider interface (spec: "AI provider interface"). The domain depends only on this,
-// never on the AI SDK or Gemini. Nothing it returns guesses age, ethnicity, skin tone, body
+// never on the AI SDK or a provider. Nothing it returns guesses age, ethnicity, skin tone, body
 // measurements or health (ADR-0005): the age group tailoring receives comes from sign-up.
 
 export const PHOTO_MEDIA_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
@@ -60,7 +60,7 @@ export interface PhotoCheckReport {
   photoStyle: PhotoStyleWords;
 }
 
-/** What the model reported, or that Google blocked the photo, so the model reported nothing. */
+/** What the model reported, or that it refused to look at the photo, so it reported nothing. */
 export type PhotoCheckResult = { blocked: true } | { blocked: false; report: PhotoCheckReport };
 
 /** What tailoring is told about the Brand a Piece is built on. */

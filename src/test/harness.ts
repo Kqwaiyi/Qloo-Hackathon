@@ -33,7 +33,7 @@ export const TEST_BOT_CHECK_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
  * The consent sheet with both boxes ticked, as "Get my Outfits" sends it. Starting a Consultation
  * with it records the user's agreement to the photo notice first.
  */
-export const BOTH_CONSENT_BOXES_TICKED: PhotoConsentTicks = { storeAndProcess: true, sendToGemini: true };
+export const BOTH_CONSENT_BOXES_TICKED: PhotoConsentTicks = { storeAndProcess: true, sendToAiProviders: true };
 
 /** A clock the test moves by hand. */
 export class TestClock implements Clock {

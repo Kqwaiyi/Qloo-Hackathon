@@ -1,62 +1,13 @@
 import { inspect } from "node:util";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import { aiFromEnvironment } from "./environment";
-import { FakeAiProvider } from "./fake";
+import { FakeGemini, type GeminiPart, geminiError, geminiJson, geminiText, type RecordedGeminiRequest } from "./fake-gemini";
 import { GeminiAiProvider } from "./gemini";
-import {
-  type Photo,
-  type PhotoCheckInput,
-  type PhotoCheckReport,
-  type PreviewInput,
-  type PreviewPiece,
-  type TailoredPieces,
-  type TailoringInput,
-  UnretryableAiError,
-} from "./provider";
+import { type Photo, type PreviewInput, type PreviewPiece, type TailoredPieces, type TailoringInput, UnretryableAiError } from "./provider";
 import { checkTailoredPieces } from "./tailoring";
 
 // The Gemini adapter against a fake Gemini API: no test calls Gemini. The fake answers each
 // request with a small hand-written response shaped like Gemini's, and records what was sent.
-
-/** A request as it left for Gemini. */
-interface RecordedGeminiRequest {
-  url: URL;
-  headers: Headers;
-  body: GeminiRequestBody;
-}
-
-interface GeminiRequestBody {
-  contents: { role: string; parts: GeminiPart[] }[];
-  systemInstruction?: { parts: GeminiPart[] };
-  generationConfig?: Record<string, unknown>;
-}
-
-type GeminiPart = { text?: string; inlineData?: { mimeType: string; data: string }; fileData?: unknown; thought?: boolean };
-
-/** Gemini in tests: it answers every request with `respond`, and records each one. */
-class FakeGemini {
-  readonly requests: RecordedGeminiRequest[] = [];
-  respond: (request: RecordedGeminiRequest) => Response = () => geminiError(500);
-
-  readonly fetch: typeof globalThis.fetch = async (input, init) => {
-    const url = new URL(input instanceof Request ? input.url : input);
-    const body = JSON.parse(String(init?.body)) as GeminiRequestBody;
-    const recorded = { url, headers: new Headers(init?.headers), body };
-    this.requests.push(recorded);
-    return this.respond(recorded);
-  };
-}
-
-/** Gemini's reply carrying `text`, as a model that finished normally sends it. */
-function geminiText(text: string): Response {
-  return Response.json({ candidates: [{ content: { role: "model", parts: [{ text }] }, finishReason: "STOP" }] });
-}
-
-/** Gemini's reply carrying `value` as JSON, as structured output sends it. */
-function geminiJson(value: unknown): Response {
-  return geminiText(JSON.stringify(value));
-}
 
 /** Google blocking the request itself, photo included: no candidates, only the block reason. */
 function geminiPromptBlocked(blockReason: string): Response {
@@ -90,11 +41,6 @@ function geminiImageStopped(finishReason: string): Response {
   return Response.json({ candidates: [{ content: {}, finishReason, finishMessage: "The image was stopped." }] });
 }
 
-/** One of Gemini's errors, with no wait before the AI SDK retries it. */
-function geminiError(status: number): Response {
-  return Response.json({ error: { code: status, message: `Gemini error ${status}` } }, { status, headers: { "retry-after-ms": "0" } });
-}
-
 /** Every part of the request that isn't text: the photo, inline or as a file reference. */
 function photoPartsOf({ body }: RecordedGeminiRequest): GeminiPart[] {
   return body.contents.flatMap(({ parts }) => parts).filter((part) => part.text === undefined);
@@ -112,18 +58,6 @@ function base64(bytes: Uint8Array): string {
 
 /** The photo's bytes stand in for a real photo: the adapter sends them as they are. */
 const PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a photo of someone standing in a park"), mediaType: "image/jpeg" };
-
-const PHOTO_CHECK: PhotoCheckInput = { photo: PHOTO, photoType: "full_body" };
-
-const REPORT: PhotoCheckReport = {
-  peopleCount: 1,
-  clearMainPerson: true,
-  visible: { face: true, hair: true, upperBody: true, legs: true, feet: true },
-  hairCovered: false,
-  clearEnough: true,
-  explicit: false,
-  photoStyle: ["edgy", "chic"],
-};
 
 /** A Full-Body Photo's Outfit. The Style Icon, Brands and Products are made up. */
 const TAILORING: TailoringInput = {
@@ -242,82 +176,6 @@ let ai: GeminiAiProvider;
 beforeEach(() => {
   gemini = new FakeGemini();
   ai = new GeminiAiProvider({ apiKey: "test-api-key", fetch: gemini.fetch });
-});
-
-describe("the photo check", () => {
-  it("reports what Gemini saw", async () => {
-    gemini.respond = () => geminiJson(REPORT);
-
-    const result = await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: false, report: REPORT });
-  });
-
-  it("asks Gemini whether one person is clearly the Main Person, reporting the rest about them, and carries its answer", async () => {
-    gemini.respond = () => geminiJson({ ...REPORT, peopleCount: 2, clearMainPerson: false });
-
-    const result = await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: false, report: { ...REPORT, peopleCount: 2, clearMainPerson: false } });
-    const text = textOf(gemini.requests[0]!);
-    expect(text).toMatch(/clearMainPerson: whether one person is clearly the photo's subject/i);
-    expect(text).toMatch(/noticeably closer or larger than everyone else, and in focus/i);
-    expect(text).toMatch(/a couple's selfie, friends side by side, a group photo/i);
-    expect(text).toMatch(/when in doubt, clearMainPerson is false/i);
-    expect(text).toMatch(/everything else you report, except explicit, is about the main person/i);
-    expect(text).not.toMatch(/report on the most prominent one/i);
-  });
-
-  it("sends the photo inline to gemini-3.5-flash-lite, never through the Files API", async () => {
-    gemini.respond = () => geminiJson(REPORT);
-
-    await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(gemini.requests.map(({ url }) => url.pathname)).toEqual(["/v1beta/models/gemini-3.5-flash-lite:generateContent"]);
-    expect(photoPartsOf(gemini.requests[0]!)).toEqual([{ inlineData: { mimeType: "image/jpeg", data: base64(PHOTO.bytes) } }]);
-  });
-
-  it.each([
-    ["the request", () => geminiPromptBlocked("PROHIBITED_CONTENT")],
-    ["the reply", () => geminiReplyBlocked("SAFETY", '{"peopleCount": 1, ')],
-  ])("comes back blocked when Google blocks %s", async (_blocked, blockedResponse) => {
-    gemini.respond = blockedResponse;
-
-    const result = await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: true });
-  });
-
-  it("gets past an error that the AI SDK's own retries clear", async () => {
-    gemini.respond = () => (gemini.requests.length === 1 ? geminiError(503) : geminiJson(REPORT));
-
-    const result = await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: false, report: REPORT });
-  });
-
-  it("throws an error that outlasts the AI SDK's own retries, carrying nothing of the photo", async () => {
-    gemini.respond = () => geminiError(503);
-
-    const error = await ai.checkPhoto(PHOTO_CHECK).catch((thrown: unknown) => thrown);
-
-    expect(error).toBeInstanceOf(Error);
-    expect(inspect(error, { depth: Infinity })).not.toContain(base64(PHOTO.bytes));
-  });
-
-  it("throws when Gemini's reply isn't a report", async () => {
-    gemini.respond = () => geminiJson({ ...REPORT, peopleCount: "one", photoStyle: ["cottagecore"] });
-
-    await expect(ai.checkPhoto(PHOTO_CHECK)).rejects.toThrow();
-  });
-
-  it("keeps one word of a Photo Style Gemini read twice", async () => {
-    gemini.respond = () => geminiJson({ ...REPORT, photoStyle: ["casual", "casual"] });
-
-    const result = await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: false, report: { ...REPORT, photoStyle: ["casual"] } });
-  });
 });
 
 describe("tailoring", () => {
@@ -666,44 +524,5 @@ describe("Previews", () => {
     const result = await ai.renderPreview(PREVIEW);
 
     expect(result).toEqual({ refused: false, image: DRAWN });
-  });
-});
-
-describe("switching Gemini on", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.unstubAllGlobals();
-  });
-
-  it("runs the fake adapter unless AI_PROVIDER says gemini, even with GEMINI_API_KEY set", () => {
-    vi.stubEnv("AI_PROVIDER", "");
-    vi.stubEnv("GEMINI_API_KEY", "key-from-the-environment");
-
-    expect(aiFromEnvironment()).toBeInstanceOf(FakeAiProvider);
-  });
-
-  it("runs Gemini when AI_PROVIDER says gemini, with GEMINI_API_KEY as its key", async () => {
-    vi.stubEnv("AI_PROVIDER", "gemini");
-    vi.stubEnv("GEMINI_API_KEY", "key-from-the-environment");
-    vi.stubGlobal("fetch", gemini.fetch);
-    gemini.respond = () => geminiJson(REPORT);
-
-    const result = await aiFromEnvironment().checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: false, report: REPORT });
-    expect(gemini.requests.map(({ headers }) => headers.get("x-goog-api-key"))).toEqual(["key-from-the-environment"]);
-  });
-
-  it("can't run Gemini without GEMINI_API_KEY", () => {
-    vi.stubEnv("AI_PROVIDER", "gemini");
-    vi.stubEnv("GEMINI_API_KEY", "");
-
-    expect(() => aiFromEnvironment()).toThrow("GEMINI_API_KEY must be set when AI_PROVIDER is gemini.");
-  });
-
-  it("refuses an AI_PROVIDER it doesn't know", () => {
-    vi.stubEnv("AI_PROVIDER", "openai");
-
-    expect(() => aiFromEnvironment()).toThrow("AI_PROVIDER must be one of: fake, gemini.");
   });
 });

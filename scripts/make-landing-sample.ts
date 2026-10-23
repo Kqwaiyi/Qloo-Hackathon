@@ -1,5 +1,5 @@
 // A one-off team script, which costs money: runs the real pipeline once on one of the landing page's
-// sample photos, with live Qloo, Channel3 and Gemini and the United States as the Country, and
+// sample photos, with live Qloo, Channel3 and real AI and the United States as the Country, and
 // freezes what it makes (its Products with their offers, prices and dates, and its Preview) as that
 // Photo Type's sample, as `team:export-landing-sample` does. The sample keeps the Style Preference
 // and Budget Tier it has in src/server/landing-samples.ts, and is never refreshed after.
@@ -10,8 +10,8 @@
 //
 //   npm run team:make-landing-sample -- <photo-type> [outfit-number]
 //
-// It needs QLOO_API_URL, QLOO_API_KEY, CHANNEL3_API_KEY and GEMINI_API_KEY in .env.local, whatever
-// AI_PROVIDER and PRODUCT_SEARCH say.
+// It needs QLOO_API_URL, QLOO_API_KEY, CHANNEL3_API_KEY, ANTHROPIC_API_KEY and GEMINI_API_KEY in
+// .env.local, whatever AI_PROVIDER and PRODUCT_SEARCH say.
 
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -19,7 +19,7 @@ import { readFile } from "node:fs/promises";
 import { CATEGORY_LABELS, PHOTO_TYPE_LABELS, PHOTO_TYPES, type PhotoType } from "@/config/consultations";
 import { PRODUCT_SEARCH_STEP_MAX_RETRIES } from "@/config/product-search";
 import { PREVIEW_STEP_MAX_RETRIES } from "@/config/stylings";
-import { geminiAiFromEnvironment } from "@/server/ai/gemini";
+import { aiFromEnvironment } from "@/server/ai/environment";
 import { createAuth } from "@/server/auth/create-auth";
 import { MemoryBlobStore } from "@/server/blob/memory";
 import { systemClock } from "@/server/clock";
@@ -53,7 +53,7 @@ const photoPath = shipped.images.photoPath;
 // Read before the sample's folder is replaced.
 const photo = new Blob([await readFile(publicFile(photoPath))]);
 
-console.log(`Running the pipeline on public${photoPath}, with live Qloo, Channel3 and Gemini. This costs money.`);
+console.log(`Running the pipeline on public${photoPath}, with live Qloo, Channel3, Claude and Gemini. This costs money.`);
 const app = await createLandingSampleApp();
 try {
   const result = await makeLandingSample(app, {
@@ -83,14 +83,14 @@ try {
 
 /**
  * The app the pipeline runs on: a fresh database and Blob store in memory, the live Qloo, Channel3
- * and Gemini, and Stylings run in this process, their steps tried again as often as the Workflow
+ * and real AI, and Stylings run in this process, their steps tried again as often as the Workflow
  * tries them. Its email goes nowhere.
  */
 async function createLandingSampleApp(): Promise<LandingSampleApp> {
   const db = await openPgliteDatabase();
   const clock = systemClock;
   const blob = new MemoryBlobStore();
-  const ai = geminiAiFromEnvironment();
+  const ai = aiFromEnvironment("real");
   const productSearch = productSearchFromEnvironment("channel3");
   const stylings = new InlineStylingRunner({
     db,

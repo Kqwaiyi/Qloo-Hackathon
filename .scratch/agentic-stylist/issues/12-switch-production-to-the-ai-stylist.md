@@ -10,7 +10,8 @@
 
 - [ ] Run the Haiku check (ticket 11) with the team's go-ahead, and paste its report into this ticket's Comments. If Haiku falls short, move the Stylist to Sonnet 5.5 in the AI config, a one-line change, and run the check again.
 - [ ] Set a $50 monthly spend limit on the Anthropic workspace, as on the Gemini project.
-- [ ] Add the Anthropic key on Vercel for Production and Preview.
+- [ ] Add the Anthropic key on Vercel for Production and Preview, as `ANTHROPIC_API_KEY`.
+- [ ] Change Production's `AI_PROVIDER` from `gemini` to `real`: ticket 01 renamed the setting, and `gemini` is now refused, so every request fails until it's changed.
 - [ ] Merge `agentic-stylist` into `main`, with real AI switched on in production and both keys set.
 - [ ] On production, run one real Styling for each Photo Type, and one on the Demo Account. Check that:
   - the consent sheet comes back for an existing user;

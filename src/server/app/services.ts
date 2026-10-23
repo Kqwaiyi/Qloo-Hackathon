@@ -35,7 +35,7 @@ export function getServices(): Promise<Services> {
 
 async function createServices(): Promise<Services> {
   const base = await createBaseServices(workflowStylingRunner);
-  // The fake adapter unless AI_PROVIDER switches Gemini on.
+  // The fake adapter unless AI_PROVIDER switches real AI on, which refuses to start without its keys.
   const ai = aiFromEnvironment();
   const qloo = qlooClientFromEnvironment(base);
   // The fake unless PRODUCT_SEARCH switches Channel3 on, which refuses to start without its key.

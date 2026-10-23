@@ -171,7 +171,7 @@ describe("photo consent on the Demo Account", () => {
     const stored = harness.blob.objects.size;
 
     expect(needsPhotoConsent((await readSignedInUser(harness.context(judge)))!)).toBe(true);
-    for (const consent of [undefined, { storeAndProcess: true, sendToGemini: false }, { storeAndProcess: false, sendToGemini: true }]) {
+    for (const consent of [undefined, { storeAndProcess: true, sendToAiProviders: false }, { storeAndProcess: false, sendToAiProviders: true }]) {
       expect(await startConsultation(harness.context(judge), { photo: await jpeg(), photoType: "face", consent })).toEqual({
         ok: false,
         refusal: "photo-consent-needed",

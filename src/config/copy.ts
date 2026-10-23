@@ -40,12 +40,12 @@ export const COPY = {
    * and in the Privacy Policy's Photos section.
    */
   deletionPromise:
-    "Your photos and Previews are deleted immediately. Leftover records in our providers' systems are gone within a day, and Google's abuse-monitoring copy within 55 days.",
+    "Your photos and Previews are deleted immediately. Leftover records in our providers' systems are gone within a day, Anthropic's copy within 30 days (up to 2 years for anything its trust and safety team flags), and Google's abuse-monitoring copy within 55 days.",
   withdrawPhotoConsent: "Withdraw photo consent",
   deleteAccount: "Delete account",
   /** The account-deletion modal, which then asks for the password. */
   accountDeletionWarning:
-    "This deletes your account and every Consultation, with its photos and Previews, right away. Copies in our providers' systems are gone within a day, and Google's abuse-monitoring copy within 55 days. This can't be undone.",
+    "This deletes your account and every Consultation, with its photos and Previews, right away. Copies in our providers' systems are gone within a day, Anthropic's within 30 days (up to 2 years for anything its trust and safety team flags), and Google's abuse-monitoring copy within 55 days. This can't be undone.",
   /** On the landing page, once the account is deleted. */
   accountDeleted: "Your account has been deleted.",
   /** The allowance line beside every action that uses Outfits. */
