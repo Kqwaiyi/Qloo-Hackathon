@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
 import { type BrandCategory, type BudgetTier, CATEGORY_LABELS, type ProductCategory } from "@/config/consultations";
 import { PRODUCT_SEARCH_MARKET_CURRENCIES } from "@/config/product-search";
@@ -49,6 +49,7 @@ import {
   type StylistStepResult,
   type StylistSteps,
 } from "./stylist";
+import { addSteps, STEPS } from "./stylist-notes";
 
 // The Stylist's tools for a body photo's Outfits, which are built on Brands (ADR-0008, ADR-0010):
 // fetching a Style Icon's Brands, and searching for a Piece's Products. They keep the fixed
@@ -106,10 +107,12 @@ export function brandSteps(
         }
         const brands = fullestPool(tried, icon.line, budgetTier);
         await whileRunning(ctx.db, stylingId, async (tx) => {
-          await tx
+          const [saved] = await tx
             .update(styleIconBrands)
             .set({ brands })
-            .where(and(eq(styleIconBrands.stylingId, stylingId), eq(styleIconBrands.styleIconId, icon.id)));
+            .where(and(eq(styleIconBrands.stylingId, stylingId), eq(styleIconBrands.styleIconId, icon.id), isNull(styleIconBrands.brands)))
+            .returning({ styleIconId: styleIconBrands.styleIconId });
+          if (saved) await addSteps(tx, stylingId, STEPS.brandsFetched(icon.name));
         });
       }
       return { ok: true, styleIcon: icon.number };
@@ -147,7 +150,12 @@ export function brandSteps(
       }
       // Passed over, and the next Style Icon takes its place.
       await whileRunning(ctx.db, stylingId, async (tx) => {
-        await tx.update(styleIcon).set({ status: "skipped" }).where(and(eq(styleIcon.id, icon.id), eq(styleIcon.status, "unused")));
+        const [skipped] = await tx
+          .update(styleIcon)
+          .set({ status: "skipped" })
+          .where(and(eq(styleIcon.id, icon.id), eq(styleIcon.status, "unused")))
+          .returning({ id: styleIcon.id });
+        if (skipped) await addSteps(tx, stylingId, STEPS.passedOver(icon.name));
       });
       return {
         styleIcon: icon.number,
@@ -240,7 +248,7 @@ export function brandSteps(
         candidates = null;
       }
       const searched = await whileRunning(ctx.db, stylingId, async (tx) => {
-        await tx
+        const [answered] = await tx
           .update(pieceCandidates)
           .set({ state: candidates ? "answered" : "unanswered", candidates, searchedAt: ctx.clock.now() })
           .where(
@@ -251,7 +259,9 @@ export function brandSteps(
               eq(pieceCandidates.brandEntityId, brand.entityId),
               eq(pieceCandidates.state, "searching"),
             ),
-          );
+          )
+          .returning({ state: pieceCandidates.state });
+        if (answered) await addSteps(tx, stylingId, STEPS.searched(brand.name, category, candidates?.length ?? null));
         return readBrandState(tx, ctx.clock, { stylingId, ...(await readBuilding(tx, stylingId)) });
       });
       // Brands are never put out of play for a product search that's down, every search the

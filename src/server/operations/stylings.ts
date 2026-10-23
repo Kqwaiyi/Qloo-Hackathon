@@ -2,7 +2,7 @@ import { and, eq, ne, sql } from "drizzle-orm";
 import * as z from "zod";
 
 import { type BudgetTier, type ConsultationState, isSamePhotoStyle, PHOTO_STYLES, type PhotoStyleWords } from "@/config/consultations";
-import { SLOW_STEP_MS, type StylingKind, type StylingStage } from "@/config/stylings";
+import { BUILDING_OUTFITS_STAGES, SLOW_BUILDING_OUTFITS_MS, SLOW_STEP_MS, type StylingKind, type StylingStage } from "@/config/stylings";
 import type { Transaction } from "@/server/db/database";
 import { consultation, outfit, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
@@ -21,6 +21,7 @@ import {
 } from "@/server/stylings/start";
 import { outfitsStage } from "@/server/stylings/steps";
 import { finishStuckStylings } from "@/server/stylings/stop";
+import { readStylistNotes, type StylistNoteEntry } from "@/server/stylings/stylist-notes";
 
 /**
  * Why a Styling on a Consultation didn't start, whatever its kind. A Consultation that isn't the
@@ -200,15 +201,23 @@ export interface StylingStatusView {
   progress: StylingProgressView | null;
 }
 
-/** What the Styling checklist shows. */
+/** What the Styling checklist shows, and the Stylist's Notes beneath it. */
 export interface StylingProgressView {
   /** "Show 2 more Outfits" keeps the current Outfits in view, with a compact checklist in its place. */
   kind: StylingKind;
   stage: StylingStage;
   previews: PreviewsProgress;
-  /** The stage has run longer than SLOW_STEP_MS: "This is taking longer than usual." */
+  /**
+   * The stage has run longer than usual, "This is taking longer than usual.": SLOW_STEP_MS, or for
+   * Building Outfits, the Stylist's longest, SLOW_BUILDING_OUTFITS_MS.
+   */
   slow: boolean;
+  /** The Stylist's Notes after those the page has, in order. */
+  notes: StylistNoteView[];
 }
+
+/** One entry of the Stylist's Notes: a note the Stylist wrote to the user, or a step our code wrote for one of its tool calls. */
+export type StylistNoteView = StylistNoteEntry;
 
 /** "Generating Previews (n of N)": the Previews done so far, of the Outfits the Styling will make. */
 export interface PreviewsProgress {
@@ -216,10 +225,15 @@ export interface PreviewsProgress {
   of: number;
 }
 
-/** The Styling status of one of the signed-in user's own Consultations, or null for anyone else's. */
+/**
+ * The Styling status of one of the signed-in user's own Consultations, or null for anyone else's.
+ * A page that has the running Styling's first `notesAfter` notes is given only those after them;
+ * one that says anything but a whole number of them is given them all.
+ */
 export async function readStylingStatus(
   ctx: Pick<OperationContext, "auth" | "db" | "clock" | "stylings" | "requestHeaders">,
   consultationId: string,
+  { notesAfter = 0 }: { notesAfter?: number } = {},
 ): Promise<StylingStatusView | null> {
   const user = await readSignedInUser(ctx);
   if (!user) return null;
@@ -229,6 +243,7 @@ export async function readStylingStatus(
   const [row] = await ctx.db
     .select({
       state: consultation.state,
+      stylingId: styling.id,
       kind: styling.kind,
       stage: styling.stage,
       stageMovedAt: styling.stageMovedAt,
@@ -243,12 +258,14 @@ export async function readStylingStatus(
     .leftJoin(styling, and(eq(styling.consultationId, consultation.id), eq(styling.status, "running")))
     .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)));
   if (!row) return null;
-  const { state, kind, stage, stageMovedAt, outfitsWanted, outfitsMade, previewsDone } = row;
-  if (kind === null || stage === null || stageMovedAt === null || outfitsWanted === null || outfitsMade === null) {
+  const { state, stylingId, kind, stage, stageMovedAt, outfitsWanted, outfitsMade, previewsDone } = row;
+  if (stylingId === null || kind === null || stage === null || stageMovedAt === null || outfitsWanted === null || outfitsMade === null) {
     return { state, progress: null };
   }
   // Every Outfit is built before the Previews start, so from then on it's the Outfits made.
   const outfitCount = stage === "previews" ? outfitsMade : outfitsWanted;
-  const slow = ctx.clock.now().getTime() - stageMovedAt.getTime() > SLOW_STEP_MS;
-  return { state, progress: { kind, stage, previews: { done: previewsDone, of: outfitCount }, slow } };
+  const slowAfter = BUILDING_OUTFITS_STAGES.includes(stage) ? SLOW_BUILDING_OUTFITS_MS : SLOW_STEP_MS;
+  const slow = ctx.clock.now().getTime() - stageMovedAt.getTime() > slowAfter;
+  const notes = await readStylistNotes(ctx.db, stylingId, Number.isSafeInteger(notesAfter) ? Math.max(notesAfter, 0) : 0);
+  return { state, progress: { kind, stage, previews: { done: previewsDone, of: outfitCount }, slow, notes } };
 }

@@ -47,6 +47,7 @@ export async function stylingWorkflow(stylingId: string): Promise<void> {
       openPreview,
       renderPreview,
       finish,
+      saveNotes,
     },
     workflowStylistModel(),
   );
@@ -165,4 +166,11 @@ async function finish(stylingId: string, outcome: StylingOutcome): Promise<void>
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
   return runWorkflowStep((steps) => steps.finish(stylingId, outcome));
+}
+
+/** Saves a turn's notes to our database, so the Stylist's Notes never wait on the run's data. */
+async function saveNotes(stylingId: string, turn: number, texts: string[]): Promise<void> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.saveNotes(stylingId, turn, texts));
 }

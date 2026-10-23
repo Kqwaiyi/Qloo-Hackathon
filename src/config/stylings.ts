@@ -83,6 +83,22 @@ export const STYLING_STATUS_POLL_INTERVAL_MS = 1000;
 /** A step of the Styling checklist that has run longer than this says it's taking longer than usual. */
 export const SLOW_STEP_MS = 60_000;
 
+/** The stages the checklist shows as Building Outfits: fetching Brands is part of building the Outfits. */
+export const BUILDING_OUTFITS_STAGES: readonly StylingStage[] = ["brands", "building_outfits"];
+
+/** Building Outfits is the Stylist's longest step, so it says it's taking longer than usual only after this long. */
+export const SLOW_BUILDING_OUTFITS_MS = 3 * 60_000;
+
+/**
+ * What an entry of the Stylist's Notes is: a note the Stylist wrote to the user, or a step our code
+ * wrote for one of its tool calls and what came of it.
+ */
+export const STYLIST_NOTE_KINDS = ["note", "step"] as const;
+export type StylistNoteKind = (typeof STYLIST_NOTE_KINDS)[number];
+
+/** A note the Stylist writes longer than this many characters is dropped, as one that's empty or states a price is. */
+export const STYLIST_NOTE_MAX_LENGTH = 300;
+
 /**
  * A running Styling whose stage hasn't moved for this long is stuck: whatever next reads its status
  * finishes it, so it can't hold the Styling locks for good.

@@ -7,7 +7,7 @@ import type {
 } from "@ai-sdk/provider";
 import { createHash } from "node:crypto";
 
-import { BRAND_CATEGORIES, type BrandCategory, CATEGORY_LABELS, type PhotoStyleWords, type ProductCategory } from "@/config/consultations";
+import { BRAND_CATEGORIES, type BrandCategory, CATEGORY_LABELS, inASentence, type PhotoStyleWords, photoStyleText, type ProductCategory } from "@/config/consultations";
 import { MAX_BRAND_FETCHES_PER_STYLING, MAX_PRODUCT_SEARCHES_PER_STYLING, PRODUCT_CALLS_AT_ONCE, QLOO_CALLS_AT_ONCE } from "@/config/stylings";
 import { type BrandLists, firstBrandsInPlay } from "@/server/outfit-assembly/brands";
 import type {
@@ -18,6 +18,7 @@ import type {
   SavedOutfit,
   SaveOutfitInput,
   SearchCategory,
+  SearchProductsInput,
 } from "@/server/stylings/stylist";
 import { readStylistBrief, type StylistBrief, type StylistStyleIcon } from "@/server/stylings/stylist-brief";
 
@@ -62,8 +63,11 @@ export interface FakeStylistCall {
   input: unknown;
 }
 
-/** What the fake does with a turn: call some tools, at once, write text and stop, or refuse the turn, as Claude can. */
-export type FakeStylistTurn = { calls: FakeStylistCall[] } | { text: string } | { refused: true };
+/**
+ * What the fake does with a turn: call some tools, at once, after writing any text, its notes to the
+ * user; write text and stop; or refuse the turn, as Claude can.
+ */
+export type FakeStylistTurn = { calls: FakeStylistCall[]; text?: string } | { text: string } | { refused: true };
 
 /** How the fake plays the Stylist for one Style Icon's Outfit: making the fixed pipeline's choices, or one of its scenarios. */
 export type FakeStylistScenario = "pass" | "one-piece" | "unknown-cut" | "tailoring-fails";
@@ -104,21 +108,72 @@ export function fakeStylistModel(play: (request: FakeStylistRequest) => Promise<
  *   doesn't name the Style Icon.
  * - `tailoring-fails`: every Outfit it saves breaks a rule, a different one each turn, so it keeps
  *   saving until the turn cap.
+ *
+ * Each turn, before its tool calls, it writes a note to the user on what they're for, one line for
+ * each kind of tool it calls (`fakeNotes`).
  */
 export function fakeStylistTurn(request: FakeStylistRequest, scenarioFor: (styleIconName: string) => FakeStylistScenario): FakeStylistTurn {
-  if (request.tools.includes("findStyleIcons") && succeeded(request, "findStyleIcons").length === 0) return { calls: [{ tool: "findStyleIcons", input: {} }] };
+  const calls = fakeStylistCalls(request, scenarioFor);
+  return { calls, text: fakeNotes(request, calls) };
+}
+
+function fakeStylistCalls(request: FakeStylistRequest, scenarioFor: (styleIconName: string) => FakeStylistScenario): FakeStylistCall[] {
+  if (request.tools.includes("findStyleIcons") && succeeded(request, "findStyleIcons").length === 0) return [{ tool: "findStyleIcons", input: {} }];
   const saved = succeeded(request, "saveOutfit");
   if (succeeded(request, "startPreviews").length === 0) {
-    const found = succeeded(request, "findStyleIcons").at(-1)?.output as FoundStyleIcons | undefined;
-    const styleIcons = found?.styleIcons ?? request.brief?.styleIcons ?? [];
+    const styleIcons = styleIconsOf(request);
     const building = request.tools.includes("fetchBrands") ? bodyPhotoCalls(request, styleIcons, scenarioFor) : hairstyleSaves(request, styleIcons, scenarioFor);
-    if (building.length > 0) return { calls: building };
-    return { calls: [{ tool: saved.length > 0 ? "startPreviews" : "finish", input: {} }] };
+    if (building.length > 0) return building;
+    return [{ tool: saved.length > 0 ? "startPreviews" : "finish", input: {} }];
   }
   const drawn = new Set(succeeded(request, "renderPreview").map((result) => (result.input as RenderPreviewInput).outfit));
   const toDraw = saved.map((result) => (result.output as SavedOutfit).outfit).filter((outfit) => !drawn.has(outfit));
-  if (toDraw.length > 0) return { calls: toDraw.map((outfit) => ({ tool: "renderPreview", input: { outfit } })) };
-  return { calls: [{ tool: "finish", input: {} }] };
+  if (toDraw.length > 0) return toDraw.map((outfit) => ({ tool: "renderPreview", input: { outfit } }));
+  return [{ tool: "finish", input: {} }];
+}
+
+/** The Style Icons the Stylist builds from: those it found, or its brief's. */
+function styleIconsOf(request: FakeStylistRequest): readonly StylistStyleIcon[] {
+  const found = succeeded(request, "findStyleIcons").at(-1)?.output as FoundStyleIcons | undefined;
+  return found?.styleIcons ?? request.brief?.styleIcons ?? [];
+}
+
+/** The fake's notes to the user for a turn of these calls: a line on each kind of tool it calls, in the order it first calls them. */
+function fakeNotes(request: FakeStylistRequest, calls: readonly FakeStylistCall[]): string {
+  const style = photoStyleText(request.brief?.photoStyle ?? ["casual"]);
+  const nameOf = new Map(styleIconsOf(request).map((icon) => [icon.number, icon.name]));
+  // Only the fake's own calls: a broken save may leave out its Style Icon.
+  const inputsOf = <T>(tool: string) => calls.flatMap((call) => (call.tool === tool ? [call.input as Partial<T>] : []));
+  const styleIconNames = (tool: "fetchBrands" | "saveOutfit") =>
+    inputsOf<{ styleIcon: number }>(tool).flatMap(({ styleIcon }) => (styleIcon === undefined ? [] : (nameOf.get(styleIcon) ?? [])));
+  const note = (tool: string): string | null => {
+    switch (tool) {
+      case "findStyleIcons":
+        return `I'll ask Qloo for Style Icons in tune with your ${style} Photo Style.`;
+      case "fetchBrands":
+        return `I'll look at the Brands that fans of ${inASentence(styleIconNames(tool))} favour.`;
+      case "searchProducts":
+        return `I'll look for Products from ${inASentence([...new Set(inputsOf<SearchProductsInput>(tool).flatMap(({ brand }) => brand ?? []))])} that go together.`;
+      case "saveOutfit": {
+        const names = styleIconNames(tool);
+        if (names.length === 0) return "I'm saving your next Outfit.";
+        return names.length === 1
+          ? `I'm saving an Outfit inspired by ${names[0]}, whose style suits your ${style} Photo Style.`
+          : `I'm saving Outfits inspired by ${inASentence(names)}, whose styles suit your ${style} Photo Style.`;
+      }
+      case "startPreviews":
+        return "That's every Outfit for this Styling, so next come the Previews.";
+      case "renderPreview": {
+        const outfits = inputsOf<RenderPreviewInput>(tool).flatMap(({ outfit }) => (outfit === undefined ? [] : [String(outfit)]));
+        return outfits.length === 1 ? `I'm drawing the Preview of Outfit ${outfits[0]}.` : `I'm drawing the Previews of Outfits ${inASentence(outfits)}.`;
+      }
+      case "finish":
+        return succeeded(request, "saveOutfit").length > 0 ? "Your Outfits are ready." : "I couldn't make an Outfit for you this time.";
+      default:
+        return null;
+    }
+  };
+  return [...new Set(calls.map((call) => call.tool))].flatMap((tool) => note(tool) ?? []).join("\n");
 }
 
 /** The tool calls of this name that came back with an output, in order. */
@@ -370,9 +425,18 @@ function outputOf(output: LanguageModelV4ToolResultOutput): { output: unknown; e
 function resultOf(turn: number, played: FakeStylistTurn): LanguageModelV4GenerateResult {
   const usage = { inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 0, text: 0, reasoning: 0 } };
   if ("refused" in played) return { content: [], finishReason: { unified: "content-filter", raw: "refusal" }, usage, warnings: [] };
-  if ("text" in played) return { content: [{ type: "text", text: played.text }], finishReason: { unified: "stop", raw: "end_turn" }, usage, warnings: [] };
+  if (!("calls" in played)) return { content: [{ type: "text", text: played.text }], finishReason: { unified: "stop", raw: "end_turn" }, usage, warnings: [] };
   return {
-    content: played.calls.map(({ tool, input }, index) => ({ type: "tool-call", toolCallId: `turn-${turn}-call-${index + 1}`, toolName: tool, input: JSON.stringify(input) })),
+    content: [
+      // Its notes come first, as Claude writes them before its tool calls.
+      ...(played.text ? [{ type: "text" as const, text: played.text }] : []),
+      ...played.calls.map(({ tool, input }, index) => ({
+        type: "tool-call" as const,
+        toolCallId: `turn-${turn}-call-${index + 1}`,
+        toolName: tool,
+        input: JSON.stringify(input),
+      })),
+    ],
     finishReason: { unified: "tool-calls", raw: "tool_use" },
     usage,
     warnings: [],

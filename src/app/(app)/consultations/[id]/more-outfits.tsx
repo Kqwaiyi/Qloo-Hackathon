@@ -5,10 +5,11 @@ import { useRef } from "react";
 import { secondaryButton } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import type { StylingStage } from "@/config/stylings";
-import type { PreviewsProgress, StylingProgressView } from "@/server/operations/stylings";
+import type { PreviewsProgress, StylingProgressView, StylistNoteView } from "@/server/operations/stylings";
 import type { UsageSummary } from "@/server/operations/usage";
 
 import { StylingChecklist } from "../styling-step";
+import { StylistNotes } from "../stylist-notes";
 import { showMoreOutfitsAction } from "./actions";
 import { AllowanceLine } from "./allowance-line";
 import { useStylingRequest } from "./use-styling-request";
@@ -82,18 +83,32 @@ export function MoreOutfits({
   );
 }
 
-/** The running "Show 2 more Outfits" Styling's checklist, polled until it finishes. */
+/** The running "Show 2 more Outfits" Styling's checklist, with the Stylist's Notes under it, polled until it finishes. */
 function MoreOutfitsProgress({ consultationId, initial }: { consultationId: string; initial: StylingProgressView }) {
   const progress = useStylingProgress(consultationId, initial);
-  return <CompactChecklist stage={progress.stage} previews={progress.previews} slow={progress.slow} />;
+  return <CompactChecklist stage={progress.stage} previews={progress.previews} slow={progress.slow} notes={progress.notes} />;
 }
 
-/** Only the items "Show 2 more Outfits" goes through: it carries on from Brands, past the photo check and the Style Icons. */
-function CompactChecklist({ stage, previews, slow }: { stage: StylingStage; previews?: PreviewsProgress; slow: boolean }) {
+/**
+ * Only the items "Show 2 more Outfits" goes through: it carries on from Brands, past the photo check
+ * and the Style Icons. Once the Styling runs, the Stylist's Notes so far sit under them.
+ */
+function CompactChecklist({
+  stage,
+  previews,
+  slow,
+  notes,
+}: {
+  stage: StylingStage;
+  previews?: PreviewsProgress;
+  slow: boolean;
+  notes?: readonly StylistNoteView[];
+}) {
   return (
     <div className="mx-auto max-w-xs rounded-xl border border-stone-200 bg-white p-5">
       <h2 className="mb-4 text-center font-semibold">Styling more Outfits</h2>
       <StylingChecklist from="brands" stage={stage} previews={previews} slow={slow} />
+      {notes && <StylistNotes notes={notes} className="mt-5 border-t border-stone-200 pt-4" />}
     </div>
   );
 }

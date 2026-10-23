@@ -121,7 +121,7 @@ describe("a new Consultation's first Styling", () => {
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "styling", outfits: [] });
     expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({
       state: "styling",
-      progress: { kind: "first", stage: "style_icons", previews: { done: 0, of: 2 }, slow: false },
+      progress: { kind: "first", stage: "style_icons", previews: { done: 0, of: 2 }, slow: false, notes: [] },
     });
     expect(await stylingsOf(consultationId)).toEqual([
       {
@@ -2247,7 +2247,7 @@ describe("the Styling status", () => {
     ]);
   });
 
-  it("says a stage is taking longer than usual once it has run for over 60 s", async () => {
+  it("says Finding Style Icons is taking longer than usual once it has run for over 60 s", async () => {
     const browser = await signedInUser();
     harness.clock.set("2026-10-16T12:30:00Z");
     const consultationId = await start(browser, "face");
@@ -2259,10 +2259,14 @@ describe("the Styling status", () => {
     expect(await slow()).toBe(true);
   });
 
-  it("times each stage from when the Styling reached it", async () => {
-    const browser = await signedInUser();
+  it.each([
+    ["a Face Photo", "face"],
+    ["a body photo, from its Brands", "body_only"],
+  ] as const)("says Building Outfits is taking longer than usual only once it has run for over 3 minutes, timed from when the Styling reached it, for %s", async (_name, photoType) => {
+    harness.qloo.respond = qlooAnswering({ female: WOMEN });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
     harness.clock.set("2026-10-16T12:30:00Z");
-    const consultationId = await start(browser, "face");
+    const consultationId = await start(browser, photoType);
     const slow = async () => (await readStylingStatus(harness.context(browser), consultationId))?.progress?.slow;
     // Finding Style Icons takes 2 minutes.
     harness.clock.set("2026-10-16T12:32:00Z");
@@ -2274,6 +2278,31 @@ describe("the Styling status", () => {
       looked = true;
       seen.push(await slow());
       harness.clock.set("2026-10-16T12:33:01Z");
+      seen.push(await slow());
+      harness.clock.set("2026-10-16T12:35:00Z");
+      seen.push(await slow());
+      harness.clock.set("2026-10-16T12:35:01Z");
+      seen.push(await slow());
+    };
+
+    await harness.stylings.runPending();
+
+    expect(seen).toEqual([false, false, false, true]);
+  });
+
+  it("says Generating Previews is taking longer than usual once it has run for over 60 s", async () => {
+    const browser = await signedInUser();
+    harness.clock.set("2026-10-16T12:30:00Z");
+    const consultationId = await start(browser, "face");
+    const slow = async () => (await readStylingStatus(harness.context(browser), consultationId))?.progress?.slow;
+    const seen: (boolean | undefined)[] = [];
+    let looked = false;
+    harness.ai.duringCall = async (call) => {
+      if (call !== "renderPreview" || looked) return;
+      looked = true;
+      harness.clock.set("2026-10-16T12:31:00Z");
+      seen.push(await slow());
+      harness.clock.set("2026-10-16T12:31:01Z");
       seen.push(await slow());
     };
 
@@ -2347,11 +2376,11 @@ describe('"Show 2 more Outfits"', () => {
 
     expect(await readStylingStatus(harness.context(bodyOnlyUser), bodyOnly)).toEqual({
       state: "styling",
-      progress: { kind: "more", stage: "brands", previews: { done: 0, of: 2 }, slow: false },
+      progress: { kind: "more", stage: "brands", previews: { done: 0, of: 2 }, slow: false, notes: [] },
     });
     expect(await readStylingStatus(harness.context(faceUser), face)).toEqual({
       state: "styling",
-      progress: { kind: "more", stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
+      progress: { kind: "more", stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false, notes: [] },
     });
     expect(await stylingsOfKind(face, "more")).toEqual([expect.objectContaining({ stageMovedAt: new Date("2026-10-16T12:10:00Z") })]);
   });
@@ -2477,7 +2506,7 @@ describe("a Photo Style change", () => {
     // The Styling step's checklist starts with the photo check ticked.
     expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({
       state: "styling",
-      progress: { kind: "photo_style_change", stage: "style_icons", previews: { done: 0, of: 2 }, slow: false },
+      progress: { kind: "photo_style_change", stage: "style_icons", previews: { done: 0, of: 2 }, slow: false, notes: [] },
     });
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       photoStyle: ["casual"],
@@ -2784,7 +2813,7 @@ describe("a Budget Tier change", () => {
     // The Styling step's checklist starts with the photo check and the Style Icons ticked.
     expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({
       state: "styling",
-      progress: { kind: "budget_tier_change", stage: "brands", previews: { done: 0, of: 2 }, slow: false },
+      progress: { kind: "budget_tier_change", stage: "brands", previews: { done: 0, of: 2 }, slow: false, notes: [] },
     });
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       budgetTier: "no_budget",
@@ -3047,7 +3076,7 @@ describe("Try again", () => {
     // The Styling step's checklist starts with the photo check ticked.
     expect(await readStylingStatus(harness.context(browser), consultationId)).toEqual({
       state: "styling",
-      progress: { kind: "try_again", stage: "style_icons", previews: { done: 0, of: 2 }, slow: false },
+      progress: { kind: "try_again", stage: "style_icons", previews: { done: 0, of: 2 }, slow: false, notes: [] },
     });
     expect(await stylingsOfKind(consultationId, "try_again")).toEqual([
       expect.objectContaining({ budgetTier: "medium", photoStyle: ["casual"], status: "running", startedAt: new Date("2026-10-16T12:10:00Z") }),
@@ -3596,15 +3625,18 @@ function brandLookups(): string[] {
   return harness.channel3.requests.filter(({ url }) => url.pathname === "/v1/brands/search").map(({ url }) => url.searchParams.get("query") ?? "");
 }
 
-/** What a page polling the Styling status would show: `seen` holds each change, in order, as `look()` finds it. */
+/** What a page polling the Styling status would show in its checklist: `seen` holds each change, in order, as `look()` finds it. */
 function watchChecklist(browser: TestBrowser, consultationId: string) {
-  const seen: (StylingProgressView | null)[] = [];
+  type Checklist = Omit<StylingProgressView, "notes">;
+  const seen: (Checklist | null)[] = [];
   return {
     seen,
-    async look(): Promise<StylingProgressView | null> {
-      const progress = (await readStylingStatus(harness.context(browser), consultationId))?.progress ?? null;
-      if (!isDeepStrictEqual(seen.at(-1), progress)) seen.push(progress);
-      return progress;
+    async look(): Promise<Checklist | null> {
+      const progress = (await readStylingStatus(harness.context(browser), consultationId))?.progress;
+      // The Stylist's Notes sit below the checklist.
+      const checklist = progress ? (({ notes: _, ...rest }) => rest)(progress) : null;
+      if (!isDeepStrictEqual(seen.at(-1), checklist)) seen.push(checklist);
+      return checklist;
     },
   };
 }

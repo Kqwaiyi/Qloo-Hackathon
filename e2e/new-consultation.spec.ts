@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { consentSheet, plainPhoto, runDailySweep, signUpVerifiedUser } from "./support";
+import { agreeOnConsentSheet, consentSheet, plainPhoto, runDailySweep, signUpVerifiedUser } from "./support";
 
 test("a new Consultation asks for photo consent, then shows the Styling checklist, then its two Outfits together", async ({ page, request }) => {
   // Its Style Icons come from live Qloo, and in development each page compiles on its first visit.
@@ -63,4 +63,58 @@ test("a new Consultation asks for photo consent, then shows the Styling checklis
   await expect(viewAt.first()).toHaveAttribute("target", "_blank");
   await expect(viewAt.first()).toHaveAttribute("rel", "noopener noreferrer");
   await expect(firstOutfit.getByText("Product photos © their sellers")).toBeVisible();
+});
+
+test('while a Styling runs, "See what your AI Stylist is doing" opens on the Stylist\'s Notes, which fill as it works', async ({ page, request }) => {
+  // Three Stylings, their Style Icons and Brands from live Qloo.
+  test.setTimeout(240_000);
+  await runDailySweep(request);
+  await signUpVerifiedUser(page);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("tab", { name: "Upload" }).click();
+  const fileChooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: /Choose a photo/ }).click();
+  await (await fileChooser).setFiles({ name: "me.jpg", mimeType: "image/jpeg", buffer: await plainPhoto() });
+  await page.getByRole("group", { name: "Budget Tier" }).getByText("Medium", { exact: true }).click();
+  await page.getByRole("button", { name: "Get my Outfits" }).click();
+  await agreeOnConsentSheet(page);
+  await expect(page).toHaveURL(/\/consultations\/[0-9a-f-]{36}$/, { timeout: 30_000 });
+  const outfitTitles = page.getByRole("heading", { name: /^Outfit \d · Inspired by / });
+  await expect(outfitTitles).toHaveCount(2, { timeout: 90_000 });
+
+  // "Show 2 more Outfits" has the control under its in-place checklist, collapsed.
+  await page.getByRole("button", { name: "Show 2 more Outfits" }).click();
+  const moreOutfits = page.getByRole("region", { name: "More Outfits" });
+  const moreControl = moreOutfits.getByText("See what your AI Stylist is doing");
+  const moreNotes = moreOutfits.getByRole("list", { name: "Your AI Stylist's notes so far" });
+  await expect(moreControl).toBeVisible({ timeout: 15_000 });
+  await expect(moreNotes).toBeHidden();
+  await moreControl.click();
+  const first = moreNotes.getByRole("listitem").first();
+  await expect(first).toBeVisible();
+  const firstNote = await first.textContent();
+  // The fake Stylist's notes to the user, and the steps its tools wrote, arrive as it works.
+  const shown = await moreNotes.getByRole("listitem").count();
+  await expect.poll(() => moreNotes.getByRole("listitem").count(), { timeout: 15_000 }).toBeGreaterThan(shown);
+  await expect(moreNotes).toContainText(/Asked Qloo for the Brands .+'s fans favour/);
+
+  // Coming back mid-Styling shows the notes so far.
+  await page.reload();
+  await moreControl.click();
+  await expect(moreNotes.getByRole("listitem").first()).toHaveText(firstNote!);
+  await expect(moreNotes).toContainText(/Searched .+'s (tops|bottoms|shoes): (\d+|none) in stock/, { timeout: 30_000 });
+  await expect(outfitTitles).toHaveCount(4, { timeout: 90_000 });
+
+  // A Budget Tier change's Styling step has the control under its checklist, which is unchanged.
+  await page.getByLabel("Budget Tier").selectOption("Expensive");
+  await page.getByRole("button", { name: "Get new Outfits" }).click();
+  const checklist = page.getByRole("list", { name: "Styling progress" });
+  await expect(checklist.getByRole("listitem")).toHaveText([/^Checking your photo/, /^Finding Style Icons/, /^Building Outfits/, /^Generating Previews/], {
+    timeout: 15_000,
+  });
+  const notes = page.getByRole("list", { name: "Your AI Stylist's notes so far" });
+  await expect(notes).toBeHidden();
+  await page.getByText("See what your AI Stylist is doing").click();
+  await expect(notes.getByRole("listitem").first()).toBeVisible();
+  await expect(notes).toContainText(/Asked Qloo for the Brands .+'s fans favour/);
 });

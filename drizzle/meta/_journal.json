@@ -155,6 +155,13 @@
       "when": 1792790958665,
       "tag": "0021_stylist_body_photos",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792794937347,
+      "tag": "0022_stylist_notes",
+      "breakpoints": true
     }
   ]
 }

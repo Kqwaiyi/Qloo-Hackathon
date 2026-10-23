@@ -5,7 +5,7 @@ import sharp from "sharp";
 import { type BudgetTier, byCategoryOrder, CATEGORY_LABELS, type PieceCategory } from "@/config/consultations";
 import type { ProductSearchMarket } from "@/config/product-search";
 import { addsToCurrentOutfits, isStuck, type PreviewRefusalReason, type StylingStage } from "@/config/stylings";
-import { type AiProvider, isPhotoMediaType, type Photo, type PreviewPiece } from "@/server/ai/provider";
+import { type AiProvider, isPhotoMediaType, type Photo, type PreviewPiece, type PreviewResult, UnretryableAiError } from "@/server/ai/provider";
 import type { BlobStore } from "@/server/blob/store";
 import type { Clock } from "@/server/clock";
 import { previewPathnameFor } from "@/server/consultations/blob-pathnames";
@@ -22,6 +22,7 @@ import { recordUsage } from "@/server/usage/records";
 
 import { readBuildingBeside } from "./current-outfits";
 import type { StylingOutcome, StylistSteps } from "./stylist";
+import { addSteps, STEPS } from "./stylist-notes";
 
 /** What the steps run on. The Workflow gives them the app's services; tests give them fakes. */
 export interface StylingContext {
@@ -87,7 +88,7 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
 
     async saveStyleIcons(stylingId, peopleByLine) {
       const ranked = rankStyleIcons(peopleByLine);
-      const { photoType, hairCovered } = await readRunningStyling(ctx.db, stylingId);
+      const { photoType, hairCovered, countryCode, photoStyle } = await readRunningStyling(ctx.db, stylingId);
       await whileRunning(ctx.db, stylingId, async (tx, running) => {
         // A retry after the save went through has nothing left to do.
         const [saved] = await tx.select({ id: styleIcon.id }).from(styleIcon).where(eq(styleIcon.stylingId, stylingId)).limit(1);
@@ -107,6 +108,7 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
           );
         }
         await moveStage(tx, ctx.clock, stylingId, outfitsStage({ photoType, hairCovered }));
+        await addSteps(tx, stylingId, STEPS.styleIconsFound({ countryCode, photoStyle, found: ranked.length }));
       });
     },
 
@@ -138,12 +140,15 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
           return { category, title: item, photo: productPhotoUrl ? await productPhoto(category, productPhotoUrl) : null };
         }),
       );
-      // Never the Style Icon: only what the user is shown wearing.
-      const preview = await ctx.ai.renderPreview({
-        photo: await readPhoto(ctx.blob, toRender.photoPathname),
-        photoType: toRender.photoType,
-        pieces: drawn,
-      });
+      let preview: PreviewResult;
+      try {
+        // Never the Style Icon: only what the user is shown wearing.
+        preview = await ctx.ai.renderPreview({ photo: await readPhoto(ctx.blob, toRender.photoPathname), photoType: toRender.photoType, pieces: drawn });
+      } catch (error) {
+        // Still failing on the last try, or failing for good, the Outfit is left without a Preview, as the Stylist's Notes say.
+        if (lastTry || error instanceof UnretryableAiError) await savePreviewFailed(ctx.db, stylingId, outfitId).catch(() => {});
+        throw error;
+      }
       if (preview.refused) {
         await savePreview(ctx.db, stylingId, outfitId, { previewState: "refused", previewRefusalReason: preview.reason });
         return "refused";
@@ -193,7 +198,7 @@ export function stylingMarket({ market, countryCode }: { market: ProductSearchMa
   return market ?? productSearchMarket(countryCode);
 }
 
-/** Saves a pending Preview's outcome, only while its Styling runs. */
+/** Saves a pending Preview's outcome, with its step in the Stylist's Notes, only while its Styling runs. */
 async function savePreview(
   db: Database,
   stylingId: string,
@@ -201,10 +206,23 @@ async function savePreview(
   outcome: { previewState: "ready"; previewPathname: string } | { previewState: "refused"; previewRefusalReason: PreviewRefusalReason },
 ): Promise<void> {
   await whileRunning(db, stylingId, async (tx) => {
-    await tx
+    const [saved] = await tx
       .update(outfit)
       .set(outcome)
+      .where(and(eq(outfit.id, outfitId), eq(outfit.previewState, "pending")))
+      .returning({ position: outfit.position });
+    if (saved) await addSteps(tx, stylingId, STEPS.previewDrawn(saved.position, outcome.previewState === "ready"));
+  });
+}
+
+/** Adds the step saying a pending Preview couldn't be drawn, only while its Styling runs. Finishing the Styling marks it failed. */
+async function savePreviewFailed(db: Database, stylingId: string, outfitId: string): Promise<void> {
+  await whileRunning(db, stylingId, async (tx) => {
+    const [pending] = await tx
+      .select({ position: outfit.position })
+      .from(outfit)
       .where(and(eq(outfit.id, outfitId), eq(outfit.previewState, "pending")));
+    if (pending) await addSteps(tx, stylingId, STEPS.previewFailed(pending.position));
   });
 }
 

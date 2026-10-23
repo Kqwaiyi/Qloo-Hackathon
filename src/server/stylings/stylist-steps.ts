@@ -34,6 +34,7 @@ import {
 } from "./steps";
 import { type SaveOutfitInput, saveOutfitInputSchema, type StylistSteps } from "./stylist";
 import type { StylistBrief, StylistStyleIcon } from "./stylist-brief";
+import { addSteps, addStylistNotes, hasNotesFromTurn, notesIn, STEPS } from "./stylist-notes";
 
 /** Every Styling step, on `ctx`, as this try of them. */
 export function allStylingSteps(ctx: StylingContext, stepTry: StepTry = {}): StylistSteps {
@@ -49,9 +50,20 @@ const STYLING_KINDS_BRIEFED: Record<StylingKind, string> = {
   try_again: "Try again",
 };
 
-/** The Stylist's own steps for its Style Icons, its Outfits and its Previews, running on `ctx`. */
-function stylistSteps(ctx: StylingContext): Pick<StylistSteps, "readBrief" | "readPhoto" | "readStyleIcons" | "saveOutfit" | "startPreviews" | "openPreview"> {
+/** The Stylist's own steps for its Style Icons, its Outfits, its Previews and its notes, running on `ctx`. */
+function stylistSteps(
+  ctx: StylingContext,
+): Pick<StylistSteps, "readBrief" | "readPhoto" | "readStyleIcons" | "saveOutfit" | "startPreviews" | "openPreview" | "saveNotes"> {
   return {
+    async saveNotes(stylingId, turn, texts) {
+      const notes = notesIn(texts);
+      await whileRunning(ctx.db, stylingId, async (tx) => {
+        // A retry after the save went through has nothing left to do.
+        if (await hasNotesFromTurn(tx, stylingId, turn)) return;
+        await addStylistNotes(tx, stylingId, notes.map((text) => ({ kind: "note" as const, text, turn })));
+      });
+    },
+
     // A Styling that ranks its own Style Icons finds them; any other is given its list, as it
     // stands: "Show 2 more Outfits" the current one, with the current Outfits' Brands, and Try again
     // the copy of the broken one's. A Budget Tier change is told its new Budget Tier.
@@ -195,6 +207,7 @@ function stylistSteps(ctx: StylingContext): Pick<StylistSteps, "readBrief" | "re
           .where(eq(styling.id, stylingId));
         // A body photo's first Outfit moves it on from its Brands, both shown as Building Outfits.
         if (saving.stage === "brands") await moveStage(tx, ctx.clock, stylingId, "building_outfits");
+        await addSteps(tx, stylingId, ...passedOver.map(({ name }) => STEPS.passedOver(name)), STEPS.outfitSaved(position, icon.name));
         return { ok: true, outfit: position };
       });
     },

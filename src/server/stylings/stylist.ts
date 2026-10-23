@@ -1,6 +1,6 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { WorkflowAgent } from "@ai-sdk/workflow";
-import { hasToolCall, isStepCount, tool } from "ai";
+import { hasToolCall, isStepCount, type ModelMessage, tool } from "ai";
 import * as z from "zod";
 
 import type { Line } from "@/config/accounts";
@@ -216,6 +216,12 @@ export interface StylistSteps {
    * Styling if it made none.
    */
   finish(stylingId: string, outcome: StylingOutcome): Promise<void>;
+  /**
+   * Saves the text the Stylist wrote in one turn, by the turn's number, as its notes to the user,
+   * after the Styling's last entry. Each line is a note, checked like a "why" line: one that's
+   * empty, states a price or is too long is dropped silently. A turn's notes are saved once.
+   */
+  saveNotes(stylingId: string, turn: number, texts: string[]): Promise<void>;
 }
 
 /** A tool's refusal, which the Stylist reads as its result, starting "Refused:", and corrects on its next turn. */
@@ -236,7 +242,8 @@ export async function runStylist(stylingId: string, steps: StylistSteps, model: 
   let outcome: StylingOutcome = "broke";
   try {
     const [brief, photo] = await Promise.all([steps.readBrief(stylingId), steps.readPhoto(stylingId)]);
-    const run = stylistTools(stylingId, steps);
+    const notes = turnNoteSaver(stylingId, steps);
+    const run = stylistTools(stylingId, steps, notes);
     const agent = new WorkflowAgent({
       model,
       instructions: STYLIST_PROMPT,
@@ -244,6 +251,8 @@ export async function runStylist(stylingId: string, steps: StylistSteps, model: 
       tools: run.tools,
       activeTools: toolsFor(brief),
       stopWhen: [isStepCount(MAX_STYLIST_TURNS), hasToolCall("finish"), () => run.broken !== null],
+      // A turn whose tools ran has saved its notes already.
+      onStepEnd: (step) => notes.save(step.stepNumber + 1, textsOf(step.content)),
     });
     const { steps: turns } = await agent.generate({
       // The photo enters the conversation once, here: the agent sends the whole conversation each turn.
@@ -281,12 +290,68 @@ function toolsFor(brief: StylistBrief): StylistToolName[] {
   ];
 }
 
+/** Saves the notes the Stylist writes in each of its turns, once, as `turnNoteSaver` describes. */
+interface TurnNoteSaver {
+  /** Saves a turn's notes, by its number, from the text it wrote, unless they're saved already. */
+  save(turn: number, texts: string[]): Promise<void>;
+  /** Saves the notes of the turn whose own message ends the conversation a tool is handed, unless they're saved already. */
+  saveFrom(messages: readonly ModelMessage[]): Promise<void>;
+}
+
+/**
+ * Saves the notes the Stylist writes in each of its turns, once, as the first of the turn's
+ * entries: as its tools start, from the turn's own message, which the Workflow agent hands each of
+ * its tools as the last of the conversation, so they appear before the steps those tools write; or
+ * as the turn ends, for a turn whose tools never ran. The agent calls its step-end callback only
+ * once a turn's tools are done, which for Previews is a while. A note that can't be saved is lost,
+ * never the Styling.
+ */
+function turnNoteSaver(stylingId: string, steps: Pick<StylistSteps, "saveNotes">): TurnNoteSaver {
+  const saving = new Map<number, Promise<void>>();
+
+  function save(turn: number, texts: string[]): Promise<void> {
+    let saved = saving.get(turn);
+    if (!saved) {
+      saved = texts.some((text) => text.trim())
+        ? steps.saveNotes(stylingId, turn, texts).catch((error: unknown) => {
+            console.error("The Stylist's notes couldn't be saved:", error instanceof Error ? error.message : "unknown error");
+          })
+        : Promise.resolve();
+      saving.set(turn, saved);
+    }
+    return saved;
+  }
+
+  return {
+    save,
+    saveFrom(messages) {
+      const own = messages.at(-1);
+      if (own?.role !== "assistant") return Promise.resolve();
+      const turn = messages.filter((message) => message.role === "assistant").length;
+      return save(turn, typeof own.content === "string" ? [own.content] : textsOf(own.content));
+    },
+  };
+}
+
+/** The text a turn wrote, part by part: never its thinking. */
+function textsOf(content: readonly { type: string }[]): string[] {
+  return content.flatMap((part) => (part.type === "text" && "text" in part && typeof part.text === "string" ? [part.text] : []));
+}
+
 /**
  * The Stylist's tools for one Styling, and what using them has come to so far: the failure that
  * broke the Styling, if one did, and whether the Stylist said it had finished.
  */
-function stylistTools(stylingId: string, steps: StylistSteps) {
+function stylistTools(stylingId: string, steps: StylistSteps, notes: TurnNoteSaver) {
   const state = { broken: null as unknown, finished: false };
+
+  /** A tool's work, once the notes the Stylist wrote this turn are saved, so they come before the steps it writes. */
+  function afterTurnNotes<I, O>(work: (input: I) => Promise<O>) {
+    return async (input: I, { messages }: { messages: ModelMessage[] }): Promise<O> => {
+      await notes.saveFrom(messages);
+      return work(input);
+    };
+  }
   // The tools that build Outfits run one at a time, in the order the Stylist called them, so its
   // Outfits are numbered in that order and the Previews start after the saves before them.
   const inOrder = atMost(1);
@@ -338,20 +403,22 @@ function stylistTools(stylingId: string, steps: StylistSteps) {
       description:
         "Asks Qloo for this Styling's Style Icons: well-known people popular with people like the user, in their Country, in tune with the Photo Style. Gives them in Qloo's order, best first, each by its number. Call it once, before saving any Outfit.",
       inputSchema: z.object({}),
-      execute: (): Promise<FoundStyleIcons> =>
-        inOrder(() =>
-          orBreak(async () => {
-            // Found already, they're given again, with no more calls to Qloo.
-            await findStyleIcons(stylingId, steps);
-            return { styleIcons: await steps.readStyleIcons(stylingId) };
-          }),
-        ),
+      execute: afterTurnNotes(
+        (): Promise<FoundStyleIcons> =>
+          inOrder(() =>
+            orBreak(async () => {
+              // Found already, they're given again, with no more calls to Qloo.
+              await findStyleIcons(stylingId, steps);
+              return { styleIcons: await steps.readStyleIcons(stylingId) };
+            }),
+          ),
+      ),
     }),
     fetchBrands: tool({
       description:
         "Asks Qloo for the Brands one Style Icon's fans favour, and gives, for each Category, the usable Brands still in play, best first, or says the Style Icon is passed over when they can't complete an Outfit. Fetch a Style Icon's Brands before searching for its Outfit's Products. A Styling may fetch the Brands of only a few Style Icons; fetching them again is free, and gives them as they now stand.",
       inputSchema: fetchBrandsInputSchema,
-      execute: async ({ styleIcon }): Promise<BrandsFetched> => {
+      execute: afterTurnNotes(async ({ styleIcon }): Promise<BrandsFetched> => {
         let fetched = fetching.get(styleIcon);
         if (!fetched) {
           fetched = qlooCalls(async () => unlessRefused(await orBreak(() => steps.fetchBrands(stylingId, { styleIcon }))));
@@ -366,13 +433,13 @@ function stylistTools(stylingId: string, steps: StylistSteps) {
           if (!("lookUp" in inPlay)) return inPlay;
           await Promise.all(inPlay.lookUp.map(lookUp));
         }
-      },
+      }),
     }),
     searchProducts: tool({
       description:
         "Searches for one Piece's Products: one Brand's Tops, Bottoms or Shoes, or the Top Brand's One-Pieces, sold where the user lives, new, in stock and within the Brand's price range. Gives the Products that qualify, one line each by its id, title, description and colours. A Brand whose search finds none is out of that Category for the rest of this Styling. A Styling may make only so many searches; searching again is free, and gives the same Products.",
       inputSchema: searchProductsInputSchema,
-      execute: (input): Promise<ProductsSearched> => {
+      execute: afterTurnNotes((input): Promise<ProductsSearched> => {
         const key = JSON.stringify([input.styleIcon, input.category, input.brand]);
         let search = searching.get(key);
         if (!search) {
@@ -391,25 +458,27 @@ function stylistTools(stylingId: string, steps: StylistSteps) {
           );
         }
         return search;
-      },
+      }),
     }),
     saveOutfit: tool({
       description:
         "Saves one Outfit, inspired by one Style Icon, and gives its number. Use the Style Icons in their order: each Outfit's is the next one not yet used or passed over. A save that breaks a rule is refused, saying why: correct it and save again.",
       inputSchema: saveOutfitInputSchema,
-      execute: (input): Promise<SavedOutfit> => inOrder(async () => unlessRefused(await orBreak(() => steps.saveOutfit(stylingId, input)))),
+      execute: afterTurnNotes(
+        (input): Promise<SavedOutfit> => inOrder(async () => unlessRefused(await orBreak(() => steps.saveOutfit(stylingId, input)))),
+      ),
     }),
     startPreviews: tool({
       description:
         "Says you've saved every Outfit you'll make. After it no more Outfits can be saved, and their Previews can be drawn. Gives the numbers of the Outfits to draw.",
       inputSchema: z.object({}),
-      execute: (): Promise<PreviewsStarted> => inOrder(async () => unlessRefused(await orBreak(() => steps.startPreviews(stylingId)))),
+      execute: afterTurnNotes((): Promise<PreviewsStarted> => inOrder(async () => unlessRefused(await orBreak(() => steps.startPreviews(stylingId))))),
     }),
     renderPreview: tool({
       description:
         "Draws the Preview of one saved Outfit, by its number: the user's photo with the Outfit's Pieces on them. Draw each Outfit's once, after startPreviews.",
       inputSchema: renderPreviewInputSchema,
-      execute: async ({ outfit }): Promise<PreviewRendered> => {
+      execute: afterTurnNotes(async ({ outfit }): Promise<PreviewRendered> => {
         const { outfitId } = await inOrder(async () => {
           if (drawing.has(outfit)) throw new Refused(`Outfit ${outfit}'s Preview is already being drawn.`);
           const opened = unlessRefused(await orBreak(() => steps.openPreview(stylingId, outfit)));
@@ -418,15 +487,15 @@ function stylistTools(stylingId: string, steps: StylistSteps) {
         });
         const preview = await previewsAtOnce(() => renderPreviewOrPlaceholder(stylingId, outfitId, steps));
         return { outfit, preview: preview === "ready" ? "drawn" : preview === "refused" ? "declined" : "failed" };
-      },
+      }),
     }),
     finish: tool({
       description: "Ends the Styling, once every saved Outfit's Preview is drawn. The Outfits you saved are then shown to the user.",
       inputSchema: z.object({}),
-      execute: async () => {
+      execute: afterTurnNotes(async () => {
         state.finished = true;
         return { finished: true };
-      },
+      }),
     }),
   };
 

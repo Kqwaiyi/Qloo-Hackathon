@@ -58,6 +58,10 @@ export const COPY = {
   appWideCapForMonth: (date: string) => `Qurator has made all the Outfits it can for this month. Back on ${date}.`,
   faceGuide: "keep your face above this line",
   takingLonger: "This is taking longer than usual.",
+  /** The control under a running Styling's checklist that opens the Stylist's Notes. */
+  seeWhatYourStylistIsDoing: "See what your AI Stylist is doing",
+  /** In the Stylist's Notes before the Stylist has written any. */
+  stylistGettingStarted: "Your AI Stylist is getting started.",
   aiGenerated: "AI-generated",
   /** On every Outfit card with Product Pieces, whose Preview is drawn from their sellers' photos. */
   productPhotoCredit: "Product photos © their sellers",

@@ -22,9 +22,12 @@ export function consultationRoute(consultationId: string): string {
   return `${ROUTES.myConsultations}/${encodeURIComponent(consultationId)}`;
 }
 
-/** What a page waiting on a Consultation's Styling polls. */
-export function stylingStatusRoute(consultationId: string): string {
-  return `/api/consultations/${encodeURIComponent(consultationId)}/styling`;
+/** How many of the Stylist's Notes a page polling the Styling status has, so it's sent only those after them. */
+export const NOTES_AFTER_PARAM = "notesAfter";
+
+/** What a page waiting on a Consultation's Styling polls, having the first `notesAfter` of the Stylist's Notes. */
+export function stylingStatusRoute(consultationId: string, notesAfter = 0): string {
+  return `/api/consultations/${encodeURIComponent(consultationId)}/styling?${NOTES_AFTER_PARAM}=${notesAfter}`;
 }
 
 /** Where a Consultation's page asks for its Products' prices to be refreshed in the background (see PriceRefresh). */

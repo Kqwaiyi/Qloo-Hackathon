@@ -5,10 +5,18 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { PhotoType } from "@/config/consultations";
 import type { FakeStylistRequest } from "@/server/ai/fake-stylist";
-import { brandMatch, consultation, qlooCache, styleIcon, styling, usageRecord } from "@/server/db/schema";
-import { readConsultation, startConsultation } from "@/server/operations/consultations";
+import { brandMatch, consultation, qlooCache, styleIcon, styling, stylistNote, usageRecord } from "@/server/db/schema";
+import { deleteAccount } from "@/server/operations/account";
+import { deleteConsultation, readConsultation, startConsultation } from "@/server/operations/consultations";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
-import { changeBudgetTier, changePhotoStyle, showMoreOutfits, tryAgain } from "@/server/operations/stylings";
+import {
+  changeBudgetTier,
+  changePhotoStyle,
+  readStylingStatus,
+  showMoreOutfits,
+  type StylistNoteView,
+  tryAgain,
+} from "@/server/operations/stylings";
 import { channel3Product, channel3SellingEveryBrand, channel3SmallCatalogue } from "@/server/product-search/fake-channel3";
 import { qlooBrand, qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
@@ -680,6 +688,179 @@ describe("a body photo's Stylist", () => {
   });
 });
 
+describe("the Stylist's Notes", () => {
+  it("are the notes the Stylist writes each turn, each before the steps its tools then write, in order, as the status gives them while it runs", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    const notes = watchNotes(browser, consultationId);
+    harness.ai.duringCall = () => notes.poll();
+
+    await harness.stylings.runPending();
+
+    expect(notes.seen).toEqual([
+      { kind: "note", text: "I'll ask Qloo for Style Icons in tune with your casual Photo Style." },
+      { kind: "step", text: "Asked Qloo for Style Icons popular in the United States with a casual Photo Style: 1 found" },
+      { kind: "note", text: "I'm saving an Outfit inspired by Ava Stone, whose style suits your casual Photo Style." },
+      { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
+      { kind: "note", text: "That's every Outfit for this Styling, so next come the Previews." },
+      { kind: "note", text: "I'm drawing the Preview of Outfit 1." },
+      { kind: "step", text: "Drew Outfit 1's Preview" },
+    ]);
+  });
+
+  it("have a step for each search, written from the data: Qloo's names, the Brand, the Category and counts, never naming the product search", async () => {
+    harness.qloo.respond = qlooWithBrands([WOMEN[0]!]);
+    // Bolt sells no Tops, so Dune's take their place.
+    harness.channel3.respond = channel3SellingEveryBrand({
+      products: (search) => (search.brandId === "c3-bolt" && search.category === "top" ? [] : channel3SmallCatalogue(search)),
+    });
+    const browser = await signedInUser();
+    const consultationId = await start(browser, "body_only");
+    const notes = watchNotes(browser, consultationId);
+    harness.ai.duringCall = () => notes.poll();
+
+    await harness.stylings.runPending();
+
+    const steps = notes.seen.flatMap(({ kind, text }) => (kind === "step" ? [text] : []));
+    const expected = [
+      "Asked Qloo for Style Icons popular in the United States with a casual Photo Style: 1 found",
+      "Asked Qloo for the Brands Ava Stone's fans favour",
+      "Searched Bolt's tops: none in stock",
+      "Searched Jeanery's bottoms: 2 in stock",
+      "Searched Stride's shoes: 2 in stock",
+      "Searched Dune's tops: 2 in stock",
+      "Searched Dune's One-Pieces: 2 in stock",
+      "Saved Outfit 1, inspired by Ava Stone",
+      "Drew Outfit 1's Preview",
+    ];
+    // Searches made at once are written as each answers.
+    expect(steps).toEqual(expect.arrayContaining(expected));
+    expect(steps).toHaveLength(expected.length);
+    expect(steps.at(-2)).toBe("Saved Outfit 1, inspired by Ava Stone");
+    // The product search calls Bolt "Brand c3-bolt".
+    expect(JSON.stringify(notes.seen)).not.toMatch(/channel3|c3-/i);
+  });
+
+  it("have a step for a Preview the image model declined, and for one it still couldn't draw after its retries", async () => {
+    harness.qloo.respond = qlooAnswering(WOMEN.slice(0, 2));
+    harness.ai.previewScenarios = ["preview-refused", "preview-fails", "preview-fails"];
+    harness.stylings.previewRetries = 1;
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    const notes = watchNotes(browser, consultationId);
+    harness.ai.duringCall = () => notes.poll();
+
+    try {
+      await harness.stylings.runPending();
+    } finally {
+      harness.stylings.previewRetries = 0;
+    }
+
+    expect(notes.seen.slice(-3).toSorted((a, b) => a.text.localeCompare(b.text))).toEqual([
+      { kind: "step", text: "Couldn't draw Outfit 2's Preview" },
+      { kind: "note", text: "I'm drawing the Previews of Outfits 1 and 2." },
+      { kind: "step", text: "The image model declined to draw Outfit 1's Preview" },
+    ]);
+    expect(notes.seen.at(-3)).toEqual({ kind: "note", text: "I'm drawing the Previews of Outfits 1 and 2." });
+  });
+
+  it("drop, silently, a note that states a price, is empty, or runs too long, keeping the turn's others", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    const text = [
+      "Ava Stone's soft layers suit your casual Photo Style.",
+      "Yours for about $40 at most salons.",
+      "   ",
+      `This cut is ${"really ".repeat(45)}easy to keep.`,
+      "It frames your face without much upkeep.",
+    ].join("\n");
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? { ...save(hairstyleOutfit(1)), text } : undefined);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    const notes = watchNotes(browser, consultationId);
+    harness.ai.duringCall = () => notes.poll();
+
+    await harness.stylings.runPending();
+
+    expect(notes.seen.slice(2, 5)).toEqual([
+      { kind: "note", text: "Ava Stone's soft layers suit your casual Photo Style." },
+      { kind: "note", text: "It frames your face without much upkeep." },
+      { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
+    ]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toHaveLength(1);
+  });
+
+  it("come from the status only after the index the page asks for", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    const asked: Record<number, StylistNoteView[]> = {};
+    harness.ai.duringCall = async (call) => {
+      if (call !== "renderPreview") return;
+      for (const notesAfter of [0, 3, 6, 9]) {
+        asked[notesAfter] = (await readStylingStatus(harness.context(browser), consultationId, { notesAfter }))!.progress!.notes;
+      }
+    };
+
+    await harness.stylings.runPending();
+
+    expect(asked[0]).toHaveLength(6);
+    expect(asked[3]).toEqual([
+      { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
+      { kind: "note", text: "That's every Outfit for this Styling, so next come the Previews." },
+      { kind: "note", text: "I'm drawing the Preview of Outfit 1." },
+    ]);
+    expect(asked[6]).toEqual([]);
+    expect(asked[9]).toEqual([]);
+  });
+
+  it("keep what the Stylist wrote in a turn with no tool call, its last, after the steps before it", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? { text: "I couldn't find a cut that suits you, so I'll stop here." } : undefined);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    const [ran] = await stylingsOf(consultationId);
+    const stored = await harness.db
+      .select({ position: stylistNote.position, kind: stylistNote.kind, text: stylistNote.text })
+      .from(stylistNote)
+      .where(eq(stylistNote.stylingId, ran!.id));
+    expect(stored.toSorted((a, b) => a.position - b.position).map(({ kind, text }) => ({ kind, text }))).toEqual([
+      { kind: "note", text: "I'll ask Qloo for Style Icons in tune with your casual Photo Style." },
+      { kind: "step", text: "Asked Qloo for Style Icons popular in the United States with a casual Photo Style: 1 found" },
+      { kind: "note", text: "I couldn't find a cut that suits you, so I'll stop here." },
+    ]);
+  });
+
+  it("go with their Consultation, and with the account", async () => {
+    const browser = await signedInUser();
+    const deleted = await start(browser);
+    await harness.stylings.runPending();
+    const kept = await start(browser);
+    await harness.stylings.runPending();
+    const notesOf = async (consultationId: string) =>
+      (
+        await harness.db
+          .select({ position: stylistNote.position })
+          .from(stylistNote)
+          .innerJoin(styling, eq(styling.id, stylistNote.stylingId))
+          .where(eq(styling.consultationId, consultationId))
+      ).length;
+    expect(await notesOf(deleted)).toBeGreaterThan(0);
+
+    await deleteConsultation(harness.context(browser), deleted);
+
+    expect(await notesOf(deleted)).toBe(0);
+    expect(await notesOf(kept)).toBeGreaterThan(0);
+
+    await deleteAccount(harness.context(browser), { password: "a long enough password" });
+
+    expect(await notesOf(kept)).toBe(0);
+  });
+});
+
 describe("a Styling the Stylist can't carry out", () => {
   it("breaks when a turn still fails, keeping the Outfits saved before it", async () => {
     harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? save(hairstyleOutfit(1)) : undefined);
@@ -777,6 +958,26 @@ function hairstyleOutfit(styleIcon: number, hairstyle: object = {}) {
       cutKnown: true,
       why: "A soft cut that carries your casual Photo Style.",
       ...hairstyle,
+    },
+  };
+}
+
+/**
+ * The Stylist's Notes as a page waiting on the Styling sees them: each `poll()` asks the status for
+ * the notes after those it has, and adds them to `seen`. Like the page's, each poll waits for the
+ * one before it, even when two AI calls at once ask for one.
+ */
+function watchNotes(browser: TestBrowser, consultationId: string) {
+  const seen: StylistNoteView[] = [];
+  let polled = Promise.resolve();
+  return {
+    seen,
+    poll(): Promise<void> {
+      polled = polled.then(async () => {
+        const status = await readStylingStatus(harness.context(browser), consultationId, { notesAfter: seen.length });
+        seen.push(...(status?.progress?.notes ?? []));
+      });
+      return polled;
     },
   };
 }

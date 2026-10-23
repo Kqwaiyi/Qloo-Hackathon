@@ -37,6 +37,7 @@ import {
   STYLING_KINDS,
   STYLING_STAGES,
   STYLING_STATUSES,
+  STYLIST_NOTE_KINDS,
 } from "../../config/stylings";
 import type { Candidate } from "../outfit-assembly/products";
 import type { QlooBrand } from "../qloo/client";
@@ -504,6 +505,34 @@ export const styleIconBrands = pgTable(
     brands: jsonb("brands").$type<QlooBrand[]>(),
   },
   (table) => [primaryKey({ name: "style_icon_brands_pk", columns: [table.stylingId, table.styleIconId] })],
+);
+
+export const stylistNoteKindEnum = pgEnum("stylist_note_kind", STYLIST_NOTE_KINDS);
+
+/**
+ * A Styling's Stylist's Notes, in order: each a note the Stylist wrote to the user, or a step our
+ * code wrote for one of its tool calls and what came of it, from the data, so no name in a step
+ * comes from the model. Each is added after the last, while the Styling's row is held, so a page
+ * that has seen one has seen every one before it. They go with the Styling's Consultation, and
+ * with the account.
+ */
+export const stylistNote = pgTable(
+  "stylist_note",
+  {
+    stylingId: text("styling_id")
+      .notNull()
+      .references(() => styling.id, { onDelete: "cascade" }),
+    // From 1, in the order they were written.
+    position: integer("position").notNull(),
+    kind: stylistNoteKindEnum("kind").notNull(),
+    text: text("text").notNull(),
+    // A note only: the Stylist's turn it was written in, from 1, so a retried save adds it once.
+    turn: integer("turn"),
+  },
+  (table) => [
+    primaryKey({ name: "stylist_note_pk", columns: [table.stylingId, table.position] }),
+    check("stylist_note_turn_for_notes", sql`(${table.kind} = 'note') = (${table.turn} is not null)`),
+  ],
 );
 
 // The Qloo cache: every Qloo response, trimmed to the fields the app uses, for QLOO_CACHE_LIFETIME_DAYS.
