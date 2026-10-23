@@ -1,116 +1,106 @@
-# Qurator
+# Qurator: your style, curated by culture
 
-A webapp for adults: take one photo of yourself and get complete Outfits, picked with Qloo's taste data and shown on you. Built for the Qloo LLM Hackathon. The spec lives in [.scratch/outfit-recommender/spec.md](.scratch/outfit-recommender/spec.md), and the vocabulary in [GLOSSARY.md](GLOSSARY.md).
+Take one photo of yourself and get complete Outfits: a hairstyle, top, bottom and shoes, each inspired by a real Style Icon, built from real Products you can buy within your budget, and shown on you in an AI-generated Preview. Built for the Qloo Agentic Hackathon.
+
+- **Live demo:** _<demo URL>_ (the judges' Demo Account login is shared privately)
+- **License:** [MIT](LICENSE)
+
+![Qurator architecture: the Styling Agent asks Qloo for Style Icons and their fans' Brands, then Channel3 and Gemini turn them into real Products and a Preview](docs/images/architecture.webp)
+
+## The problem
+
+Have you ever wanted to change your style but had no idea where to start? There are thousands of brands, endless haircuts, a new style icon every week, and trends that disappear within a month. Finding what suits you is like looking for a needle in a haystack.
+
+Gen Z and Millennials have it hardest. Social media and hyper-fast trend cycles push them to balance their own taste against whatever the feed says is in. Most of us end up with wardrobes full of clothes we never wear and online carts we abandon because we can't decide.
+
+Most style apps answer this with a generic AI that guesses what looks good, so they give everyone the same "smart casual" advice. We wanted recommendations grounded in what real people, in your age group and your country, actually love.
+
+## What Qurator does
+
+Qurator is an AI stylist. Take one photo of yourself and it builds complete Outfits: a hairstyle, a top, a bottom and shoes. Each Outfit is inspired by a real Style Icon, made from real Products you can buy within your budget, and shown on you in an AI-generated Preview.
+
+## Why Qurator doesn't work without Qloo
+
+**Qloo decides what we recommend. The AI only makes it concrete.** Qloo has no garment or haircut entities. Fashion only exists there as brands, and style only exists as people. So we built the whole pipeline around Qloo's taste graph:
+
+1. **Choosing Style Icons.** We call Qloo's `/v2/insights` with `filter.type=urn:entity:person`.
+   - Signals: the user's age bracket, the menswear or womenswear line, their Country, and a Photo Style. The Photo Style is one or two of Qloo's own `personal_style` tags, such as _edgy_ or _classic_, which Gemini reads from the photo.
+   - Filters: occupation tags (models, singers, actors, athletes and so on), excluded tags for people who aren't famous for their look, and a high popularity floor.
+   - Qloo ranks the results by affinity, and that order decides who inspires each Outfit.
+2. **Choosing Brands.** For each Style Icon, we make a second `/v2/insights` call with `filter.type=urn:entity:brand`. The Style Icon goes in as `signal.interests.entities`, so Qloo returns the brands that icon's fans favour, for the same age, line and Country.
+   - Qloo's own tags filter the brands: `genre:brand:fashion`, `target_age_group` so brands are age-appropriate, and `key_market` for the user's Country.
+   - The Budget Tier also uses Qloo's tags: `target_income_level` plus a check on Qloo's `price_range_usd`.
+   - Qloo's `product_category` tags decide which brand supplies the Top, the Bottom and the Shoes.
+   - When too few usable brands come back, the query widens one step at a time.
+3. **Making it real.** For each Brand Qloo picked, we search for Products sold in the user's Country, within that Brand's Qloo price range. Gemini picks the Product that best suits the user and the rest of the Outfit, adapts the Style Icon's signature cut into a hairstyle the user's own hair can achieve, and draws a Preview of the user wearing the Outfit.
+
+**The AI never adds, swaps or re-ranks a Brand or Style Icon.** Two users with different ages, Countries or Photo Styles get different Style Icons and Brands. Without Qloo there's nothing to recommend.
+
+**Why `/v2/insights`:** it's the one endpoint that combines demographic, location, tag and entity signals with tag filters and affinity ranking. We use it for both questions: who you could look like, and what those people's fans wear.
+
+## How it works
+
+1. Create an account with your date of birth (adults only), your Style Preference (menswear, womenswear or no preference) and your Country, then verify your email.
+2. Agree to the photo consent notice.
+3. Upload or take a photo. A Face Photo gets hairstyles, a Full-Body Photo gets the whole Outfit, and a Body-Only Photo, without your face, gets the clothes and shoes.
+4. Pick a Budget Tier: No Budget, Low, Medium or Expensive. Face Photos skip this.
+5. Watch a live checklist while the agent picks Style Icons, finds Brands, searches Products and draws your Previews.
+6. Get your Outfits. Each one shows its Style Icon, every Piece with the reason it suits you, a price in your own currency, and a link to buy it.
+7. Want more? Press **"Show 2 more Outfits"**. You can also change your Photo Style or Budget Tier to get different Style Icons and Brands.
+
+## How we built it
+
+- **Stack:** Next.js on Vercel, with long-running Stylings as Vercel Workflows, Neon Postgres, Vercel Blob storage and Better Auth.
+- **Qloo** is called only from our server and cached for 30 days. Every call has a retry/backoff limit and a monthly backstop.
+- **Google Gemini** checks the photo, reads the Photo Style, picks Products and draws Previews. It sits behind our own interface, so the model can be swapped.
+- **Channel3** provides the product search.
+- **Testing:** an automated test suite with fake Qloo, Gemini and Channel3 clients, so no test spends real API calls.
+- **Privacy by design:** we never send Qloo anything that identifies a person. It only ever gets an age bracket, a line, a Country, style words and Qloo entity IDs. Photos are never analysed for identity, ethnicity, skin tone or body shape. Users can delete any Consultation or their whole account.
+- The whole project was built during the hackathon.
+
+## Limitations
+
+**What the results do and don't mean**
+
+- Results show **aggregate taste**: what people in your age bracket, line and Country tend to like, according to Qloo's data. They don't predict what _you_ will like.
+- A Style Icon's Brands are the brands **their fans favour** on Qloo. That doesn't mean the Style Icon wears, endorses or is linked to those brands.
+- A hairstyle is _inspired by_ the Style Icon's signature cut and adapted to your hair. It isn't a copy of their actual haircut. When Gemini doesn't know the cut, the Outfit says so.
+- Previews are AI images that show roughly how an Outfit could look. They aren't a fit or sizing guarantee.
+
+**Limits of Qloo's data**
+
+- Qloo has no garment or haircut data, so the specific Products come from a product search, not from Qloo.
+- Budget Tiers are based on Qloo's brand-level income tags and USD price ranges, which are only a proxy for real prices. A Low Brand can still sell an expensive item. We keep each Product within its Brand's Qloo price range to limit this.
+- Qloo's product tags are coarse. Denim is the only signal for a brand that makes bottoms.
+- The high popularity floor makes the recommendations lean towards mainstream brands and famous people. Niche and independent labels rarely appear.
+- The Photo Style comes from a fixed list of 11 Qloo style words, so subtler styles get flattened into the closest word.
+
+**Product and pricing limits**
+
+- Some Brands Qloo picks can't be found in the product search, so they're skipped. That can leave fewer Brands for some Countries.
+- Prices and stock come from sellers. Converted prices are approximate, they refresh at most once a day, and a Product can sell out.
+
+**Deliberate design choices**
+
+- We don't analyse skin tone or body shape, so there's no colour-season or body-type advice. Users get privacy and less personalisation.
+- Adults only, because of Gemini's terms. Only Countries where Gemini is available. English only.
+- Each Styling makes 2 Outfits, with a limit of 10 Outfits per user per day to control costs.
+- Servers run in Washington DC, so users in Asia will see slightly slower page loads.
 
 ## Run it locally
 
+Needs Node.js 22 or later and your own Qloo hackathon API key.
+
 ```bash
 npm install
+cp .env.example .env.local   # then set QLOO_API_URL and QLOO_API_KEY
 npm run dev
 ```
 
-Without `DATABASE_URL`, local development uses an on-disk PGlite database in `.data/pglite`, migrated on start-up. Without `BLOB_READ_WRITE_TOKEN`, photos and Previews are kept in `.data/blob`. Local development never sends real email, even with the Gmail variables set: each email is written as a JSON file to `.data/inbox`, where you can open its link, such as the verification link a new account needs before its first Consultation. The AI is a fake adapter that passes every photo after about a second and draws each Preview as your own photo with a "Fake Preview" banner, with `FAKE_AI_SCENARIO` and `FAKE_AI_DELAY_MS` to change what it does. `AI_PROVIDER=gemini` switches on real Gemini instead, with `GEMINI_API_KEY`: it costs money, so the fake stays the default everywhere. Qloo is real, through the same 30-day cache in the database, so it needs `QLOO_API_URL` and `QLOO_API_KEY`. The product search that finds each Piece's real Products is a fake that sells every Brand the same small catalogue, and serves each of its Products' photos itself, as a plain swatch of the Product's colour, so Previews fetch nothing from the web; `PRODUCT_SEARCH=channel3` switches on Channel3 instead, with `CHANNEL3_API_KEY`: its searches cost credits, so the fake stays the default everywhere but production. With Channel3, each Preview fetches its Products' photos from their sellers while it's drawn, and never keeps them. Prices are shown in the currency of the user's Country, converted with the exchange rates the daily sweep stores; until it has run once, a Styling in a market outside the US breaks rather than search beyond its Brands' price ranges, so run the sweep by hand first (see [Daily sweep](#daily-sweep)). The Bot Check on sign-up, sign-in and password reset (Cloudflare Turnstile) is off unless `TURNSTILE_SECRET_KEY` and `TURNSTILE_SITE_KEY` are set. See [.env.example](.env.example) for the environment variables.
+Out of the box, local development uses an on-disk database, a fake AI and a fake product search, so only Qloo is real. Emails are written to `.data/inbox` instead of being sent, so open the verification link from there. To use real Gemini or Channel3, see [.env.example](.env.example).
 
-Stylings run as a Vercel Workflow. In local development that is Workflow's Local World, which keeps its runs in `.workflow-data`; `npx workflow web` shows them. Each run's data, its steps' inputs and outputs, is deleted as soon as it finishes, as the Privacy Policy promises, so a finished run shows its steps and timings but not what they returned. Delete `.data` and `.workflow-data` to start over.
+Tests: `npm test`, `npm run typecheck` and `npm run test:e2e`. The team's operations guide (Demo Account, daily sweep, team scripts) is in [docs/operations.md](docs/operations.md).
 
-## Tests
+## Credits
 
-```bash
-npm test
-npm run typecheck
-npm run test:e2e
-```
-
-- `npm test` runs the server operations against a fresh in-memory PGlite per test file, with the real migrations and Better Auth running for real, the fake AI adapter with no delay, an in-memory Blob store, a fake Qloo transport, a fake Channel3 transport that knows every Brand by its own name and sells each a small catalogue, fake exchange-rate sources, and a capturing email transport. Stylings run through an inline runner: the Workflow's own steps, in its order, in the test's process. It also runs the Qloo client, the Channel3 product search against a fake Channel3 transport, and the Outfit assembly rules on their own, the Gemini adapter against a fake Gemini API, and the Gmail purge's Apps Script against a fake Gmail mailbox. No test calls Qloo, Gemini, Channel3 or the exchange-rate sources.
-- `npm run check:photo-style-tags` is a live check, never run in CI: one read-only Qloo call confirming that every Photo Style word is a real Qloo `personal_style` tag, since Qloo silently ignores one it doesn't know.
-- `npm run check:product-search-coverage` is a live check, never run in CI, and the go/no-go for building Pieces from real Products: it takes the Brands in the Qloo cache (or, with `--fresh`, from fresh Qloo calls), looks each up through Channel3's free Brand lookup, and reports how many Channel3 knows and whether its websites lookup broke the ties it met. Then it runs one search for each line and Category the Brands picked most often would fill, one Channel3 credit each, and reports how many of the Brands that would be picked are usable. `--max-brands` caps how many Brands it checks, and `--lookups-only` makes no search. It needs `CHANNEL3_API_KEY`.
-- `npm run test:e2e` runs the Playwright smoke tests against a dev server on port 3100 with an in-memory database. They verify each new account by the link they find in `.data/inbox`. Like local development, it uses real Qloo, so each run that starts a Consultation makes a Qloo call or two, and it runs the daily sweep first, which fetches the day's exchange rates from their live sources. Sign-up and sign-in go through Turnstile's real widget on its always-pass test keys, so the tests need internet access. Stop any other `npm run dev` in this folder first, since Next.js allows one dev server per folder. Run `npx playwright install chromium` once, or set `PLAYWRIGHT_CHANNEL=chrome` to use an installed Chrome.
-
-## Team Gmail
-
-Every email the app sends goes out over SMTP from a throwaway team Gmail account, on Vercel only. One send function enforces caps that keep the account under Gmail's daily limit: they're in [src/config/email.ts](src/config/email.ts). To set it up, or to make a new app password after the account's password changes, run:
-
-```bash
-bash scripts/setup-team-gmail.sh
-```
-
-The wizard walks through the account, 2-Step Verification and the app password, and writes `GMAIL_USER` and `GMAIL_APP_PASSWORD` to `.env.local`. Next it sends a test email to the account's `+demo` address, which the Demo Account uses, then has you add both variables to Vercel for Production. Finally it installs [scripts/gmail-purge](scripts/gmail-purge/), an Apps Script in the account that permanently deletes sent mail older than a day, every day. That covers everything in Sent, the team's own replies included.
-
-## Daily sweep
-
-Once a day at 12:00 UTC, Vercel Cron calls `/api/daily-sweep` ([vercel.json](vercel.json)), which keeps the Privacy Policy's retention promises and refreshes the exchange rates:
-
-- It deletes accounts still unverified 7 days after sign-up, on the date the verification email and banner give.
-- It emails a warning to accounts with no activity for 12 months minus 30 days: the account and its Consultations go on a date 30 days away unless the user signs in. Activity means a session created or refreshed: signing up or in, opening a verification link, or using the app, which refreshes the session at most once a day. At most 50 warnings go out a day, the longest inactive first, and the rest wait for the next day.
-- It deletes an account on the date its warning gave, 30 days after the warning actually went, unless the user has been active since.
-- It purges usage records and email-log rows older than 35 days, and Qloo cache entries older than 30 days.
-- It stores each currency's rate to the US dollar from [Frankfurter](https://frankfurter.dev), or from [fawazahmed0's currency API](https://github.com/fawazahmed0/exchange-api) when Frankfurter fails. Both are free and keyless, and are sent nothing about any user. When both fail, the day before's rates stay. Every price is converted with them as its page is shown, into the currency of the viewer's Country ([src/config/currencies.ts](src/config/currencies.ts)), and each search's price filter is its Brand's range converted into its market's currency. A market whose currency has no rate stored yet can't be searched, so after a first deploy, run the sweep once by hand before anyone outside the US styles.
-
-It never sweeps the Demo Account, and it deletes an account the same way as the user's own deletion. The emails give UTC dates, and the sweep deletes at whatever time of that UTC day it runs. Midday UTC keeps that on the date the reader sees in almost every time zone. The numbers are in [src/config](src/config/), which the Privacy Policy reads too.
-
-The route refuses any request without the `CRON_SECRET` bearer token, so the sweep doesn't run until `CRON_SECRET` is set on Vercel for Production. Vercel Cron then sends it with each call. An account the sweep can't delete or warn is logged without its address, and the run answers 500 so it shows as failed in the runtime logs. The account is still due, so the next day's sweep tries it again. A day neither rate source answered fails the run the same way. To run the sweep by hand in local development, set `CRON_SECRET` in `.env.local` and, with `npm run dev` running:
-
-```bash
-curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/daily-sweep
-```
-
-## Team scripts
-
-Two scripts handle what users ask the team for by email, and a third creates the Demo Account. Each runs the same operation the app would, against the database and Blob store the environment names: with production's `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN` set, production; without them, local development's (stop `npm run dev` first, since PGlite allows one process at a time). Each says which database it's using.
-
-```bash
-npm run team:delete-account -- someone@example.com
-npm run team:correct-birth-date -- someone@example.com 2001-04-23
-```
-
-- `team:delete-account` deletes an account for an emailed request or an under-18 report, as the user's own deletion does: every Consultation with its photo and Previews, any Styling stopped, and the user stripped from usage records and the email log.
-- `team:correct-birth-date` corrects an account's birth year and month, given the whole date of birth the user emailed. It judges that date as sign-up does, 18 to the day in every time zone, and keeps only the year and month. If the user is under 18, it deletes the account the same way instead.
-
-A Styling still running is stopped either way. From outside Vercel the script usually can't reach its Workflow run to cancel it, so it says so and carries on: the run's steps find their Styling gone and save nothing.
-
-### The Demo Account
-
-The judges share one Demo Account. Run this once, against production, after the production database exists:
-
-```bash
-GMAIL_USER=<the team Gmail address> DEMO_ACCOUNT_PASSWORD=<its password> npm run team:create-demo-account
-```
-
-It signs the account up through Better Auth as the app does, already verified, with the username `demo`, born January 2000, at `GMAIL_USER`'s `+demo` plus-address, which is how the app knows it ([src/config/accounts.ts](src/config/accounts.ts)). So `GMAIL_USER` must match production's. Type the password into the shell for that one run: never put it in `.env.local` or any other file. If the account already exists, it changes nothing.
-
-On the Demo Account, Settings shows the password, email and username, account deletion, withdrawing photo consent and "Sign out of all devices" disabled, with a lock and "Managed by the team", and the server refuses them, Better Auth's own endpoints included. Judges can still change its date of birth (18 or over), Style Preference and Country. Its password reset links go to the team's `+demo` inbox, so a reset is how the team changes the password, and `team:delete-account` still deletes it.
-
-No usage limit applies to the Demo Account: not the Outfit Allowance, the photo-check limit, the app-wide caps, the Qloo backstop or the product-search backstop. Its Outfits and photo checks write no usage record, so its Outfits don't count towards the app-wide caps, and each of its Stylings makes 2 Outfits. Its product searches still count towards the product-search backstop, as its Qloo calls count towards Qloo's. Judges can style different Consultations at the same time, though each Consultation still runs one Styling at a time. The photo check, the region gate and the 18+ rule still apply. For now, judges signing in to it, by its email or the username `demo`, skip the Bot Check, so only Better Auth's per-IP sign-in rate limit guards its password: revisit that before the app reaches anyone beyond the judges. The consent sheet comes before every Consultation on it, and each judge's agreement (the photo notice version and when) is kept on that Consultation rather than on the account. The sheet and My Consultations both say that anyone with the login can see the Consultations made there. Before submitting, the team deletes its own test Consultations from it.
-
-## Landing page samples
-
-The landing page walks visitors through three frozen Consultations, one of each Photo Type: a Full-Body Photo for the walkthrough, then a Face Photo and a Body-Only Photo. Their text ships with the page in [src/server/landing-samples.ts](src/server/landing-samples.ts), and their photo and Preview in `public/landing/samples/<Photo Type>/`, so the page never calls Qloo, the AI, the product search or the Blob store. A sample's Products keep the offers, prices and dates they were found with: the page never checks them again. Every sample person is AI-generated, which is why their images can live in the repo. Until they're captured, the samples are placeholders shown with plain figures.
-
-### Making a sample with real Products
-
-Once a sample has its photo, the team makes it again with real Products by running the real pipeline once on that photo, with live Qloo, Channel3 and Gemini and the United States as the Country. This costs money (a photo check, a tailoring and a Preview for each of its 2 Outfits, and around 8 product searches), so get the team's go-ahead first. With `QLOO_API_URL`, `QLOO_API_KEY`, `CHANNEL3_API_KEY` and `GEMINI_API_KEY` in `.env.local`, whatever `AI_PROVIDER` and `PRODUCT_SEARCH` say, run this, leaving out the Outfit number for the first:
-
-```bash
-npm run team:make-landing-sample -- <full_body | face | body_only> <Outfit number>
-```
-
-It runs on an app of its own that lives only while it runs, its database and Blob store in memory, so it reads and writes no other database and sends no email, and its Qloo calls and product searches count towards no backstop but that app's own. There it creates the Demo Account, gives it the sample's Style Preference and the United States, presses "Get my Outfits" with the photo in `public/landing/samples/<Photo Type>/` and the sample's Budget Tier, and runs that Styling to its end. Then it freezes the picked Outfit as `team:export-landing-sample` below does, replacing the sample's photo, Preview and text, and ends by naming that Outfit's Style Icon and Products, with their prices, dates and shops. The Full-Body sample's Style Preference is No preference, whose Style Icons alternate lines, womenswear first, so its menswear Outfit is usually Outfit 2. Pick one with a separate Top and Bottom, for the reason in step 2 below. A run that fails partway writes nothing, so run it again: here, unlike in the Workflow, a Qloo call or a tailoring that errors isn't tried again. Check the Preview and the diff by eye, then commit them.
-
-### Capturing a sample from a Consultation
-
-To capture a sample from a Consultation on the Demo Account, with an AI-generated photo from ticket 05:
-
-1. Sign in to the Demo Account in production and run a Consultation with the photo. Between them, the Face Photo and Body-Only Photo should cover the Style Preference the Full-Body Photo's doesn't, so change the Demo Account's Style Preference in Settings as you go.
-2. Pick the Outfit the page will show, one with a Preview that looks right, and note its number ("Outfit N"). The first is the default. For the Full-Body Photo, pick one with a separate Top and Bottom, since the walkthrough lists the Brands Qloo picked from its Pieces, and a One-Piece leaves out the Bottom Brand. Copy the Consultation's ID from the end of its page's address, `/consultations/<id>`.
-3. With production's `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN` set, as for the team scripts above, run this, leaving out the Outfit number for the first:
-
-   ```bash
-   npm run team:export-landing-sample -- <the Demo Account's email> <id> <Outfit number>
-   ```
-
-   It refuses a Consultation that isn't the named account's, so a mistyped ID can't put another user's photo on the page: name the Demo Account. It writes the photo and the picked Outfit's Preview into `public/landing/samples/<Photo Type>/`, replacing what was there, so the Demo Account can then delete the Consultation. It writes the Photo Style, the top ranked Style Icons (as many as `LANDING_STYLE_ICONS` in [src/config/landing.ts](src/config/landing.ts)), and the picked Outfit's Brands and Pieces into `src/server/landing-samples.ts`, in the place for the Photo Type. It ends by naming that Outfit's Style Icon and Pieces, so you can check it's the one you meant.
-4. Check the diff, then commit and deploy it.
-
-## Database changes
-
-Edit `src/server/db/schema.ts`, then run `npm run db:generate` to write a migration into `drizzle/`. `npm run build` applies migrations to `DATABASE_URL` before building, so each Vercel deploy migrates its own database.
+The people in the landing page's sample Consultations are AI-generated images from [Pixabay](https://pixabay.com), used under the Pixabay Content License.
