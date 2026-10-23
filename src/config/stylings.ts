@@ -42,6 +42,13 @@ export type PreviewState = (typeof PREVIEW_STATES)[number];
 export const PREVIEW_REFUSAL_REASONS = ["blocked", "image_safety", "no_image"] as const;
 export type PreviewRefusalReason = (typeof PREVIEW_REFUSAL_REASONS)[number];
 
+/**
+ * Where a Piece's search in the product search is: under way, answered (with the Products that
+ * qualified, if any), or never answered, still erroring after its retries.
+ */
+export const PIECE_SEARCH_STATES = ["searching", "answered", "unanswered"] as const;
+export type PieceSearchState = (typeof PIECE_SEARCH_STATES)[number];
+
 /** A Styling renders this many Previews at once, each its own step. */
 export const PREVIEWS_AT_ONCE = 2;
 
@@ -53,13 +60,6 @@ export const PREVIEW_STEP_MAX_RETRIES = 3;
 
 /** A Styling makes up to this many Outfits, one per top unused Style Icon. */
 export const OUTFITS_PER_STYLING = 2;
-
-/**
- * A body photo's first Styling fetches the Brands of this many Style Icons at once before its
- * first Outfits, one spare in case a Style Icon can't complete an Outfit. Later fetches, and other
- * kinds of Styling, fetch as needed.
- */
-export const BRAND_FETCHES_UP_FRONT = 3;
 
 /** A Styling fetches Brands for at most this many Style Icons, so Style Icons whose Brands don't fit can't use up Qloo's calls. */
 export const MAX_BRAND_FETCHES_PER_STYLING = 6;
@@ -96,20 +96,7 @@ export function isStuck(stageMovedAt: Date, now: Date): boolean {
 
 /**
  * The Stylist gets at most this many turns, each one call to its model, per Styling, so one
- * Styling's cost is bounded. A Styling that reaches it finishes with the Outfits it saved. For a
- * Face Photo, it takes the place of the tailoring attempts and substitutes below: a Stylist that keeps
- * getting an Outfit wrong is bounded by its turns instead.
+ * Styling's cost is bounded. A Styling that reaches it finishes with the Outfits it saved. A Stylist
+ * that keeps getting an Outfit wrong is bounded by its turns.
  */
 export const MAX_STYLIST_TURNS = 30;
-
-/**
- * A body photo's AI gets this many tries at an Outfit's Pieces: bad output is retried once, then
- * tailoring has failed.
- */
-export const TAILORING_ATTEMPTS = 2;
-
-/**
- * A body photo's Style Icon whose tailoring failed is skipped for the next unused one, at most this
- * many times per Styling, so a broken model can't burn through the Style Icons.
- */
-export const MAX_TAILORING_SUBSTITUTES = 2;

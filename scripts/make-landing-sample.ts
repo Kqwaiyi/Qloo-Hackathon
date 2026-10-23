@@ -1,4 +1,4 @@
-// A one-off team script, which costs money: runs the real pipeline once on one of the landing page's
+// A one-off team script, which costs money: runs a real Styling once on one of the landing page's
 // sample photos, with live Qloo, Channel3 and real AI and the United States as the Country, and
 // freezes what it makes (its Products with their offers, prices and dates, and its Preview) as that
 // Photo Type's sample, as `team:export-landing-sample` does. The sample keeps the Style Preference
@@ -53,7 +53,7 @@ const photoPath = shipped.images.photoPath;
 // Read before the sample's folder is replaced.
 const photo = new Blob([await readFile(publicFile(photoPath))]);
 
-console.log(`Running the pipeline on public${photoPath}, with live Qloo, Channel3, Claude and Gemini. This costs money.`);
+console.log(`Running a Styling on public${photoPath}, with live Qloo, Channel3, Claude and Gemini. This costs money.`);
 const app = await createLandingSampleApp();
 try {
   const result = await makeLandingSample(app, {
@@ -82,7 +82,7 @@ try {
 }
 
 /**
- * The app the pipeline runs on: a fresh database and Blob store in memory, the live Qloo, Channel3
+ * The app the Styling runs on: a fresh database and Blob store in memory, the live Qloo, Channel3
  * and real AI, and Stylings run in this process, their steps tried again as often as the Workflow
  * tries them. Its email goes nowhere.
  */

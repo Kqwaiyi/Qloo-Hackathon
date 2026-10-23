@@ -1,9 +1,12 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 
+import type { Line } from "@/config/accounts";
 import type { BrandCategory } from "@/config/consultations";
-import { addsToCurrentOutfits, type StylingKind } from "@/config/stylings";
+import { addsToCurrentOutfits, type StyleIconStatus, type StylingKind } from "@/config/stylings";
 import type { Database, Transaction } from "@/server/db/database";
-import { consultation, outfit, styleIcon, styling } from "@/server/db/schema";
+import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
+
+import type { BrandsByCategory } from "./stylist-brief";
 
 /**
  * What a Styling builds beside. "Show 2 more Outfits" adds to the Consultation's current Outfits:
@@ -56,6 +59,58 @@ export async function readCurrentStyleIconList(db: Database | Transaction, consu
     .orderBy(desc(styling.startedAt))
     .limit(1);
   return latest?.stylingId ?? null;
+}
+
+/** A Style Icon on a Styling's list: its ID and Qloo's, its number on the list, its name and line, and whether it was used. */
+export interface ListedStyleIcon {
+  id: string;
+  entityId: string;
+  number: number;
+  name: string;
+  line: Line;
+  status: StyleIconStatus;
+}
+
+/**
+ * A Style Icon list, by the Styling it belongs to, as a Styling builds beside it
+ * (`readBuildingBeside`): in Qloo's order, each Style Icon numbered by its place on it. None when
+ * there's no list.
+ */
+export async function readStyleIconList(db: Database | Transaction, styleIconList: string | null): Promise<ListedStyleIcon[]> {
+  if (!styleIconList) return [];
+  return db
+    .select({ id: styleIcon.id, entityId: styleIcon.qlooEntityId, number: styleIcon.position, name: styleIcon.name, line: styleIcon.line, status: styleIcon.status })
+    .from(styleIcon)
+    .where(eq(styleIcon.stylingId, styleIconList))
+    .orderBy(asc(styleIcon.position));
+}
+
+/**
+ * The Brands the Consultation's current Outfits use, by name, for each Category: each Outfit's
+ * Brand picks, a One-Piece's left-out Bottom Brand included, or for an Outfit saved before the
+ * Stylist named them, its Pieces' Brands.
+ */
+export async function readCurrentBrandNames(db: Database | Transaction, consultationId: string): Promise<BrandsByCategory> {
+  const current = await db
+    .select({ id: outfit.id, top: outfit.topBrandName, bottom: outfit.bottomBrandName, shoes: outfit.shoesBrandName })
+    .from(outfit)
+    .where(and(eq(outfit.consultationId, consultationId), eq(outfit.current, true)))
+    .orderBy(asc(outfit.position));
+  const pieces =
+    current.length === 0
+      ? []
+      : await db
+          .select({ outfitId: piece.outfitId, category: piece.category, brandName: piece.brandName })
+          .from(piece)
+          .where(inArray(piece.outfitId, current.map(({ id }) => id)));
+  const named = (category: BrandCategory) =>
+    current.flatMap((shown) => {
+      const name =
+        shown[category] ??
+        pieces.find((saved) => saved.outfitId === shown.id && (saved.category === category || (category === "top" && saved.category === "one_piece")))?.brandName;
+      return name ? [name] : [];
+    });
+  return { top: [...new Set(named("top"))], bottom: [...new Set(named("bottom"))], shoes: [...new Set(named("shoes"))] };
 }
 
 /**

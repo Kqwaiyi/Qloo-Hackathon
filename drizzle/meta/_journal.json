@@ -148,6 +148,13 @@
       "when": 1792588399301,
       "tag": "0020_product_search_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792790958665,
+      "tag": "0021_stylist_body_photos",
+      "breakpoints": true
     }
   ]
 }

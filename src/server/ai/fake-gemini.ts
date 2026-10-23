@@ -34,9 +34,11 @@ export function geminiText(text: string): Response {
   return Response.json({ candidates: [{ content: { role: "model", parts: [{ text }] }, finishReason: "STOP" }] });
 }
 
-/** Gemini's reply carrying `value` as JSON, as structured output sends it. */
-export function geminiJson(value: unknown): Response {
-  return geminiText(JSON.stringify(value));
+/** Gemini's reply carrying the image it drew. */
+export function geminiImage(image: Uint8Array): Response {
+  return Response.json({
+    candidates: [{ content: { role: "model", parts: [{ inlineData: { mimeType: "image/png", data: Buffer.from(image).toString("base64") } }] }, finishReason: "STOP" }],
+  });
 }
 
 /** One of Gemini's errors, with no wait before the AI SDK retries it. */

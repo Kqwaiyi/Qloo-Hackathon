@@ -21,8 +21,8 @@ export function aiFromEnvironment(name = process.env.AI_PROVIDER || "fake"): AiP
 
 /**
  * Real AI, two adapters together (ADR-0011): the photo check and the Stylist on Claude, with
- * ANTHROPIC_API_KEY, and tailoring and Previews on Gemini, with GEMINI_API_KEY. It refuses to start
- * without either key.
+ * ANTHROPIC_API_KEY, and Previews on Gemini, with GEMINI_API_KEY. It refuses to start without
+ * either key.
  */
 function realAiFromEnvironment(): AiProvider {
   const claude = new AnthropicAiProvider({ apiKey: realAiKey("ANTHROPIC_API_KEY") });
@@ -30,7 +30,6 @@ function realAiFromEnvironment(): AiProvider {
   return {
     checkPhoto: (input) => claude.checkPhoto(input),
     stylistModel: () => claude.stylistModel(),
-    tailorPieces: (input) => gemini.tailorPieces(input),
     renderPreview: (input) => gemini.renderPreview(input),
   };
 }

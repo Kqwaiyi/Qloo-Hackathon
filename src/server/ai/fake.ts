@@ -2,9 +2,9 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 
-import type { PhotoType, ProductCategory } from "@/config/consultations";
+import type { PhotoType } from "@/config/consultations";
 
-import { fakeHairstyle, type FakeStylistRequest, type FakeStylistScenario, fakeStylistModel, fakeStylistTurn, type FakeStylistTurn } from "./fake-stylist";
+import { type FakeStylistRequest, type FakeStylistScenario, fakeStylistModel, fakeStylistTurn, type FakeStylistTurn } from "./fake-stylist";
 import type {
   AiProvider,
   Photo,
@@ -16,9 +16,6 @@ import type {
   PreviewInput,
   PreviewPiece,
   PreviewResult,
-  TailoredPieces,
-  TailoringInput,
-  TailoringPiece,
 } from "./provider";
 
 /**
@@ -29,7 +26,7 @@ import type {
  * - `no-person`: nobody in the photo.
  * - `unclear-main-person`: two people in the photo, and no clear Main Person.
  * - `clear-main-person`: two people in the photo, one of them clearly its Main Person. It passes the
- *   photo, tailors and draws Previews as `pass` does.
+ *   photo, styles and draws Previews as `pass` does.
  * - `too-unclear`: a photo that isn't clear enough.
  * - `wrong-photo-type`: just a face and hair, whatever Photo Type was chosen, so it looks like a Face
  *   Photo to the other two, and switching to Face Photo passes it.
@@ -39,19 +36,19 @@ import type {
  * - `check-errors`: the photo check throws, as a real one does when it still errors after the AI
  *   SDK's own retries.
  *
- * A Face Photo's Stylings run on the fake's Stylist, a scripted fake model that makes the fixed
- * pipeline's choices: Qloo's order, and the Hairstyle's cut known, each `why` naming the Style Icon (see
- * `fakeStylistTurn`). A body photo's tailoring picks each Brand Piece's first candidate Product and
- * makes the Hairstyle's cut known, each `why` naming the Style Icon. Their scenarios pass every photo:
- * - `one-piece`: tailoring makes the Top and Bottom the Top Brand's first One-Piece, when it has any.
+ * Every Styling runs on the fake's Stylist, a scripted fake model that makes the fixed pipeline's
+ * choices: Qloo's order, each Category's first Brand still in play, each Piece's first candidate
+ * Product, and the Hairstyle's cut known, each `why` naming the Style Icon (see `fakeStylistTurn`).
+ * Its scenarios pass every photo:
+ * - `one-piece`: each Outfit is the Top Brand's first One-Piece in place of the Top and Bottom, when
+ *   the Top Brand has any.
  * - `unknown-cut`: the Hairstyle's cut is marked unknown, based on the Outfit and Photo Style, and
  *   its `why` doesn't name the Style Icon.
- * - `tailoring-fails`: every reply breaks a rule, as a broken model's would. Tailoring's: a price,
- *   an empty "why", a missing Category, a Category twice, an extra One-Piece, or not the schema at
- *   all, in turn. The Stylist's: every Outfit it saves breaks one, so it saves until the turn cap.
+ * - `tailoring-fails`: every Outfit the Stylist saves breaks a rule, a different one each turn, as a
+ *   broken model's would, so it saves until the turn cap.
  *
  * A Preview is the user's own photo with a "Fake Preview" banner across its foot. Its scenarios
- * pass every photo and tailor as usual:
+ * pass every photo and style as usual:
  * - `preview-refused`: the image model refuses every Preview, for image safety.
  * - `preview-fails`: every Preview throws, as a model that keeps erroring without refusing does.
  */
@@ -74,7 +71,6 @@ export const FAKE_AI_SCENARIOS = [
   "preview-fails",
 ] as const;
 export type FakeAiScenario = (typeof FAKE_AI_SCENARIOS)[number];
-export type FakeTailoringScenario = Extract<FakeAiScenario, "pass" | "one-piece" | "unknown-cut" | "tailoring-fails">;
 export type FakePreviewScenario = Extract<FakeAiScenario, "pass" | "preview-refused" | "preview-fails">;
 
 /** About as long as a real photo check, so local development feels like the real thing. */
@@ -85,9 +81,6 @@ export interface PhotoFingerprint {
   mediaType: PhotoMediaType;
   sha256: string;
 }
-
-/** A tailoring the fake was asked for, with the photo as its fingerprint. */
-export type FakeTailoringRequest = Omit<TailoringInput, "photo"> & { photo: PhotoFingerprint };
 
 /** A Piece of a Preview the fake was asked for, with any Product photo as its fingerprint. */
 export type FakePreviewPiece =
@@ -112,10 +105,8 @@ export class FakeAiProvider implements AiProvider {
   delayMs: number;
   /** How many photo checks it has been asked for. Only a count: it never keeps a photo. */
   photoCheckCount = 0;
-  /** Scenarios for tailoring particular Style Icons' Outfits, by name, in place of `scenario`. */
-  styleIconScenarios: Partial<Record<string, FakeTailoringScenario>> = {};
-  /** Every tailoring it has been asked for, oldest first. */
-  readonly tailoringRequests: FakeTailoringRequest[] = [];
+  /** Scenarios for the Stylist's Outfits of particular Style Icons, by name, in place of `scenario`. */
+  styleIconScenarios: Partial<Record<string, FakeStylistScenario>> = {};
   /** Scenarios for the next Previews, in the order they're asked for, in place of `scenario`. */
   previewScenarios: FakePreviewScenario[] = [];
   /** Every Preview it has been asked for, oldest first. */
@@ -144,19 +135,8 @@ export class FakeAiProvider implements AiProvider {
     return fakeStylistModel(async (request) => {
       this.stylistRequests.push(request);
       await this.wait("stylistModel");
-      return this.stylistTurn?.(request) ?? fakeStylistTurn(request, stylistScenario(this.scenario));
+      return this.stylistTurn?.(request) ?? fakeStylistTurn(request, (styleIconName) => this.styleIconScenarios[styleIconName] ?? stylistScenario(this.scenario));
     });
-  }
-
-  async tailorPieces(input: TailoringInput): Promise<unknown> {
-    const { photo, ...rest } = input;
-    this.tailoringRequests.push({ ...rest, photo: fingerprint(photo) });
-    await this.wait("tailorPieces");
-    const scenario = this.styleIconScenarios[input.styleIconName] ?? this.scenario;
-    const tailored = { pieces: fakePieces(input, scenario) };
-    if (scenario !== "tailoring-fails") return tailored;
-    const breakRule = BROKEN_TAILORING[(this.tailoringRequests.length - 1) % BROKEN_TAILORING.length]!;
-    return breakRule(tailored);
   }
 
   async renderPreview(input: PreviewInput): Promise<PreviewResult> {
@@ -245,52 +225,10 @@ function reportFor(scenario: Exclude<FakeAiScenario, "blocked" | "check-errors">
   }
 }
 
-/**
- * The Pieces as the fake tailors them, one per Piece asked for, or in the `one-piece` scenario, with
- * the Top Brand's first One-Piece in place of the Top and Bottom, when it has any.
- */
-function fakePieces(input: TailoringInput, scenario: FakeAiScenario): TailoredPieces["pieces"] {
-  const onePiece = scenario === "one-piece" ? input.pieces.flatMap((piece) => (piece.category === "top" ? (piece.onePieceCandidates ?? []) : []))[0] : undefined;
-  return input.pieces.flatMap((piece) => {
-    if (!onePiece || (piece.category !== "top" && piece.category !== "bottom")) return [fakePiece(piece, input, scenario !== "unknown-cut")];
-    return piece.category === "top" ? [{ category: "one_piece", productId: onePiece.id, why: fakeWhy("one_piece", input) }] : [];
-  });
-}
-
-/** A Piece as the fake tailors it: a Brand Piece's first candidate Product, or the Hairstyle's cut. */
-function fakePiece(piece: TailoringPiece, input: TailoringInput, cutKnown: boolean): TailoredPieces["pieces"][number] {
-  if (piece.category !== "hairstyle") return { category: piece.category, productId: piece.candidates[0]?.id, why: fakeWhy(piece.category, input) };
-  return { category: "hairstyle", ...fakeHairstyle(input.styleIconName, input.photoStyle, cutKnown) };
-}
-
-/** How the fake's Stylist plays a scenario: its own tailoring scenarios, and the fixed pipeline's choices for any other. */
+/** How the fake's Stylist plays a scenario: its own scenarios, and the fixed pipeline's choices for any other. */
 function stylistScenario(scenario: FakeAiScenario): FakeStylistScenario {
-  return scenario === "unknown-cut" || scenario === "tailoring-fails" ? scenario : "pass";
+  return scenario === "one-piece" || scenario === "unknown-cut" || scenario === "tailoring-fails" ? scenario : "pass";
 }
-
-/** The fake's "why" for a Product Piece, naming the Style Icon. */
-function fakeWhy(category: ProductCategory, { photoStyle, styleIconName }: TailoringInput): string {
-  return `${FAKE_WHY_OPENINGS[category]} in the spirit of ${styleIconName}, at home with your ${photoStyle.join(" and ")} Photo Style.`;
-}
-
-/** How the fake's "why" for each Product Piece begins. */
-const FAKE_WHY_OPENINGS: Record<ProductCategory, string> = {
-  top: "An easy top layer",
-  bottom: "A grounding Bottom",
-  one_piece: "A one-and-done One-Piece",
-  shoes: "Shoes that finish the Outfit",
-};
-
-/** Ways a broken model's reply breaks our rules, each made from a good reply. */
-const BROKEN_TAILORING: ((tailored: TailoredPieces) => unknown)[] = [
-  ({ pieces }) => ({ pieces: pieces.map((tailored) => ({ ...tailored, why: `${tailored.why} Yours for about $40.` })) }),
-  ({ pieces }) => ({ pieces: pieces.map((tailored) => ({ ...tailored, why: " " })) }),
-  ({ pieces }) => ({ pieces: pieces.slice(0, -1) }),
-  ({ pieces }) => ({ pieces: [...pieces, pieces[0]] }),
-  ({ pieces }) => ({ pieces: [...pieces, { ...pieces[0]!, category: "one_piece" }] }),
-  ({ pieces }) => ({ pieces: pieces.map(({ category, item }) => ({ category, item })) }),
-];
-
 
 /** The fake adapter as local development configures it: FAKE_AI_SCENARIO and FAKE_AI_DELAY_MS. */
 export function fakeAiFromEnvironment(): FakeAiProvider {

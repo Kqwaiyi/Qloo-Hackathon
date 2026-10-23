@@ -310,6 +310,8 @@ Our own interface with three operations. The domain depends only on this interfa
 - The check relies on the AI SDK's own retries. If it still errors, that's a separate "check errored" outcome that doesn't count towards the photo-check limit.
 
 **2. Tailor one Outfit's Pieces** (structured output).
+
+> **Replaced** by the [Agentic Stylist spec](../agentic-stylist/spec.md) ("The Stylist and its tools") and [ADR-0011](../../docs/adr/0011-claude-runs-every-model-but-the-image-model.md): the tailoring operation is gone. The AI Stylist, the AI SDK's Workflow agent on Claude, makes every Outfit through its tools, its "save an Outfit" tool checking every rule this section sets, and the AI interface supplies the Stylist's model in its place.
 - **In:**
   - the photo itself (never a stored text description of the person);
   - the Photo Type, the age group and the Photo Style;
@@ -521,6 +523,7 @@ A self-contained module with no framework or I/O code. It builds every Qloo quer
   - The first Styling fetches Brands for the first 3 Style Icons in parallel. Later fetches happen as needed.
   - A Styling fetches Brands for at most 6 Style Icons. Widening retries happen within one fetch.
 - **Tailoring failures:** a Style Icon whose tailoring fails after its retry is skipped, and the next Style Icon is tried. A Styling makes at most 2 such substitutes, so a broken model can't burn through the Style Icons.
+  > **Replaced** by the [Agentic Stylist spec](../agentic-stylist/spec.md) ("The loop"): there's no tailoring to fail. The AI Stylist's turn cap bounds a Stylist that keeps getting an Outfit wrong instead.
 - **Previews:** rendered 2 at a time. A refused or failed Preview leaves its Outfit with a placeholder.
 - **Finishing.** When a Styling finishes (normally, after something breaks, or as stuck):
   - The Outfits it made switch in at once. Re-stylings replace the current Outfits, the Budget Tier and the Photo Style together. "Show 2 more Outfits" adds to them.

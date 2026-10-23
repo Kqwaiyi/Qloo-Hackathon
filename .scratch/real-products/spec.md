@@ -188,6 +188,8 @@ Every Top, Bottom, Shoes and One-Piece Piece becomes a real Product the Brand se
 
 ### Tailoring contract (changes to the AI provider interface)
 
+> **Replaced** by the [Agentic Stylist spec](../agentic-stylist/spec.md) ("The Stylist and its tools") and [ADR-0011](../../docs/adr/0011-claude-runs-every-model-but-the-image-model.md): there is no tailoring call any more. The AI Stylist searches for each Piece's candidates and saves each Outfit through its tools, and the "save an Outfit" tool applies this check, plus that no Brand repeats within a Category. A bad save is refused for the Stylist to correct on its next turn, bounded by its turn cap, rather than asked again once.
+
 - The input for each Brand Piece carries its Brand (name, category tags) and its candidates (ID, title, description, colours), never their images. A One-Piece's candidates come alongside the Top's. The Hairstyle input is unchanged.
 - The reply gives each Brand Piece the chosen candidate's ID and its "why". The Hairstyle's reply is unchanged (cut, details, why, unknown-cut flag).
 - Our check: exactly one Piece per Category asked for, or one One-Piece in place of the Top and Bottom; each chosen ID is one of that Category's candidates (a One-Piece's from the One-Piece candidates); every "why" non-empty and free of prices. A bad reply is asked again once, as today.

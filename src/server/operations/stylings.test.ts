@@ -7,6 +7,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { type BudgetTier, byCategoryOrder, type PhotoType } from "@/config/consultations";
 import { PRODUCT_PHOTO_MAX_BYTES } from "@/config/product-search";
 import type { StylingKind } from "@/config/stylings";
+import type { FakeStylistToolResult } from "@/server/ai/fake-stylist";
 import type { AiProvider } from "@/server/ai/provider";
 import { brandMatch, consultation, exchangeRate, outfit, piece, pieceCandidates, qlooCache, styleIcon, styling, usageRecord, user } from "@/server/db/schema";
 import { frankfurterRates } from "@/server/exchange-rates/fake";
@@ -37,6 +38,7 @@ import {
   channel3SmallCatalogue,
 } from "@/server/product-search/fake-channel3";
 import { qlooBrand, qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
+import type { SaveOutfitInput } from "@/server/stylings/stylist";
 import { recordUsage } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
@@ -79,7 +81,6 @@ beforeEach(async () => {
   harness.blob.objects.clear();
   harness.ai.scenario = "pass";
   harness.ai.styleIconScenarios = {};
-  harness.ai.tailoringRequests.length = 0;
   harness.ai.previewRequests.length = 0;
   harness.ai.previewScenarios = [];
   harness.ai.stylistRequests.length = 0;
@@ -136,7 +137,6 @@ describe("a new Consultation's first Styling", () => {
         stageMovedAt: new Date("2026-10-16T12:30:00Z"),
         outfitsWanted: 2,
         outfitsMade: 0,
-        tailoringFailures: 0,
         productSearches: 0,
         failureReason: null,
         workflowRunId: expect.any(String),
@@ -337,14 +337,14 @@ describe("each Outfit's Pieces", () => {
 
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "no_outfits", outfits: [] });
     expect(await stylingsOf(consultationId)).toEqual([
-      expect.objectContaining({ status: "failed", failureReason: "nothing_built", outfitsMade: 0, tailoringFailures: 0 }),
+      expect.objectContaining({ status: "failed", failureReason: "nothing_built", outfitsMade: 0 }),
     ]);
     expect((await styleIconStatuses(consultationId)).map(([, status]) => status)).toEqual(["unused", "unused", "unused", "unused", "unused", "unused"]);
     expect(harness.ai.stylistRequests).toHaveLength(30);
     expect(harness.ai.previewRequests).toEqual([]);
   });
 
-  it("are tailored from the photo itself and the Outfit, with each Brand Piece's Brand and candidate Products by their words alone, the Top Brand's One-Pieces beside the Top's, never the Country or the Budget Tier", async () => {
+  it("are picked by the Stylist from the photo itself and each Brand's candidate Products by their words alone, the Top Brand's One-Pieces too, its brief never giving the Country or the Budget Tier", async () => {
     harness.qloo.respond = qlooAnswering({ male: [MEN[0]!] });
     await storeExchangeRates({ EUR: 0.89166 });
     const browser = await signedInUser({ stylePreference: "menswear", countryCode: "FR", birthDate: { day: "2", month: "2", year: "1992" } });
@@ -353,29 +353,41 @@ describe("each Outfit's Pieces", () => {
     await harness.stylings.runPending();
 
     const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+    for (const { brief, images } of harness.ai.stylistRequests) {
+      expect(brief).toEqual({ styling: "First Styling", photo: "Full-Body Photo", pieces: ["Hairstyle", "Top", "Bottom", "Shoes"], photoStyle: ["casual"], ageGroup: "30–34", outfits: 2 });
+      expect(images).toEqual([{ mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) }]);
+    }
+    // Each Category's usable Brands, best first, and the denim one a Bottom takes first.
+    expect(stylistToolResults("fetchBrands").map(({ output }) => output)).toEqual([
+      {
+        styleIcon: 1,
+        brands: {
+          shoes: ["Stride", "Sole", "Pace"],
+          top: ["Bolt", "Dune", "Jeanery", "Ember", "Hem", "Loom", "Weft"],
+          bottom: ["Bolt", "Dune", "Jeanery", "Ember", "Hem", "Loom", "Weft"],
+          denimFirst: ["Jeanery"],
+        },
+        fetchesLeft: 5,
+      },
+    ]);
     // Each candidate's ID, title, description and colours: never its photos, offers or prices.
     const candidates = (brandId: string, category: string) =>
-      [1, 2].map((n) => ({ id: `${brandId}-${category}-${n}`, title: `Product ${brandId}-${category}-${n}`, description: `About product ${brandId}-${category}-${n}.`, colours: ["#1f2a44"] }));
-    expect(harness.ai.tailoringRequests).toEqual([
-      {
-        photo: { mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) },
-        photoType: "full_body",
-        ageGroup: "30_34",
-        photoStyle: ["casual"],
-        line: "menswear",
-        styleIconName: "Dev Rowe",
-        pieces: [
-          { category: "hairstyle" },
-          {
-            category: "top",
-            brand: { name: "Bolt", categoryTags: ["apparel"] },
-            candidates: candidates("c3-bolt", "top"),
-            onePieceCandidates: candidates("c3-bolt", "one_piece"),
-          },
-          { category: "bottom", brand: { name: "Jeanery", categoryTags: ["apparel", "denim"] }, candidates: candidates("c3-jeanery", "bottom") },
-          { category: "shoes", brand: { name: "Stride", categoryTags: ["footwear"] }, candidates: candidates("c3-stride", "shoes") },
-        ],
-      },
+      [1, 2].map((n) => `id: ${brandId}-${category}-${n} | title: Product ${brandId}-${category}-${n} | description: About product ${brandId}-${category}-${n}. | colours: #1f2a44`);
+    expect(stylistToolResults("searchProducts").map(({ output }) => output)).toEqual([
+      { styleIcon: 1, category: "top", brand: "Bolt", candidates: candidates("c3-bolt", "top"), searchesLeft: expect.any(Number) },
+      { styleIcon: 1, category: "bottom", brand: "Jeanery", candidates: candidates("c3-jeanery", "bottom"), searchesLeft: expect.any(Number) },
+      { styleIcon: 1, category: "shoes", brand: "Stride", candidates: candidates("c3-stride", "shoes"), searchesLeft: expect.any(Number) },
+      { styleIcon: 1, category: "onePiece", brand: "Bolt", candidates: candidates("c3-bolt", "one_piece"), searchesLeft: 20 },
+    ]);
+    expect(JSON.stringify(harness.ai.stylistRequests)).not.toMatch(/France|EUR|\u20ac|"price/);
+    expect(savedOutfits()).toEqual([
+      expect.objectContaining({
+        styleIcon: 1,
+        brands: { top: "Bolt", bottom: "Jeanery", shoes: "Stride" },
+        top: expect.objectContaining({ product: "c3-bolt-top-1" }),
+        bottom: expect.objectContaining({ product: "c3-jeanery-bottom-1" }),
+        shoes: expect.objectContaining({ product: "c3-stride-shoes-1" }),
+      }),
     ]);
   });
 });
@@ -422,9 +434,10 @@ describe("a body photo's Outfits", () => {
       ["top", "bottom", "shoes"],
       ["top", "bottom", "shoes"],
     ]);
-    expect(harness.ai.tailoringRequests.map((request) => request.pieces.map((p) => p.category))).toEqual([
-      ["top", "bottom", "shoes"],
-      ["top", "bottom", "shoes"],
+    expect(harness.ai.stylistRequests[0]!.brief).toMatchObject({ pieces: ["Top", "Bottom", "Shoes"] });
+    expect(savedOutfits().map((saved) => Object.keys(saved).toSorted())).toEqual([
+      ["bottom", "brands", "shoes", "styleIcon", "top"],
+      ["bottom", "brands", "shoes", "styleIcon", "top"],
     ]);
     expect(harness.ai.previewRequests.map((request) => request.pieces.map((p) => p.category))).toEqual([
       ["top", "bottom", "shoes"],
@@ -469,7 +482,7 @@ describe("a body photo's Outfits", () => {
     ]);
   });
 
-  it("skip a Style Icon whose fans' Brands can't complete an Outfit, without counting it as a tailoring failure", async () => {
+  it("pass over a Style Icon whose fans' Brands can't complete an Outfit for the next", async () => {
     harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) => (styleIconId === "w-1" ? BRANDS.filter((b) => b.name !== "Stride" && b.name !== "Sole" && b.name !== "Pace") : BRANDS));
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
@@ -485,29 +498,13 @@ describe("a body photo's Outfits", () => {
       ["Bea Marsh", "used"],
       ["Cleo Hart", "used"],
     ]);
-    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 0 })]);
-    expect(harness.ai.tailoringRequests.map((request) => request.styleIconName)).not.toContain("Ava Stone");
-  });
-
-  it("give a Style Icon held back by a planned Outfit's Brands its turn once that Outfit's tailoring fails", async () => {
-    // Bea Marsh's fans favour only the Brands Ava Stone's Outfit is planned with.
-    const avasBrands = BRANDS.filter((b) => ["Stride", "Bolt", "Jeanery"].includes(b.name));
-    harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) => (styleIconId === "w-2" ? avasBrands : BRANDS));
-    harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails" };
-    const browser = await signedInUser({ stylePreference: "womenswear" });
-
-    const consultationId = await start(browser, "body_only");
-    await harness.stylings.runPending();
-
-    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
-      ["Bea Marsh", ["Bolt", "Jeanery", "Stride"]],
-      ["Cleo Hart", ["Dune", "Bolt", "Sole"]],
-    ]);
-    expect(await styleIconStatuses(consultationId)).toEqual([
-      ["Ava Stone", "skipped"],
-      ["Bea Marsh", "used"],
-      ["Cleo Hart", "used"],
-    ]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2 })]);
+    expect(stylistToolResults("fetchBrands").find(({ input }) => isDeepStrictEqual(input, { styleIcon: 1 }))?.output).toEqual({
+      styleIcon: 1,
+      passedOver: "Ava Stone is passed over: the Brands their fans favour can't complete an Outfit still in play.",
+      fetchesLeft: expect.any(Number),
+    });
+    expect(savedOutfits().map((saved) => saved.styleIcon)).toEqual([2, 3]);
   });
 
   it("fail the Styling as nothing could be built when no Style Icon's fans' Brands complete an Outfit", async () => {
@@ -519,7 +516,7 @@ describe("a body photo's Outfits", () => {
 
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "no_outfits", outfits: [] });
     expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "failed", failureReason: "nothing_built" })]);
-    expect(harness.ai.tailoringRequests).toEqual([]);
+    expect(savedOutfits()).toEqual([]);
   });
 });
 
@@ -667,23 +664,7 @@ describe("the Brand calls", () => {
       ["Gia Penn", "unused"],
       ["Hana Moor", "unused"],
     ]);
-    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1, tailoringFailures: 0 })]);
-  });
-
-  it("are made for the next Style Icon when a substitute for failed tailoring needs one, with the failed Outfit's Brands free again", async () => {
-    harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
-    harness.ai.styleIconScenarios = { "Ava Stone": "tailoring-fails", "Bea Marsh": "tailoring-fails" };
-    const browser = await signedInUser({ stylePreference: "womenswear" });
-
-    const consultationId = await start(browser, "body_only");
-    await harness.stylings.runPending();
-
-    expect(brandCalls().map((params) => params.get("signal.interests.entities")).toSorted()).toEqual(["w-1", "w-2", "w-3", "w-4"]);
-    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
-      ["Cleo Hart", ["Bolt", "Jeanery", "Stride"]],
-      ["Dana Reed", ["Dune", "Bolt", "Sole"]],
-    ]);
-    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 2 })]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1 })]);
   });
 });
 
@@ -765,7 +746,7 @@ describe("the Brands the product search knows", () => {
     ]);
   });
 
-  it("must complete an Outfit, or its Style Icon is skipped for the next, without counting as a tailoring failure", async () => {
+  it("must complete an Outfit, or its Style Icon is passed over for the next", async () => {
     // Stride is the only footwear Brand Ava Stone's fans favour, and the product search doesn't know it.
     harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) => (styleIconId === "w-1" ? BRANDS.filter((b) => b.name !== "Sole" && b.name !== "Pace") : BRANDS));
     harness.channel3.respond = channel3SellingEveryBrand({ except: ["Stride"] });
@@ -783,8 +764,32 @@ describe("the Brands the product search knows", () => {
       ["Bea Marsh", "used"],
       ["Cleo Hart", "used"],
     ]);
-    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 0 })]);
-    expect(harness.ai.tailoringRequests.map((request) => request.styleIconName)).not.toContain("Ava Stone");
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2 })]);
+    expect(savedOutfits().map((saved) => saved.styleIcon)).toEqual([2, 3]);
+  });
+
+  it("are looked up as a search is about to use them too, one it doesn't know being out of every Category, with no search spent on it", async () => {
+    harness.channel3.respond = channel3SellingEveryBrand({ except: ["Sole"] });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+
+    const consultationId = await start(browser, "body_only");
+    await harness.stylings.runPending();
+
+    // Sole, Bea Marsh's Shoes once Ava Stone's Outfit takes Stride, was looked up only as it was searched for.
+    expect(stylistToolResults("searchProducts").find(({ input }) => isDeepStrictEqual(input, { styleIcon: 2, category: "shoes", brand: "Sole" }))?.output).toEqual({
+      styleIcon: 2,
+      category: "shoes",
+      brand: "Sole",
+      candidates: [],
+      out: "every Category",
+      searchesLeft: expect.any(Number),
+    });
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Ava Stone", ["Bolt", "Jeanery", "Stride"]],
+      ["Bea Marsh", ["Dune", "Bolt", "Pace"]],
+    ]);
+    expect(productSearchesSent().map(({ brandId }) => brandId)).not.toContain("c3-sole");
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ productSearches: browseRequests().length })]);
   });
 
   it("are never looked up for a Face Photo, whose Outfits have no Brands", async () => {
@@ -1009,10 +1014,14 @@ describe("a body photo's Products", () => {
       ["Bea Marsh", "used"],
       ["Cleo Hart", "unused"],
     ]);
-    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 0 })]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2 })]);
     expect(productSearchesSent().filter(({ brandId, category }) => brandId === "c3-bolt" && category === "top")).toHaveLength(1);
-    // The Brands are fixed before tailoring, which is never offered a Brand whose search found nothing.
-    expect(harness.ai.tailoringRequests.flatMap((request) => request.pieces.flatMap((p) => (p.category === "top" ? [p.brand.name] : [])))).toEqual(["Dune", "Jeanery"]);
+    // The Stylist is told Bolt is out of Tops, and saves no Outfit on it there.
+    expect(stylistToolResults("searchProducts").find(({ input }) => isDeepStrictEqual(input, { styleIcon: 1, category: "top", brand: "Bolt" }))?.output).toMatchObject({
+      candidates: [],
+      out: "this Category",
+    });
+    expect(savedOutfits().map((saved) => saved.brands?.top)).toEqual(["Dune", "Jeanery"]);
     expect(
       await harness.db
         .select({ top: outfit.topBrandEntityId, bottom: outfit.bottomBrandEntityId, shoes: outfit.shoesBrandEntityId })
@@ -1040,11 +1049,11 @@ describe("a body photo's Products", () => {
       ["Ava Stone", ["Dune", "Jeanery", "Stride"]],
       ["Bea Marsh", ["Jeanery", "Bolt", "Sole"]],
     ]);
-    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 0 })]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2 })]);
     expect(productSearchesSent().filter(({ brandId, category }) => brandId === "c3-bolt" && category === "top")).toHaveLength(1);
   });
 
-  it("must each be found for an Outfit: a Style Icon left with no Brand for a Piece is skipped for the next, without counting as a tailoring failure", async () => {
+  it("must each be found for an Outfit: a Style Icon left with no Brand for a Piece is passed over for the next", async () => {
     // Stride is the only footwear Brand Ava Stone's fans favour, and it sells no women's shoes.
     harness.qloo.respond = qlooAnswering({ female: WOMEN }, (styleIconId) => (styleIconId === "w-1" ? BRANDS.filter((b) => b.name !== "Sole" && b.name !== "Pace") : BRANDS));
     harness.channel3.respond = channel3SellingEveryBrand({
@@ -1064,8 +1073,8 @@ describe("a body photo's Products", () => {
       ["Bea Marsh", "used"],
       ["Cleo Hart", "used"],
     ]);
-    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2, tailoringFailures: 0 })]);
-    expect(harness.ai.tailoringRequests.map((request) => request.styleIconName)).not.toContain("Ava Stone");
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2 })]);
+    expect(savedOutfits().map((saved) => saved.styleIcon)).toEqual([2, 3]);
     expect(productSearchesSent().filter(({ brandId, category }) => brandId === "c3-stride" && category === "shoes")).toHaveLength(1);
   });
 
@@ -1172,7 +1181,7 @@ describe("a body photo's Products", () => {
       ["c3-jeanery", "bottom"],
       ["c3-stride", "shoes"],
     ]);
-    expect(harness.ai.tailoringRequests).toEqual([]);
+    expect(savedOutfits()).toEqual([]);
   });
 
   it.each([
@@ -1196,21 +1205,23 @@ describe("a body photo's Products", () => {
       ["c3-jeanery", "bottom"],
       ["c3-stride", "shoes"],
     ]);
-    expect(harness.ai.tailoringRequests).toEqual([]);
+    expect(savedOutfits()).toEqual([]);
   });
 
   it("are each Piece's search's candidates, kept only while the Styling runs, so a later Styling searches afresh", async () => {
     const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
     const consultationId = await start(browser, "body_only");
-    const keptWhileTailoring: number[] = [];
+    const keptOnceSaved: number[] = [];
     harness.ai.duringCall = async (call) => {
-      if (call === "tailorPieces") keptWhileTailoring.push((await candidatesOf(consultationId)).length);
+      if (call === "stylistModel" && harness.ai.stylistRequests.at(-1)?.toolResults.at(-1)?.toolName === "saveOutfit") {
+        keptOnceSaved.push((await candidatesOf(consultationId)).length);
+      }
     };
 
     await harness.stylings.runPending();
 
     // A search for each of the two Outfits' Top, Bottom, Shoes and One-Piece.
-    expect(keptWhileTailoring).toEqual([8, 8]);
+    expect(keptOnceSaved).toEqual([8]);
     expect(await candidatesOf(consultationId)).toEqual([]);
     harness.channel3.requests.length = 0;
 
@@ -1230,8 +1241,11 @@ describe("a body photo's Products", () => {
 
   it("are deleted when the Styling breaks, too", async () => {
     harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    // The model goes down once the Stylist has searched for every Piece, before it saves the Outfit.
     harness.ai.duringCall = async (call) => {
-      if (call === "tailorPieces") throw new Error("The model is down.");
+      if (call === "stylistModel" && harness.ai.stylistRequests.at(-1)?.toolResults.some(({ input }) => (input as { category?: string }).category === "onePiece")) {
+        throw new Error("The model is down.");
+      }
     };
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
@@ -1274,14 +1288,14 @@ describe("a body photo's Products", () => {
     ]);
     expect(productSearchesSent().filter(({ category }) => category === "one_piece")).toEqual([]);
     expect(await stylingsOf(consultationId)).toEqual([
-      expect.objectContaining({ status: "succeeded", outfitsWanted: 2, outfitsMade: 1, tailoringFailures: 0, productSearches: 24 }),
+      expect.objectContaining({ status: "succeeded", outfitsWanted: 2, outfitsMade: 1, productSearches: 24 }),
     ]);
     expect(await styleIconStatuses(consultationId)).toEqual([
       ["Ava Stone", "used"],
       ["Bea Marsh", "unused"],
       ["Cleo Hart", "unused"],
     ]);
-    expect(harness.ai.tailoringRequests.map((request) => request.styleIconName)).toEqual(["Ava Stone"]);
+    expect(savedOutfits().map((saved) => saved.styleIcon)).toEqual([1]);
   });
 
   it("count each search once, however many tries it takes, towards the Styling's 24 and this month's product searches", async () => {
@@ -1385,7 +1399,7 @@ describe("a body photo's One-Pieces", () => {
     ]);
   });
 
-  it("are offered to tailoring beside the Top's candidates only when they pass every filter a Top or Bottom would: the Brand, the line or unisex, a garment-only photo, and a new, in-stock offer within the price range", async () => {
+  it("are offered to the Stylist only when they pass every filter a Top or Bottom would: the Brand, the line or unisex, a garment-only photo, and a new, in-stock offer within the price range", async () => {
     harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
     // Bolt is the Top, at $20–$120.
     const boltOnePiece = (id: string, overrides: Parameters<typeof channel3Product>[1] = {}) =>
@@ -1410,19 +1424,21 @@ describe("a body photo's One-Pieces", () => {
     await start(browser, "body_only");
     await harness.stylings.runPending();
 
-    expect(harness.ai.tailoringRequests.map(({ pieces }) => pieces.map((p) => (p.category === "hairstyle" ? null : (p.onePieceCandidates ?? null))))).toEqual([
-      [
-        [
-          { id: "linen-dress", title: "Linen wrap midi dress", description: "A wrap midi dress in terracotta linen.", colours: ["#c0603f"] },
-          { id: "unisex-overalls", title: "Product unisex-overalls", description: "About product unisex-overalls.", colours: ["#1f2a44"] },
+    expect(stylistToolResults("searchProducts").flatMap(({ input, output }) => ((input as { category: string }).category === "onePiece" ? [output] : []))).toEqual([
+      {
+        styleIcon: 1,
+        category: "onePiece",
+        brand: "Bolt",
+        candidates: [
+          "id: linen-dress | title: Linen wrap midi dress | description: A wrap midi dress in terracotta linen. | colours: #c0603f",
+          "id: unisex-overalls | title: Product unisex-overalls | description: About product unisex-overalls. | colours: #1f2a44",
         ],
-        null,
-        null,
-      ],
+        searchesLeft: 20,
+      },
     ]);
   });
 
-  it("make an Outfit one Product Piece in place of its Top and Bottom when tailoring picks one, which its card and Preview show as one", async () => {
+  it("make an Outfit one Product Piece in place of its Top and Bottom when the Stylist picks one, which its card and Preview show as one", async () => {
     harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
     harness.ai.scenario = "one-piece";
     const browser = await signedInUser({ stylePreference: "womenswear", countryCode: "US" });
@@ -1431,7 +1447,7 @@ describe("a body photo's One-Pieces", () => {
 
     await harness.stylings.runPending();
 
-    // The fake AI picks the Top Brand's first One-Piece: Bolt's.
+    // The fake Stylist picks the Top Brand's first One-Piece: Bolt's.
     expect(await productPiecesOf(consultationId)).toEqual([
       {
         category: "one_piece",
@@ -1505,10 +1521,10 @@ describe("a body photo's One-Pieces", () => {
         ["shoes", "Stride"],
       ],
     ]);
-    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1, tailoringFailures: 0 })]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1 })]);
     expect(productSearchesSent().flatMap(({ brandId, category }) => (category === "one_piece" ? [brandId] : []))).toEqual(["c3-bolt"]);
-    // Tailoring is offered no One-Piece.
-    expect(harness.ai.tailoringRequests.flatMap(({ pieces }) => pieces.filter((p) => p.category !== "hairstyle" && p.onePieceCandidates))).toEqual([]);
+    // The Stylist is offered no One-Piece.
+    expect(stylistToolResults("searchProducts").find(({ input }) => (input as { category: string }).category === "onePiece")?.output).toMatchObject({ candidates: [] });
   });
 
   it('keep a One-Piece Outfit\'s left-out Bottom Brand reserved, so "Show 2 more Outfits" never gets it as a Bottom', async () => {
@@ -2211,6 +2227,26 @@ describe("the Styling status", () => {
     ]);
   });
 
+  it("follows a body photo's Stylist from its Brands to Building Outfits as it saves its first Outfit, then to its Previews", async () => {
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    const consultationId = await start(browser, "body_only");
+    const checklist = watchChecklist(browser, consultationId);
+    harness.ai.duringCall = async () => {
+      await checklist.look();
+    };
+
+    await harness.stylings.runPending();
+
+    expect(checklist.seen).toEqual([
+      { kind: "first", stage: "style_icons", previews: { done: 0, of: 2 }, slow: false },
+      { kind: "first", stage: "brands", previews: { done: 0, of: 2 }, slow: false },
+      { kind: "first", stage: "building_outfits", previews: { done: 0, of: 2 }, slow: false },
+      { kind: "first", stage: "previews", previews: { done: 0, of: 1 }, slow: false },
+      { kind: "first", stage: "previews", previews: { done: 1, of: 1 }, slow: false },
+    ]);
+  });
+
   it("says a stage is taking longer than usual once it has run for over 60 s", async () => {
     const browser = await signedInUser();
     harness.clock.set("2026-10-16T12:30:00Z");
@@ -2296,7 +2332,7 @@ describe('"Show 2 more Outfits"', () => {
     expect(personCalls()).toEqual([]);
   });
 
-  it("shows in the Styling status as adding to the Outfits, from Building Outfits: at Brands for a body photo, straight to tailoring for a Face Photo", async () => {
+  it("shows in the Styling status as adding to the Outfits, from Building Outfits: at Brands for a body photo, straight to its Outfits for a Face Photo", async () => {
     harness.qloo.respond = qlooAnswering({ female: SIX_WOMEN });
     // Two users, since each runs one Styling at a time.
     const bodyOnlyUser = await signedInUser({ stylePreference: "womenswear" });
@@ -2352,7 +2388,8 @@ describe('"Show 2 more Outfits"', () => {
     await harness.stylings.runPending();
 
     expect(await stylingsOfKind(consultationId, "more")).toEqual([expect.objectContaining({ status: "failed", failureReason: "nothing_built", outfitsMade: 0 })]);
-    expect(new Set(brandCalls().map((params) => params.get("signal.interests.entities")))).toEqual(new Set(["w-3", "w-4", "w-5", "w-6", "w-7", "w-8"]));
+    // Cleo Hart, the first Styling's spare, was passed over then, her fans' Brands making no Outfit.
+    expect(new Set(brandCalls().map((params) => params.get("signal.interests.entities")))).toEqual(new Set(["w-4", "w-5", "w-6", "w-7", "w-8", "w-9"]));
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       state: "ready",
       everyOutfitBuilt: true,
@@ -2943,7 +2980,7 @@ describe("a Budget Tier change", () => {
     harness.clock.set("2026-10-16T12:10:00Z");
     await changeBudgetTier(harness.context(browser), consultationId, "low");
     await harness.stylings.runPending();
-    const tailoredSoFar = harness.ai.tailoringRequests.length;
+    const savedSoFar = savedOutfits().length;
     harness.qloo.requests.length = 0;
     harness.clock.set("2026-10-16T12:20:00Z");
 
@@ -2954,7 +2991,7 @@ describe("a Budget Tier change", () => {
     expect(backAgain).toMatchObject({ budgetTier: "no_budget", outfits: [{ styleIconName: "Ava Stone" }, { styleIconName: "Bea Marsh" }] });
     expect(backAgain.outfits.map((o) => o.id)).not.toContain(firstOutfitIds[0]);
     expect(backAgain.outfits.map((o) => o.id)).not.toContain(firstOutfitIds[1]);
-    expect(harness.ai.tailoringRequests).toHaveLength(tailoredSoFar + 2);
+    expect(savedOutfits()).toHaveLength(savedSoFar + 2);
     // The No Budget Brand calls came from the cache.
     expect(harness.qloo.requests).toEqual([]);
   });
@@ -3518,6 +3555,18 @@ function qlooAnsweringByPhotoStyle(
       .join("+");
     return qlooAnswering(peopleByPhotoStyle[photoStyle] ?? {}, brands)(request);
   };
+}
+
+/** The tool calls of `toolName` the Stylist made in this test's Stylings, and what came back, oldest first. */
+function stylistToolResults(toolName: string): FakeStylistToolResult[] {
+  // Each Styling's last turn was sent every tool call before it.
+  const lastTurns = harness.ai.stylistRequests.filter((request, index, requests) => requests[index + 1]?.turn !== request.turn + 1);
+  return lastTurns.flatMap(({ toolResults }) => toolResults.filter((result) => result.toolName === toolName));
+}
+
+/** The Outfits the Stylist saved in this test's Stylings, as it gave them, oldest first. */
+function savedOutfits(): SaveOutfitInput[] {
+  return stylistToolResults("saveOutfit").flatMap(({ input, error }) => (error === null ? [input as SaveOutfitInput] : []));
 }
 
 /** The Qloo requests that went out for Style Icons. */

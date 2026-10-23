@@ -3,55 +3,53 @@ import { PRODUCT_SEARCH_STEP_MAX_RETRIES } from "@/config/product-search";
 import { QLOO_STEP_MAX_RETRIES } from "@/config/qloo";
 import { PREVIEW_STEP_MAX_RETRIES, type PreviewState } from "@/config/stylings";
 import type { Photo } from "@/server/ai/provider";
-import type { BrandToLookUp, PieceSearch } from "@/server/outfit-assembly/brands";
-import type { QlooBrand, QlooPerson } from "@/server/qloo/client";
-import type { BrandsByStyleIcon, OutfitPlan, OutfitTry, PeopleByLine, StylingOutcome, TailoringOutcome } from "@/server/stylings/build-outfits";
-import { runStyling } from "@/server/stylings/run-styling";
-import type { PreviewsStarted, SavedOutfit, StylistStepResult } from "@/server/stylings/stylist";
+import type { BrandToLookUp } from "@/server/outfit-assembly/brands";
+import type { QlooPerson } from "@/server/qloo/client";
+import {
+  type BrandsFetched,
+  type PeopleByLine,
+  type PreviewsStarted,
+  type ProductsSearched,
+  runStylist,
+  type SavedOutfit,
+  type StylingOutcome,
+  type StylistStepResult,
+} from "@/server/stylings/stylist";
 import type { StylistBrief, StylistStyleIcon } from "@/server/stylings/stylist-brief";
 
 import { workflowStylistModel } from "./stylist-model";
 
-// The "build Outfits" Vercel Workflow: a thin shell that runs each of a Styling's steps as a durable
-// step, with its own retries: `buildOutfits`'s for a body photo, and the Stylist's for a Face Photo,
-// whose agent makes each call to its model a durable step of its own. The Workflow function runs in
-// a sandbox, so each step loads the app only once it runs, outside the sandbox. Tests run the same
-// steps inline instead. Runs start with zero retention (`workflowStylingRunner`), so a Stylist's run
-// data, which holds the photo and its conversation, is unreadable the moment the Styling ends.
+// The Styling Vercel Workflow: a thin shell that runs the Stylist with each of its steps as a durable
+// step, with its own retries. The Stylist's agent makes each call to its model a durable step of its
+// own. The Workflow function runs in a sandbox, so each step loads the app only once it runs,
+// outside the sandbox. Tests run the same steps inline instead. Runs start with zero retention
+// (`workflowStylingRunner`), so a Stylist's run data, which holds the photo and its conversation, is
+// unreadable the moment the Styling ends.
 
-export async function buildOutfitsWorkflow(stylingId: string): Promise<void> {
+export async function stylingWorkflow(stylingId: string): Promise<void> {
   "use workflow";
-  await runStyling(
+  await runStylist(
     stylingId,
     {
-      usesStylist,
       readBrief,
       readPhoto,
-      readStyleIcons,
-      saveOutfit,
-      startPreviews,
-      openPreview,
       ranksStyleIcons,
       styleIconLines,
       fetchStyleIcons,
       saveStyleIcons,
-      planOutfits,
+      readStyleIcons,
       fetchBrands,
+      readBrandsInPlay,
       lookUpBrand,
       searchProducts,
-      tailorOutfit,
-      planPreviews,
+      saveOutfit,
+      startPreviews,
+      openPreview,
       renderPreview,
       finish,
     },
     workflowStylistModel(),
   );
-}
-
-async function usesStylist(stylingId: string): Promise<boolean> {
-  "use step";
-  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.usesStylist(stylingId));
 }
 
 async function readBrief(stylingId: string): Promise<StylistBrief> {
@@ -65,30 +63,6 @@ async function readPhoto(stylingId: string): Promise<Photo> {
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
   return runWorkflowStep((steps) => steps.readPhoto(stylingId));
-}
-
-async function readStyleIcons(stylingId: string): Promise<StylistStyleIcon[]> {
-  "use step";
-  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.readStyleIcons(stylingId));
-}
-
-async function saveOutfit(stylingId: string, input: unknown): Promise<StylistStepResult<SavedOutfit>> {
-  "use step";
-  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.saveOutfit(stylingId, input));
-}
-
-async function startPreviews(stylingId: string): Promise<StylistStepResult<PreviewsStarted>> {
-  "use step";
-  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.startPreviews(stylingId));
-}
-
-async function openPreview(stylingId: string, outfit: number): Promise<StylistStepResult<{ outfitId: string }>> {
-  "use step";
-  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.openPreview(stylingId, outfit));
 }
 
 async function ranksStyleIcons(stylingId: string): Promise<boolean> {
@@ -117,19 +91,25 @@ async function saveStyleIcons(stylingId: string, peopleByLine: PeopleByLine): Pr
   return runWorkflowStep((steps) => steps.saveStyleIcons(stylingId, peopleByLine));
 }
 
-async function planOutfits(stylingId: string, brandsByStyleIcon: BrandsByStyleIcon): Promise<OutfitPlan> {
+async function readStyleIcons(stylingId: string): Promise<StylistStyleIcon[]> {
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.planOutfits(stylingId, brandsByStyleIcon));
+  return runWorkflowStep((steps) => steps.readStyleIcons(stylingId));
 }
 
-/** One Qloo call. */
-async function fetchBrands(stylingId: string, styleIconId: string): Promise<QlooBrand[]> {
+/** One Qloo call, or more while a thin pool widens, or none when the Brands were fetched already. */
+async function fetchBrands(stylingId: string, input: unknown): Promise<StylistStepResult<{ styleIcon: number }>> {
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.fetchBrands(stylingId, styleIconId));
+  return runWorkflowStep((steps) => steps.fetchBrands(stylingId, input));
 }
 fetchBrands.maxRetries = QLOO_STEP_MAX_RETRIES;
+
+async function readBrandsInPlay(stylingId: string, styleIcon: number): Promise<{ lookUp: BrandToLookUp[] } | BrandsFetched> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.readBrandsInPlay(stylingId, styleIcon));
+}
 
 /** One product-search call, or none when the Brand was looked up lately. */
 async function lookUpBrand(stylingId: string, brand: BrandToLookUp): Promise<void> {
@@ -140,27 +120,33 @@ async function lookUpBrand(stylingId: string, brand: BrandToLookUp): Promise<voi
 lookUpBrand.maxRetries = PRODUCT_SEARCH_STEP_MAX_RETRIES;
 
 /**
- * One product-search call. Errors get the retries; one still failing on the last try passes the
- * Piece's Brand over, unless the product search refused the key.
+ * One product-search call, or none when it was made already. Errors get the retries; one still
+ * failing on the last try puts the Brand out of play for the Category, unless the product search
+ * refused the key.
  */
-async function searchProducts(stylingId: string, search: PieceSearch): Promise<void> {
+async function searchProducts(stylingId: string, input: unknown): Promise<StylistStepResult<ProductsSearched | { lookUp: BrandToLookUp }>> {
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.searchProducts(stylingId, search), { maxRetries: PRODUCT_SEARCH_STEP_MAX_RETRIES });
+  return runWorkflowStep((steps) => steps.searchProducts(stylingId, input), { maxRetries: PRODUCT_SEARCH_STEP_MAX_RETRIES });
 }
 searchProducts.maxRetries = PRODUCT_SEARCH_STEP_MAX_RETRIES;
 
-/** One AI call. */
-async function tailorOutfit(stylingId: string, outfitTry: OutfitTry, attempt: number): Promise<TailoringOutcome> {
+async function saveOutfit(stylingId: string, input: unknown): Promise<StylistStepResult<SavedOutfit>> {
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.tailorOutfit(stylingId, outfitTry, attempt));
+  return runWorkflowStep((steps) => steps.saveOutfit(stylingId, input));
 }
 
-async function planPreviews(stylingId: string): Promise<string[]> {
+async function startPreviews(stylingId: string): Promise<StylistStepResult<PreviewsStarted>> {
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
-  return runWorkflowStep((steps) => steps.planPreviews(stylingId));
+  return runWorkflowStep((steps) => steps.startPreviews(stylingId));
+}
+
+async function openPreview(stylingId: string, outfit: number): Promise<StylistStepResult<{ outfitId: string }>> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.openPreview(stylingId, outfit));
 }
 
 /**

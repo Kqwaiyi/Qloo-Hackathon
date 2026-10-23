@@ -126,8 +126,8 @@ export async function tryAgain(ctx: OperationContext, consultationId: string): P
     const tryingAgain = { kind: "try_again", budgetTier: failed.budgetTier, photoStyle: failed.photoStyle } as const;
     // It broke before saving any Style Icons: find them, as it would have.
     if (failed.stage === "style_icons") return { ok: true, ...tryingAgain, stage: "style_icons" };
-    // Brands aren't saved, so a body photo's are fetched again, from Qloo's cache, even if it broke
-    // tailoring: Brands and tailoring are both the checklist's Building Outfits.
+    // A Styling's Brands go when it finishes, so a body photo's are fetched again, from Qloo's cache,
+    // even if it broke saving its Outfits: Brands and Outfits are both the checklist's Building Outfits.
     return { ok: true, ...tryingAgain, stage: outfitsStage(current), copiesStyleIconList: { from: failed.stylingId, statuses: "kept" } };
   });
 }

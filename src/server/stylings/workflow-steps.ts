@@ -9,15 +9,15 @@ import { NoExchangeRateError } from "@/server/outfit-assembly/products";
 import { ProductSearchRateLimitedError, UnretryableProductSearchError } from "@/server/product-search/provider";
 import { QlooError, QlooRateLimitedError } from "@/server/qloo/client";
 
-import type { StylingSteps } from "./run-styling";
 import { ProductSearchDownError, StylingNotRunningError } from "./steps";
+import type { StylistSteps } from "./stylist";
 import { allStylingSteps } from "./stylist-steps";
 
 /**
  * Runs one Styling step for the Workflow: on the app's services, telling the Workflow which
  * failures to retry. A step given its `maxRetries` learns whether this try is its last.
  */
-export async function runWorkflowStep<T>(step: (steps: StylingSteps) => Promise<T>, { maxRetries }: { maxRetries?: number } = {}): Promise<T> {
+export async function runWorkflowStep<T>(step: (steps: StylistSteps) => Promise<T>, { maxRetries }: { maxRetries?: number } = {}): Promise<T> {
   const lastTry = maxRetries === undefined ? undefined : getStepMetadata().attempt > maxRetries;
   const steps = allStylingSteps(await getServices(), { lastTry });
   try {

@@ -215,16 +215,17 @@ export default function Page() {
           <li>
             <strong>Anthropic&apos;s Claude</strong>, one of our two AI providers, gets your photos as our processor, to check
             each one and read its Photo Style, and runs your AI Stylist. As your AI Stylist, it gets with your photo only what
-            it needs to make your Outfits: the Photo Type, your age group, the Photo Style, the Style Icons&apos; names and
-            whether each Outfit is menswear or womenswear. It never gets your username, email, Country or Budget Tier.
+            it needs to make your Outfits: the Photo Type, your age group, the Photo Style, the Style Icons&apos; names,
+            whether each Outfit is menswear or womenswear, the Brands, and the names, descriptions and colours of the
+            Brands&apos; Products to pick from. It never gets your username, email or Country, and gets your Budget Tier only
+            when you change it.
             Anthropic deletes what it gets within 30 days, but keeps anything its trust and safety team flags as breaking its
             usage policy for up to 2 years. It doesn&apos;t use any of it to train its models.
           </li>
           <li>
             <strong>Google&apos;s Gemini</strong>, our other AI provider, gets your photos as our processor. With each one it
-            gets only what it needs to tailor each Outfit and draw its Preview: the Photo Type, your age group, the
-            Photo Style, whether the Outfit is menswear or womenswear, the Style Icon&apos;s name, the Brands, the names,
-            descriptions and colours of the Brands&apos; Products to pick from, and the sellers&apos; photos of the Products picked (see{" "}
+            gets only what it needs to draw an Outfit&apos;s Preview: the Photo Type, the Hairstyle&apos;s cut, and the names
+            and sellers&apos; photos of the Products picked (see{" "}
             <a href="#previews" className={textLink}>
               Previews are AI-generated
             </a>

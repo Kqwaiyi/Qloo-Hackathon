@@ -1,5 +1,5 @@
 import type { Line } from "@/config/accounts";
-import type { PhotoStyleWords } from "@/config/consultations";
+import type { BrandCategory, PhotoStyleWords } from "@/config/consultations";
 
 // The Stylist's brief, as the conversation's first message gives it beside the photo. Like the
 // Stylist, it imports nothing but types and config, so the Workflow's sandbox can load it.
@@ -11,9 +11,12 @@ export interface StylistStyleIcon {
   line: Line;
 }
 
+/** The Brands Outfits use, by name, for each Brand Category. */
+export type BrandsByCategory = Record<BrandCategory, string[]>;
+
 /**
- * What the Stylist is told about its Styling. Never the Country or the Budget Tier, which Qloo's
- * picks already reflect.
+ * What the Stylist is told about its Styling. Never the Country, which Qloo's picks already
+ * reflect, nor the Budget Tier, but for a Budget Tier change, whose Budget Tier is what changes.
  */
 export interface StylistBrief {
   /** What kind of Styling it is, such as "Show 2 more Outfits". */
@@ -27,6 +30,13 @@ export interface StylistBrief {
   ageGroup: string;
   /** How many Outfits it may make, at most. */
   outfits: number;
+  /** A Budget Tier change only: the Budget Tier its Outfits are built at, such as "Low". */
+  budgetTier?: string;
+  /**
+   * "Show 2 more Outfits" for a body photo only: the Brands the current Outfits use for each
+   * Category, a One-Piece's left-out Bottom Brand included, which no new Outfit repeats in it.
+   */
+  brandsInUse?: BrandsByCategory;
   /**
    * The Style Icons it builds from, in Qloo's order, best first: those it may still use. Absent
    * when it finds its own, with `findStyleIcons`.

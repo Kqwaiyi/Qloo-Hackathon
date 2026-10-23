@@ -178,7 +178,6 @@ export async function createStyling(tx: Transaction, now: Date, { copiesStyleIco
       status: "running",
       stageMovedAt: now,
       outfitsMade: 0,
-      tailoringFailures: 0,
       startedAt: now,
     })
     // The database holds the locks, so of two requests at once that both passed the shared start

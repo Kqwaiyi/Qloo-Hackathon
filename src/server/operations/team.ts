@@ -189,7 +189,7 @@ export async function exportLandingSample(
   };
 }
 
-/** One of the landing page's sample photos, to run the pipeline on once and freeze as its Photo Type's sample. */
+/** One of the landing page's sample photos, to run a Styling on once and freeze as its Photo Type's sample. */
 export interface LandingSampleMaking {
   photoType: PhotoType;
   photo: Blob;
@@ -218,7 +218,7 @@ export type MakeLandingSampleRefusal =
   | { refusal: "no-outfit" | "no-preview" };
 
 /**
- * Runs the real pipeline once on one of the landing page's sample photos, and freezes what it makes
+ * Runs a real Styling once on one of the landing page's sample photos, and freezes what it makes
  * (spec: "Landing sample"). On its own fresh app it does what the team would do by hand: it creates
  * the Demo Account and signs in to it, sets its Style Preference to the sample's and its Country to
  * the United States, presses "Get my Outfits" with the photo, runs that first Styling to its end, and

@@ -21,9 +21,6 @@ export const CLAUDE_STYLIST_EFFORT = "high";
  */
 export const CLAUDE_STYLIST_MAX_OUTPUT_TOKENS = 16_000;
 
-/** The Gemini model that tailors each Outfit's Pieces. */
-export const GEMINI_TAILORING_MODEL = "gemini-3.5-flash-lite";
-
 /**
  * The Gemini image models that can render Previews. Nano Banana 2.1 is the Preview bake-off's pick.
  * Nano Banana 2 Lite is the fallback, if 2.1 is ever unavailable: about 10% cheaper and over 3

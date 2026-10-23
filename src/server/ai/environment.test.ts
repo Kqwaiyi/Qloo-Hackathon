@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { aiFromEnvironment } from "./environment";
 import { FakeAiProvider } from "./fake";
 import { anthropicJson, anthropicText, FakeAnthropic } from "./fake-anthropic";
-import { FakeGemini, geminiJson } from "./fake-gemini";
-import type { Photo, PhotoCheckReport, TailoredPieces, TailoringInput } from "./provider";
+import { FakeGemini, geminiImage } from "./fake-gemini";
+import type { Photo, PhotoCheckReport } from "./provider";
 
 // Which AI the environment switches on. Real AI is two adapters together: the photo check and the
-// Stylist on Claude, tailoring and Previews on Gemini (ADR-0011). Every request goes to a fake API.
+// Stylist on Claude, and Previews on Gemini (ADR-0011). Every request goes to a fake API.
 
 const PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a photo of someone's face"), mediaType: "image/jpeg" };
 
@@ -22,28 +22,8 @@ const REPORT: PhotoCheckReport = {
   photoStyle: ["classic"],
 };
 
-/** A Face Photo's Outfit: its Hairstyle alone. */
-const TAILORING: TailoringInput = {
-  photo: PHOTO,
-  photoType: "face",
-  ageGroup: "25_29",
-  photoStyle: ["classic"],
-  line: "menswear",
-  styleIconName: "Theo Marsh",
-  pieces: [{ category: "hairstyle" }],
-};
-
-const TAILORED: TailoredPieces = {
-  pieces: [
-    {
-      category: "hairstyle",
-      item: "Short textured crop",
-      details: "A short textured crop with a low fade, in your own hair colour.",
-      why: "Theo Marsh's signature crop, cut from the length you have now to sharpen your classic style.",
-      unknownCut: false,
-    },
-  ],
-};
+/** The bytes stand in for the image Gemini drew. */
+const DRAWN = new TextEncoder().encode("the bytes of the photo with a new haircut drawn on");
 
 let anthropic: FakeAnthropic;
 let gemini: FakeGemini;
@@ -72,16 +52,19 @@ describe("switching real AI on", () => {
     expect(aiFromEnvironment()).toBeInstanceOf(FakeAiProvider);
   });
 
-  it("runs the photo check on Claude, with ANTHROPIC_API_KEY, and tailoring on Gemini, with GEMINI_API_KEY, when AI_PROVIDER says real", async () => {
+  it("runs the photo check on Claude, with ANTHROPIC_API_KEY, and Previews on Gemini, with GEMINI_API_KEY, when AI_PROVIDER says real", async () => {
     vi.stubEnv("AI_PROVIDER", "real");
     vi.stubEnv("ANTHROPIC_API_KEY", "anthropic-key-from-the-environment");
     vi.stubEnv("GEMINI_API_KEY", "gemini-key-from-the-environment");
     anthropic.respond = () => anthropicJson(REPORT);
-    gemini.respond = () => geminiJson(TAILORED);
+    gemini.respond = () => geminiImage(DRAWN);
     const ai = aiFromEnvironment();
 
     expect(await ai.checkPhoto({ photo: PHOTO, photoType: "face" })).toEqual({ blocked: false, report: REPORT });
-    expect(await ai.tailorPieces(TAILORING)).toEqual(TAILORED);
+    expect(await ai.renderPreview({ photo: PHOTO, photoType: "face", pieces: [{ category: "hairstyle", details: "A short textured crop." }] })).toEqual({
+      refused: false,
+      image: DRAWN,
+    });
 
     expect(anthropic.requests.map(({ headers }) => headers.get("x-api-key"))).toEqual(["anthropic-key-from-the-environment"]);
     expect(gemini.requests.map(({ headers }) => headers.get("x-goog-api-key"))).toEqual(["gemini-key-from-the-environment"]);
