@@ -250,4 +250,4 @@ A Styling's Claude cost is expected to come to about $0.04–0.09 for a body pho
 - **The estimates:** a verdict costs about $0.015–0.02 with shrunk seller photos, and a body-photo Styling makes 2–4 of them. Haiku's turns cost about $0.005–0.01 a Styling.
 - **The risk is Haiku's choices.** In its check, Haiku built valid Outfits in every Styling. Sonnet passed over Style Icons for hair length, which the prompt didn't then ask for. The new Face Photo rule now asks for it, and the check's Face Photo cases test it.
 - **The Haiku check's times aren't comparable.** Run 05-59-33 drew no images, so it was quicker than a real Styling. The next run's times can be compared with it only roughly.
-- **Production already runs the Stylist on Sonnet 5.5,** since the agentic-stylist spec's production switch (its ticket 12) is done. It does so until this ships.
+- **This work lands on the `agentic-stylist` branch, which isn't merged yet.** The team merges it into `main` by hand once this spec's tickets are done, so production goes straight to this Stylist and never runs it on Sonnet 5.5.
