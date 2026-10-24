@@ -1,7 +1,7 @@
 import { createGoogleGenerativeAI, type GoogleLanguageModelOptions, type GoogleProviderMetadata } from "@ai-sdk/google";
 import { generateText, type LanguageModel } from "ai";
 
-import { GEMINI_PREVIEW_MODEL } from "@/config/ai";
+import { GEMINI_PREVIEW_MODEL, type GeminiPreviewModel } from "@/config/ai";
 import { CATEGORY_LABELS, type PieceCategory } from "@/config/consultations";
 
 import { photoPart, withoutRequest } from "./ai-sdk";
@@ -16,6 +16,8 @@ export interface GeminiAiOptions {
   apiKey: string;
   /** Tests send Gemini's requests to a fake. */
   fetch?: typeof globalThis.fetch;
+  /** The image model to draw with: GEMINI_PREVIEW_MODEL unless the Haiku check asks for another. */
+  model?: GeminiPreviewModel;
 }
 
 /**
@@ -25,9 +27,9 @@ export interface GeminiAiOptions {
 export class GeminiAiProvider implements Pick<AiProvider, "renderPreview"> {
   private readonly previewModel: LanguageModel;
 
-  constructor({ apiKey, fetch }: GeminiAiOptions) {
+  constructor({ apiKey, fetch, model = GEMINI_PREVIEW_MODEL }: GeminiAiOptions) {
     const google = createGoogleGenerativeAI({ apiKey, fetch });
-    this.previewModel = google(GEMINI_PREVIEW_MODEL);
+    this.previewModel = google(model);
   }
 
   // A refusal is final: asking again is billed, and would likely be refused again. Anything else

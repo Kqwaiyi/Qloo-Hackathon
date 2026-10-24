@@ -109,6 +109,15 @@ describe("Previews", () => {
     expect(gemini.requests[0]!.body.generationConfig).toEqual({ responseModalities: ["IMAGE"], thinkingConfig: { thinkingLevel: "minimal" } });
   });
 
+  it("asks another of the Preview image models when it's given one, as the Haiku check does for Nano Banana 2 Lite", async () => {
+    gemini.respond = () => geminiImage(DRAWN);
+    const lite = new GeminiAiProvider({ apiKey: "test-api-key", fetch: gemini.fetch, model: "gemini-3.1-flash-lite-image" });
+
+    expect(await lite.renderPreview(PREVIEW)).toEqual({ refused: false, image: DRAWN });
+
+    expect(gemini.requests.map(({ url }) => url.pathname)).toEqual(["/v1beta/models/gemini-3.1-flash-lite-image:generateContent"]);
+  });
+
   it("sends the user's photo first, then each Product's photo, all inline in one request, in Piece order", async () => {
     gemini.respond = () => geminiImage(DRAWN);
 

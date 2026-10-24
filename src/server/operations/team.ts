@@ -234,7 +234,7 @@ export async function makeLandingSample(
   const created = await createDemoAccount(app, { password });
   if (!created.ok) throw new Error(`The landing sample's app isn't fresh: its Demo Account couldn't be created (${created.refusal}).`);
   const email = app.auth.demoAccountEmail;
-  const judgesRequest = await judgesRequests(app);
+  const judgesRequest = await browserRequests(app);
   const signedIn = await signIn(judgesRequest(), { identifier: email, password });
   if (!signedIn.ok) throw new Error(`Couldn't sign in to the landing sample's Demo Account (${signedIn.refusal}).`);
   const profile = { username: DEMO_ACCOUNT_PROFILE.username, stylePreference, countryCode: LANDING_SAMPLE_COUNTRY_CODE };
@@ -263,10 +263,11 @@ export async function makeLandingSample(
 }
 
 /**
- * The requests the Demo Account's judge's browser makes on the landing sample's app: a context for
- * each next one, from the app's own origin, carrying the cookies Better Auth has set so far.
+ * The requests one browser makes on a fresh app of a team script's, such as the Demo Account's
+ * judge's on the landing sample's: a context for each next one, from the app's own origin, carrying
+ * the cookies Better Auth has set so far.
  */
-async function judgesRequests(app: LandingSampleApp): Promise<() => OperationContext> {
+export async function browserRequests(app: Omit<OperationContext, "requestHeaders" | "responseCookies">): Promise<() => OperationContext> {
   const origin = new URL((await app.auth.$context).baseURL).origin;
   const cookies = new Map<string, string>();
   const responseCookies: ResponseCookies = {
