@@ -18,4 +18,4 @@ The photo check and the Stylist ([ADR-0010](0010-the-stylist-chooses-among-qloos
 - The AI SDK now appears in the Stylist's Workflow as well as in the adapters. Which provider the Stylist runs on still appears only in the adapters, and the agent's package is pinned to the version built for the app's AI SDK.
 - [ADR-0004](0004-adults-only.md) still holds: Previews stay on Gemini, whose terms set the age, and Anthropic's Usage Policy has its own rules for minors.
 - Haiku 5.5 costs more per token once a prompt passes 100,000 tokens, so the Stylist's conversation is kept under that.
-- The Anthropic workspace has a $50 monthly spend limit, as Gemini's project does, and each Styling a cap of 30 turns.
+- The Anthropic workspace has a $50 monthly spend limit, as Gemini's project does, and each Styling a cap of 30 turns (60 on the Demo Account).

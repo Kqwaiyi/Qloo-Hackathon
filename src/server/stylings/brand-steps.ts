@@ -2,13 +2,7 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
 import { type BrandCategory, type BudgetTier, CATEGORY_LABELS, inASentence, type ProductCategory } from "@/config/consultations";
 import { PRODUCT_SEARCH_MARKET_CURRENCIES } from "@/config/product-search";
-import {
-  MAX_BRAND_FETCHES_PER_STYLING,
-  MAX_PRODUCT_SEARCHES_PER_STYLING,
-  type PieceSearchState,
-  type StylingKind,
-  TOP_BRANDS_PER_CATEGORY,
-} from "@/config/stylings";
+import { type PieceSearchState, type StylingKind, type StylingLimits, stylingLimitsFor, TOP_BRANDS_PER_CATEGORY } from "@/config/stylings";
 import type { Clock } from "@/server/clock";
 import type { Database, Transaction } from "@/server/db/database";
 import { consultation, outfit, pieceCandidates, styleIcon, styleIconBrands, styling } from "@/server/db/schema";
@@ -93,9 +87,8 @@ export function brandSteps(
         // Fetched already, or set going by a try of this step before this one.
         if (kept) return { ok: true, icon: icon!, fetched: kept.brands !== null };
         const fetchedSoFar = await tx.$count(styleIconBrands, eq(styleIconBrands.stylingId, stylingId));
-        if (fetchedSoFar >= MAX_BRAND_FETCHES_PER_STYLING) {
-          return refused(`This Styling has fetched the Brands of ${MAX_BRAND_FETCHES_PER_STYLING} Style Icons, as many as it may.`);
-        }
+        const { brandFetches } = building.limits;
+        if (fetchedSoFar >= brandFetches) return refused(`This Styling has fetched the Brands of ${brandFetches} Style Icons, as many as it may.`);
         await tx.insert(styleIconBrands).values({ stylingId, styleIconId: icon!.id, brands: null });
         return { ok: true, icon: icon!, fetched: false };
       });
@@ -134,7 +127,7 @@ export function brandSteps(
       const icon = state.list.find((listed) => listed.number === styleIconNumber);
       const pool = icon && state.pools.get(icon.id);
       if (!icon || !pool) throw new Error(`Style Icon ${styleIconNumber}'s Brands haven't been fetched.`);
-      const fetchesLeft = Math.max(MAX_BRAND_FETCHES_PER_STYLING - state.pools.size, 0);
+      const fetchesLeft = Math.max(running.limits.brandFetches - state.pools.size, 0);
       if (firstInPlay(state, icon)) {
         const offered = topInPlay(state, icon);
         const lookUp = [...new Map([...offered.shoes, ...offered.top, ...offered.bottom].map((brand) => [brand.entityId, brand])).values()]
@@ -184,6 +177,7 @@ export function brandSteps(
         const building = await readBuilding(tx, stylingId);
         const notYet = buildingRefusal(building);
         if (notYet) return refused(notYet);
+        const { limits } = building;
         const state = await readBrandState(tx, ctx.clock, { stylingId, ...building });
         const icon = state.list.find((listed) => listed.number === asked.styleIcon);
         const unusable = styleIconRefusal(icon, asked.styleIcon);
@@ -197,19 +191,20 @@ export function brandSteps(
         const brand = lists[brandCategory].find(({ name }) => name === asked.brand);
         if (!brand) return refused(`${asked.brand} isn't one of ${icon!.name}'s ${CATEGORY_LABELS[brandCategory]} Brands.`);
         const made = searchFor(state, icon!, category, brand);
-        if (made && made.state !== "searching") return { ok: true, done: searchedFor(asked, brand, made, state) };
+        if (made && made.state !== "searching") return { ok: true, done: searchedFor(asked, brand, made, state, limits) };
         // A try of this step before this one set it going, so it carries on without counting again.
         if (made) return { ok: true, search: { icon: icon!, brand } };
         const match = state.matches.get(brand.entityId);
         if (match === null) {
-          return { ok: true, done: { ...askedFor(asked, brand), candidates: [], out: "every Category", searchesLeft: searchesLeft(state.searches.length) } };
+          const left = searchesLeft(state.searches.length, limits);
+          return { ok: true, done: { ...askedFor(asked, brand), candidates: [], out: "every Category", searchesLeft: left } };
         }
         // Only a Brand the Outfit may take is searched for, so no search goes on one it can't.
         const cantTake = cantTakeRefusal(state, icon!, brandCategory, brand);
         if (cantTake) return refused(cantTake);
         if (match === undefined) return { ok: true, lookUp: { entityId: brand.entityId, name: brand.name, officialSite: brand.officialSite } };
-        if (building.productSearches >= MAX_PRODUCT_SEARCHES_PER_STYLING) {
-          return refused(`This Styling has made all ${MAX_PRODUCT_SEARCHES_PER_STYLING} of its product searches.`);
+        if (building.productSearches >= limits.productSearches) {
+          return refused(`This Styling has made all ${limits.productSearches} of its product searches.`);
         }
         // Throws before anything is sent or counted when no rate is stored for the market's currency.
         await searchFilters(tx, building, brand);
@@ -269,7 +264,7 @@ export function brandSteps(
       // Styling has set going having failed, none answering or still under way: it breaks instead,
       // for Try again.
       if (searched.searches.every((search) => search.state === "unanswered")) throw new ProductSearchDownError(stylingId);
-      return { ok: true, ...searchedFor(asked, brand, searchFor(searched, icon, category, brand)!, searched) };
+      return { ok: true, ...searchedFor(asked, brand, searchFor(searched, icon, category, brand)!, searched, running.limits) };
     },
   };
 }
@@ -424,18 +419,24 @@ function askedFor(asked: { styleIcon: number; category: SearchCategory }, brand:
   return { styleIcon: asked.styleIcon, category: asked.category, brand: brand.name };
 }
 
-/** What a search that has answered, or never will, gives the Stylist. */
-function searchedFor(asked: { styleIcon: number; category: SearchCategory }, brand: QlooBrand, made: PieceSearchMade, state: BrandState): ProductsSearched {
+/** What a search that has answered, or never will, gives the Stylist, on a Styling with these limits. */
+function searchedFor(
+  asked: { styleIcon: number; category: SearchCategory },
+  brand: QlooBrand,
+  made: PieceSearchMade,
+  state: BrandState,
+  limits: StylingLimits,
+): ProductsSearched {
   const candidates = (made.candidates ?? []).map(candidateLine);
-  const left = searchesLeft(state.searches.length);
+  const left = searchesLeft(state.searches.length, limits);
   // A One-Piece search puts no Brand out of play: an Outfit whose Top Brand has none is separates only.
   if (candidates.length > 0 || made.category === "one_piece") return { ...askedFor(asked, brand), candidates, searchesLeft: left };
   return { ...askedFor(asked, brand), candidates, out: "this Category", searchesLeft: left };
 }
 
-/** How many more searches a Styling that has made `searchesMade` may make. */
-function searchesLeft(searchesMade: number): number {
-  return Math.max(MAX_PRODUCT_SEARCHES_PER_STYLING - searchesMade, 0);
+/** How many more searches a Styling with these limits that has made `searchesMade` may make. */
+function searchesLeft(searchesMade: number, limits: StylingLimits): number {
+  return Math.max(limits.productSearches - searchesMade, 0);
 }
 
 /** A search's market and price filter: the Styling's market, and the Brand's price range in its currency. Throws when no rate is stored. */
@@ -445,11 +446,15 @@ async function searchFilters(db: Database | Transaction, running: Parameters<typ
   return { market, priceFilter };
 }
 
-/** What a body photo's tools check the Styling against: where it is, its kind, its Budget Tier, its market and the photo's Categories. */
+/**
+ * What a body photo's tools check the Styling against: where it is, its limits, its kind, its Budget
+ * Tier, its market, its searches so far and the photo's Categories.
+ */
 export async function readBuilding(tx: Transaction, stylingId: string) {
   const [row] = await tx
     .select({
       stage: styling.stage,
+      onDemoAccount: styling.onDemoAccount,
       kind: styling.kind,
       budgetTier: styling.budgetTier,
       market: styling.market,
@@ -463,8 +468,9 @@ export async function readBuilding(tx: Transaction, stylingId: string) {
     .innerJoin(consultation, eq(consultation.id, styling.consultationId))
     .where(eq(styling.id, stylingId));
   if (!row) throw new StylingNotRunningError(stylingId);
+  const { onDemoAccount, ...building } = row;
   const beside = await readBuildingBeside(tx, { stylingId, kind: row.kind, consultationId: row.consultationId });
-  return { ...row, styleIconList: beside.styleIconList };
+  return { ...building, limits: stylingLimitsFor(onDemoAccount), styleIconList: beside.styleIconList };
 }
 
 /** Why a body photo's Brands and Products can't be fetched or searched for now, or null when they can. */

@@ -278,7 +278,7 @@ export const styling = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     // Whether it's the Demo Account's, whose Outfits no limit counts, so it writes no usage records,
-    // and which holds no user's Styling lock.
+    // which holds no user's Styling lock, and whose Stylist has more room (`stylingLimitsFor`).
     onDemoAccount: boolean("on_demo_account").notNull().default(false),
     kind: stylingKindEnum("kind").notNull(),
     // What it builds for. They become the Consultation's own once it succeeds.
@@ -291,7 +291,7 @@ export const styling = pgTable(
     stageMovedAt: timestamp("stage_moved_at", { withTimezone: true }).notNull(),
     outfitsWanted: integer("outfits_wanted").notNull(),
     outfitsMade: integer("outfits_made").notNull(),
-    // The searches it has set going in the product search, up to MAX_PRODUCT_SEARCHES_PER_STYLING,
+    // The searches it has set going in the product search, up to its `StylingLimits`' productSearches,
     // each counted once however many tries it takes.
     productSearches: integer("product_searches").notNull().default(0),
     failureReason: stylingFailureReasonEnum("failure_reason"),
@@ -495,7 +495,7 @@ export const pieceCandidates = pgTable(
 /**
  * The Brands a running Styling fetched for each of its Style Icons: the Brand call's fullest pool,
  * as Qloo's client keeps it, or none yet (null) while the call is under way. One row per Style Icon,
- * from when its fetch is set going, so a Styling fetches at most MAX_BRAND_FETCHES_PER_STYLING.
+ * from when its fetch is set going, so a Styling fetches at most its `StylingLimits`' brandFetches.
  * Deleted when the Styling finishes, however it finishes, as its searches' candidates are.
  */
 export const styleIconBrands = pgTable(

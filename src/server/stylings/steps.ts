@@ -10,6 +10,7 @@ import {
   PREVIEW_REDRAW_STATES,
   type PreviewRedrawOutcome,
   type PreviewRefusalReason,
+  stylingLimitsFor,
   type StylingStage,
 } from "@/config/stylings";
 import { type AiProvider, isPhotoMediaType, type Photo, type PreviewPiece, type PreviewResult, UnretryableAiError } from "@/server/ai/provider";
@@ -415,11 +416,12 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
   });
 }
 
-/** The running Styling with what its steps build from, or throws if it isn't running. */
+/** The running Styling with what its steps build from, and its limits, or throws if it isn't running. */
 export async function readRunningStyling(db: Database, stylingId: string) {
   const [row] = await db
     .select({
       consultationId: styling.consultationId,
+      onDemoAccount: styling.onDemoAccount,
       kind: styling.kind,
       stage: styling.stage,
       photoStyle: styling.photoStyle,
@@ -436,7 +438,8 @@ export async function readRunningStyling(db: Database, stylingId: string) {
     .innerJoin(consultation, eq(consultation.id, styling.consultationId))
     .where(and(eq(styling.id, stylingId), eq(styling.status, "running")));
   if (!row) throw new StylingNotRunningError(stylingId);
-  return row;
+  const { onDemoAccount, ...running } = row;
+  return { ...running, limits: stylingLimitsFor(onDemoAccount) };
 }
 
 /** The links to the seller photos of an Outfit's Products, in Piece order: those that have one. */

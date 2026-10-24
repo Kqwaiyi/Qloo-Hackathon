@@ -18,14 +18,7 @@ import {
   photoStyleText,
   type ProductCategory,
 } from "@/config/consultations";
-import {
-  type KeptPreview,
-  MAX_BRAND_FETCHES_PER_STYLING,
-  MAX_PRODUCT_SEARCHES_PER_STYLING,
-  PRODUCT_CALLS_AT_ONCE,
-  QLOO_CALLS_AT_ONCE,
-  TOP_BRANDS_PER_CATEGORY,
-} from "@/config/stylings";
+import { type KeptPreview, PRODUCT_CALLS_AT_ONCE, QLOO_CALLS_AT_ONCE, TOP_BRANDS_PER_CATEGORY } from "@/config/stylings";
 import { type BrandLists, firstBrandsInPlay } from "@/server/outfit-assembly/brands";
 import {
   type BrandsFetched,
@@ -414,10 +407,12 @@ function bodyPhotoCalls(request: FakeStylistRequest, styleIcons: readonly Stylis
   // planned Outfits' separates, nor those of a Style Icon to plan again once it's fetched again.
   const toSearch =
     separates.length > 0 || holdUp?.fetchAgain ? separates : planned.map(({ icon, brands }): Search => [icon, "onePiece", brands.top]).filter(notSearched);
-  const searchesLeft = Math.min(MAX_PRODUCT_SEARCHES_PER_STYLING, ...searches.map((search) => search.searchesLeft));
+  // How many more searches and fetches the Styling may make, as its tools last said: until they've
+  // said, it takes it that some are left, which the tools refuse once they're not.
+  const searchesLeft = Math.min(Infinity, ...searches.map((search) => search.searchesLeft));
   if (searchesLeft > 0) {
     const stillWanted = wanted - planned.length;
-    const fetchesLeft = Math.min(MAX_BRAND_FETCHES_PER_STYLING, ...fetches.map((brands) => brands.fetchesLeft));
+    const fetchesLeft = Math.min(Infinity, ...fetches.map((brands) => brands.fetchesLeft));
     const upFront = fetched.size === 0 && brief?.styling === "First Styling";
     const fetchCount = stillWanted <= 0 ? 0 : Math.min(upFront ? BRAND_FETCHES_UP_FRONT : stillWanted, fetchesLeft, QLOO_CALLS_AT_ONCE);
     let toFetch: readonly StylistStyleIcon[] = [];

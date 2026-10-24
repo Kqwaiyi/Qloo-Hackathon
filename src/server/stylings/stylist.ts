@@ -8,7 +8,6 @@ import { CATEGORY_LABELS, inASentence, type ProductCategory } from "@/config/con
 import {
   KEPT_PREVIEWS,
   type KeptPreview,
-  MAX_STYLIST_TURNS,
   PRODUCT_CALLS_AT_ONCE,
   PREVIEWS_AT_ONCE,
   QLOO_CALLS_AT_ONCE,
@@ -238,6 +237,8 @@ export type StylingOutcome = "completed" | "broke";
 export interface StylistSteps {
   /** The Stylist's brief, as `StylistBrief` describes it. */
   readBrief(stylingId: string): Promise<StylistBrief>;
+  /** How many turns the Stylist has on the Styling, its `StylingLimits`' turns: more on the Demo Account. */
+  readTurnCap(stylingId: string): Promise<number>;
   /** The Consultation's photo, exactly as it was stored, for the conversation's first message. */
   readPhoto(stylingId: string): Promise<Photo>;
   /**
@@ -354,14 +355,14 @@ class Refused extends Error {
 
 /**
  * Carries out a Styling through the Stylist, running on `model`, then finishes it: as completed
- * once the Stylist says it's finished or it reaches MAX_STYLIST_TURNS, and as broken when a turn
- * or a tool's step still fails after its retries, or the Stylist stops without finishing. Either way
- * it keeps whatever Outfits were saved, as any Styling does.
+ * once the Stylist says it's finished or it reaches its turn cap, and as broken when a turn or a
+ * tool's step still fails after its retries, or the Stylist stops without finishing. Either way it
+ * keeps whatever Outfits were saved, as any Styling does.
  */
 export async function runStylist(stylingId: string, steps: StylistSteps, model: LanguageModelV4): Promise<void> {
   let outcome: StylingOutcome = "broke";
   try {
-    const [brief, photo] = await Promise.all([steps.readBrief(stylingId), steps.readPhoto(stylingId)]);
+    const [brief, photo, turnCap] = await Promise.all([steps.readBrief(stylingId), steps.readPhoto(stylingId), steps.readTurnCap(stylingId)]);
     const notes = turnNoteSaver(stylingId, steps);
     const run = stylistTools(stylingId, steps, notes);
     const agent = new WorkflowAgent({
@@ -371,7 +372,7 @@ export async function runStylist(stylingId: string, steps: StylistSteps, model: 
       tools: run.tools,
       activeTools: toolsFor(brief),
       // It stops once finish has gone through, not on a finish refused.
-      stopWhen: [isStepCount(MAX_STYLIST_TURNS), () => run.finished, () => run.broken !== null],
+      stopWhen: [isStepCount(turnCap), () => run.finished, () => run.broken !== null],
       // A turn whose tools ran has saved its notes already.
       onStepEnd: (step) => notes.save(step.stepNumber + 1, textsOf(step.content)),
     });
@@ -384,7 +385,7 @@ export async function runStylist(stylingId: string, steps: StylistSteps, model: 
     if (run.broken !== null) throw run.broken;
     // A turn the model refused has no tool calls, so it's the last.
     if (turns.at(-1)?.finishReason === "content-filter") console.error("The Stylist's model refused a turn.");
-    else if (run.finished || turns.length >= MAX_STYLIST_TURNS) outcome = "completed";
+    else if (run.finished || turns.length >= turnCap) outcome = "completed";
     else console.error("The Stylist stopped without finishing.");
   } catch (error) {
     console.error("The Stylist's Styling broke:", error instanceof Error ? error.message : "unknown error");

@@ -64,7 +64,17 @@ function stylistSteps(
   ctx: StylingContext,
 ): Pick<
   StylistSteps,
-  "readBrief" | "readPhoto" | "readStyleIcons" | "passOverStyleIcon" | "saveOutfit" | "startPreviews" | "openPreview" | "openRedraw" | "keepPreview" | "saveNotes"
+  | "readBrief"
+  | "readTurnCap"
+  | "readPhoto"
+  | "readStyleIcons"
+  | "passOverStyleIcon"
+  | "saveOutfit"
+  | "startPreviews"
+  | "openPreview"
+  | "openRedraw"
+  | "keepPreview"
+  | "saveNotes"
 > {
   return {
     async saveNotes(stylingId, turn, texts) {
@@ -102,6 +112,11 @@ function stylistSteps(
         ...(used.length > 0 && { styleIconsUsed: used }),
         ...(passedOver.length > 0 && { styleIconsPassedOver: passedOver }),
       };
+    },
+
+    async readTurnCap(stylingId) {
+      const { limits } = await readRunningStyling(ctx.db, stylingId);
+      return limits.turns;
     },
 
     async readPhoto(stylingId) {

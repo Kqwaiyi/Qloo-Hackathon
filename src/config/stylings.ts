@@ -84,8 +84,36 @@ export const PREVIEW_STEP_MAX_RETRIES = 3;
 /** A Styling makes up to this many Outfits, one per top unused Style Icon. */
 export const OUTFITS_PER_STYLING = 2;
 
-/** A Styling fetches Brands for at most this many Style Icons, so Style Icons whose Brands don't fit can't use up Qloo's calls. */
-export const MAX_BRAND_FETCHES_PER_STYLING = 6;
+/**
+ * How much room the Stylist has on one Styling, so one Styling's cost is bounded. Each is the
+ * Styling's own, enforced by the Stylist's tools and its loop, never by its judgement. Redraws
+ * aren't among them: each Outfit's Preview may be redrawn once, whoever's Styling it is.
+ */
+export interface StylingLimits {
+  /**
+   * Turns, each one call to the Stylist's model. A Styling that reaches them finishes with the
+   * Outfits it saved, so a Stylist that keeps getting an Outfit wrong is bounded by its turns.
+   */
+  readonly turns: number;
+  /** Style Icons whose Brands it fetches, so Style Icons whose Brands don't fit can't use up Qloo's calls. */
+  readonly brandFetches: number;
+  /**
+   * Product searches, each counted once however many tries it takes, so one Styling can't run away
+   * with the product-search budget. Brand lookups are free, and don't count.
+   */
+  readonly productSearches: number;
+}
+
+/** Everyone's Stylings' limits: every Styling's but the Demo Account's. */
+export const EVERYONES_STYLING_LIMITS: StylingLimits = { turns: 30, brandFetches: 6, productSearches: 24 };
+
+/** A Demo Account Styling's limits: more room, so the judges' Stylings complete. */
+export const DEMO_ACCOUNT_STYLING_LIMITS: StylingLimits = { turns: 60, brandFetches: 10, productSearches: 40 };
+
+/** The limits of a Styling on the Demo Account, or of anyone else's. */
+export function stylingLimitsFor(onDemoAccount: boolean): StylingLimits {
+  return onDemoAccount ? DEMO_ACCOUNT_STYLING_LIMITS : EVERYONES_STYLING_LIMITS;
+}
 
 /**
  * For each Category, the Stylist chooses among this many of a Style Icon's Brands still in play,
@@ -98,13 +126,6 @@ export const QLOO_CALLS_AT_ONCE = 3;
 
 /** A Styling never has more product-search calls than this waiting at once, Brand lookups included. */
 export const PRODUCT_CALLS_AT_ONCE = 3;
-
-/**
- * A Styling makes at most this many product searches, each counted once however many tries it
- * takes, so one Styling can't run away with the product-search budget. Brand lookups are free, and
- * don't count. Like the cap on Brand fetches, it's the Styling's own, the Demo Account's included.
- */
-export const MAX_PRODUCT_SEARCHES_PER_STYLING = 24;
 
 /** How often a page waiting on a Styling asks for its status. */
 export const STYLING_STATUS_POLL_INTERVAL_MS = 1000;
@@ -138,10 +159,3 @@ export const STUCK_STYLING_MS = 10 * 60_000;
 export function isStuck(stageMovedAt: Date, now: Date): boolean {
   return now.getTime() - stageMovedAt.getTime() >= STUCK_STYLING_MS;
 }
-
-/**
- * The Stylist gets at most this many turns, each one call to its model, per Styling, so one
- * Styling's cost is bounded. A Styling that reaches it finishes with the Outfits it saved. A Stylist
- * that keeps getting an Outfit wrong is bounded by its turns.
- */
-export const MAX_STYLIST_TURNS = 30;

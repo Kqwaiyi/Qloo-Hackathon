@@ -3,9 +3,10 @@ import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { PHOTO_NOTICE_VERSION } from "@/config/accounts";
+import type { PhotoType } from "@/config/consultations";
 import { OUTFIT_ALLOWANCE, PHOTO_CHECK_LIMIT } from "@/config/limits";
 import { needsPhotoConsent } from "@/server/accounts/photo-consent";
-import { consultation, qlooCache, qlooLimitState, usageRecord } from "@/server/db/schema";
+import { consultation, qlooCache, qlooLimitState, styling, usageRecord } from "@/server/db/schema";
 import { readConsultation, startConsultation } from "@/server/operations/consultations";
 import { refreshPrices } from "@/server/operations/price-refresh";
 import { readSignedInUser } from "@/server/operations/session";
@@ -15,7 +16,7 @@ import { createDemoAccount } from "@/server/operations/team";
 import { changePhotoStyle, showMoreOutfits } from "@/server/operations/stylings";
 import { readUsageSummary } from "@/server/operations/usage";
 import { channel3Offer, channel3Product, channel3ProductDetail, channel3SellingEveryBrand } from "@/server/product-search/fake-channel3";
-import { qlooBrand, qlooPerson, qlooResponse } from "@/server/qloo/fake";
+import { qlooBrand, qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
 import { saveQlooLimitState } from "@/server/qloo/limit-state";
 import { recordProductSearches, recordUsage } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
@@ -28,6 +29,17 @@ const STYLE_ICONS = [
   qlooPerson("p-3", "Cleo Hart", 0.88),
   qlooPerson("p-4", "Dana Reed", 0.86),
   qlooPerson("p-5", "Esme Vale", 0.84),
+];
+
+// More Style Icons than a Demo Account Styling may fetch the Brands of.
+const ELEVEN_STYLE_ICONS = [
+  ...STYLE_ICONS,
+  qlooPerson("p-6", "Fay Lowe", 0.82),
+  qlooPerson("p-7", "Gia Penn", 0.8),
+  qlooPerson("p-8", "Hana Moss", 0.78),
+  qlooPerson("p-9", "Iris Lake", 0.76),
+  qlooPerson("p-10", "June Park", 0.74),
+  qlooPerson("p-11", "Kira Cole", 0.72),
 ];
 
 // Made-up Brands, shaped like Qloo's Brand entities, for a body photo's Outfits: the first is Bolt,
@@ -56,9 +68,12 @@ beforeEach(async () => {
   harness.ai.scenario = "pass";
   harness.ai.duringCall = undefined;
   harness.ai.photoCheckCount = 0;
+  harness.ai.stylistTurn = undefined;
+  harness.ai.stylistRequests.length = 0;
   harness.stylings.pending.length = 0;
   harness.qloo.requests.length = 0;
   harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+  harness.channel3.requests.length = 0;
   harness.channel3.respond = channel3SellingEveryBrand();
   await harness.db.delete(qlooCache);
   // The app-wide caps count every user's Outfits, and the product-search backstop every product
@@ -231,8 +246,7 @@ describe("Stylings on the Demo Account", () => {
   });
 
   it("build a body photo's Outfits from real Products, as anyone's are", async () => {
-    harness.qloo.respond = (request) =>
-      qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
+    harness.qloo.respond = qlooWithBrands(STYLE_ICONS);
     const judge = await signedInJudge();
     const started = await startConsultation(harness.context(judge), { photo: await jpeg(), photoType: "body_only", consent: BOTH_CONSENT_BOXES_TICKED });
     if (!started.ok) throw new Error(`Couldn't start a Consultation: ${started.refusal}`);
@@ -255,8 +269,7 @@ describe("Stylings on the Demo Account", () => {
   });
 
   it("count each product search they send towards the product-search backstop, as anyone's do", async () => {
-    harness.qloo.respond = (request) =>
-      qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
+    harness.qloo.respond = qlooWithBrands(STYLE_ICONS);
     await productSearchesMade(4969, "2026-10-05T09:00:00Z");
     const judge = await signedInJudge();
     const started = await startConsultation(harness.context(judge), { photo: await jpeg(), photoType: "body_only", consent: BOTH_CONSENT_BOXES_TICKED });
@@ -272,8 +285,7 @@ describe("Stylings on the Demo Account", () => {
   });
 
   it("have their Products' prices refreshed by any judge who opens them, as every judge sees every Consultation on it", async () => {
-    harness.qloo.respond = (request) =>
-      qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
+    harness.qloo.respond = qlooWithBrands(STYLE_ICONS);
     const judge = await signedInJudge();
     const started = await startConsultation(harness.context(judge), { photo: await jpeg(), photoType: "body_only", consent: BOTH_CONSENT_BOXES_TICKED });
     if (!started.ok) throw new Error(`Couldn't start a Consultation: ${started.refusal}`);
@@ -309,6 +321,112 @@ describe("Stylings on the Demo Account", () => {
   });
 });
 
+describe("the Demo Account's Stylist", () => {
+  it("has 60 turns on each Styling, not 30, and finishes with the Outfits it saved once they're used up", async () => {
+    // It saves Ava Stone's Outfit, then keeps asking for a Preview before starting the Previews.
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? save(hairstyleOutfit(1)) : turn > 2 ? call("renderPreview", { outfit: 1 }) : undefined);
+    const judge = await signedInJudge();
+    const consultationId = await start(judge);
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests.map(({ turn }) => turn)).toEqual(Array.from({ length: 60 }, (_, index) => index + 1));
+    expect(await readConsultation(harness.context(judge), consultationId)).toMatchObject({
+      state: "ready",
+      outfits: [{ position: 1, styleIconName: "Ava Stone", preview: { state: "failed" } }],
+    });
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1 })]);
+  });
+
+  it("may fetch the Brands of 10 Style Icons on each Styling, not 6, and refuses an 11th", async () => {
+    harness.qloo.respond = qlooWithBrands(ELEVEN_STYLE_ICONS);
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? call("fetchBrands", ...ELEVEN_STYLE_ICONS.map((_, index) => ({ styleIcon: index + 1 }))) : undefined);
+    const judge = await signedInJudge();
+    const consultationId = await start(judge, "body_only");
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests[2]!.toolResults.map(({ error }) => error)).toEqual([
+      null,
+      ...Array.from({ length: 10 }, () => null),
+      "Refused: This Styling has fetched the Brands of 10 Style Icons, as many as it may.",
+    ]);
+    expect(new Set(brandCalls().map((params) => params.get("signal.interests.entities")))).toEqual(
+      new Set(ELEVEN_STYLE_ICONS.slice(0, 10).map(({ entity_id }) => entity_id)),
+    );
+    expect((await readConsultation(harness.context(judge), consultationId))!.outfits).toHaveLength(2);
+  });
+
+  it("may make 40 product searches on each Styling, not 24, refusing a 41st, and counts the 40 towards the Styling's and this month's", async () => {
+    harness.qloo.respond = qlooWithBrands(STYLE_ICONS);
+    // Each of the first 4 Style Icons' top Brands, for every Piece it can be (3 Tops, 3 Bottoms, 3
+    // One-Pieces and 2 Shoes), all at once: 41 of them.
+    const everySearch = [1, 2, 3, 4]
+      .flatMap((styleIcon) => [
+        ...["Bolt", "Dune", "Jeanery"].flatMap((brand) => ["top", "bottom", "onePiece"].map((category) => ({ styleIcon, category, brand }))),
+        ...["Stride", "Sole"].map((brand) => ({ styleIcon, category: "shoes", brand })),
+      ])
+      .slice(0, 41);
+    let searched = false;
+    harness.ai.stylistTurn = ({ turn, toolResults }) => {
+      if (turn === 2) return call("fetchBrands", ...[1, 2, 3, 4].map((styleIcon) => ({ styleIcon })));
+      if (searched || toolResults.at(-1)?.toolName !== "fetchBrands") return undefined;
+      searched = true;
+      return call("searchProducts", ...everySearch);
+    };
+    const judge = await signedInJudge();
+    const consultationId = await start(judge, "body_only");
+
+    await harness.stylings.runPending();
+
+    const afterSearching = harness.ai.stylistRequests.find(({ toolResults }) => toolResults.at(-1)?.toolName === "searchProducts")!;
+    const searches = afterSearching.toolResults.filter(({ toolName }) => toolName === "searchProducts");
+    expect(searches).toHaveLength(41);
+    // Whichever was set going last: one whose Brand had to be looked up first may come after another.
+    expect(searches.flatMap(({ error }) => error ?? [])).toEqual(["Refused: This Styling has made all 40 of its product searches."]);
+    expect(harness.channel3.requests.filter(({ url }) => url.pathname === "/v1/browse")).toHaveLength(40);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ productSearches: 40, outfitsMade: 2 })]);
+    expect(await harness.db.$count(usageRecord, eq(usageRecord.kind, "product_search"))).toBe(40);
+  });
+});
+
+/** A turn that saves these Outfits, at once. */
+function save(...outfits: object[]) {
+  return { calls: outfits.map((input) => ({ tool: "saveOutfit", input })) };
+}
+
+/** A turn that calls `tool` once with each input, at once. */
+function call(tool: string, ...inputs: object[]) {
+  return { calls: inputs.map((input) => ({ tool, input })) };
+}
+
+/** An Outfit as the Stylist saves it: a Hairstyle from Style Icon `styleIcon`. */
+function hairstyleOutfit(styleIcon: number) {
+  return {
+    styleIcon,
+    hairstyle: {
+      cut: "Soft layered cut",
+      details: "A soft layered cut, trimmed to shape from your current length.",
+      cutKnown: true,
+      why: "A soft cut that carries your casual Photo Style.",
+    },
+  };
+}
+
+async function stylingsOf(consultationId: string) {
+  return harness.db.select().from(styling).where(eq(styling.consultationId, consultationId));
+}
+
+/** Answers each person call with `people`, whatever its line, and each Brand call with BRANDS. */
+function qlooWithBrands(people: readonly object[]) {
+  return ({ url }: RecordedQlooRequest) => qlooResponse(url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : people);
+}
+
+/** The Qloo requests that went out for Brands. */
+function brandCalls(): URLSearchParams[] {
+  return harness.qloo.requests.map((request) => request.url.searchParams).filter((params) => params.get("filter.type") === "urn:entity:brand");
+}
+
 /** A judge's browser, signed in to the Demo Account. */
 async function signedInJudge(): Promise<TestBrowser> {
   const judge = new TestBrowser();
@@ -341,14 +459,14 @@ async function productSearchesMade(count: number, time: string): Promise<void> {
   await recordProductSearches(harness.db, new Date(time), count);
 }
 
-/** Presses "Get my Outfits" with a plain JPEG Face Photo, agreeing on the consent sheet, returning what the operation returns. */
-async function getMyOutfits(browser: TestBrowser) {
-  return startConsultation(harness.context(browser), { photo: await jpeg(), photoType: "face", consent: BOTH_CONSENT_BOXES_TICKED });
+/** Presses "Get my Outfits" with a plain JPEG, a Face Photo unless it says, agreeing on the consent sheet, returning what the operation returns. */
+async function getMyOutfits(browser: TestBrowser, photoType: PhotoType = "face") {
+  return startConsultation(harness.context(browser), { photo: await jpeg(), photoType, consent: BOTH_CONSENT_BOXES_TICKED });
 }
 
-/** Starts a Face Photo Consultation, returning its id. Its Styling waits for `runPending()`. */
-async function start(browser: TestBrowser): Promise<string> {
-  const result = await getMyOutfits(browser);
+/** Starts a Consultation, a Face Photo's unless it says, returning its id. Its Styling waits for `runPending()`. */
+async function start(browser: TestBrowser, photoType: PhotoType = "face"): Promise<string> {
+  const result = await getMyOutfits(browser, photoType);
   if (!result.ok) throw new Error(`Couldn't start a Consultation: ${result.refusal}`);
   return result.consultationId;
 }

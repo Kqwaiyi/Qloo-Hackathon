@@ -36,6 +36,7 @@ export async function stylingWorkflow(stylingId: string): Promise<void> {
     stylingId,
     {
       readBrief,
+      readTurnCap,
       readPhoto,
       ranksStyleIcons,
       styleIconLines,
@@ -65,6 +66,12 @@ async function readBrief(stylingId: string): Promise<StylistBrief> {
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
   return runWorkflowStep((steps) => steps.readBrief(stylingId));
+}
+
+async function readTurnCap(stylingId: string): Promise<number> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.readTurnCap(stylingId));
 }
 
 /** Read from Blob into the Stylist's conversation, which keeps it in the run's data while the Styling runs. */

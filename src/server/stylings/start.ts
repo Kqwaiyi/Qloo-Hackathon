@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { BudgetTier, PhotoStyleWords } from "@/config/consultations";
 import { PRODUCT_SEARCH_BACKSTOP_SEARCHES, QLOO_BACKSTOP_CALLS } from "@/config/limits";
 import type { ProductSearchMarket } from "@/config/product-search";
-import { MAX_PRODUCT_SEARCHES_PER_STYLING, OUTFITS_PER_STYLING, type StylingKind, type StylingStage } from "@/config/stylings";
+import { EVERYONES_STYLING_LIMITS, OUTFITS_PER_STYLING, type StylingKind, type StylingStage } from "@/config/stylings";
 import { startOfNextUtcMonth } from "@/server/clock";
 import type { Transaction } from "@/server/db/database";
 import { consultation, styleIcon, styling } from "@/server/db/schema";
@@ -115,10 +115,11 @@ function qlooBackstopLiftsAt(state: QlooLimitState | null, now: Date): Date | nu
 /**
  * When the product-search backstop lifts, while this UTC calendar month's product searches leave too
  * little room below it for every search one more Styling may make, or null. That's when the next
- * month starts, and the count with it.
+ * month starts, and the count with it. Only everyone's Stylings are held by it, so the room is
+ * theirs: the Demo Account's, which may make more, start whatever the backstop says.
  */
 function productSearchBackstopLiftsAt(searchesThisMonth: number, now: Date): Date | null {
-  if (searchesThisMonth + MAX_PRODUCT_SEARCHES_PER_STYLING <= PRODUCT_SEARCH_BACKSTOP_SEARCHES) return null;
+  if (searchesThisMonth + EVERYONES_STYLING_LIMITS.productSearches <= PRODUCT_SEARCH_BACKSTOP_SEARCHES) return null;
   return startOfNextUtcMonth(now);
 }
 
