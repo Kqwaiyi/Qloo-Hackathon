@@ -200,7 +200,7 @@ describe("the photo check", () => {
 });
 
 describe("the Stylist's model", () => {
-  it("sends claude-sonnet-5-5 one of the Stylist's calls with its prompt, its tools, the conversation so far and the photo, with the API key", async () => {
+  it("sends claude-haiku-5-5 one of the Stylist's calls with its prompt, its tools, the conversation so far and the photo, with the API key", async () => {
     anthropic.respond = saveThenDone;
 
     await runTurns();
@@ -208,7 +208,7 @@ describe("the Stylist's model", () => {
     expect(anthropic.requests.map(({ url }) => url.href)).toEqual(["https://api.anthropic.com/v1/messages", "https://api.anthropic.com/v1/messages"]);
     const { headers, body } = anthropic.requests[1]!;
     expect(headers.get("x-api-key")).toBe("test-api-key");
-    expect(body.model).toBe("claude-sonnet-5-5");
+    expect(body.model).toBe("claude-haiku-5-5");
     expect(body.system).toEqual([{ type: "text", text: PROMPT }]);
     expect(body.tools).toEqual([expect.objectContaining({ name: "saveOutfit", description: "Saves one Outfit." })]);
     // The brief and the photo, then Claude's turn, its thinking given back as it came, then what the tool gave.
@@ -367,13 +367,13 @@ describe("the Stylist's model", () => {
     expect(inspect(error, { depth: Infinity })).not.toContain(SAVE_CALL.id);
   });
 
-  it("asks at medium effort, with thinking display omitted, never forcing a tool, with no temperature and no prefill", async () => {
+  it("asks at high effort, with thinking display omitted, never forcing a tool, with no temperature and no prefill", async () => {
     anthropic.respond = saveThenDone;
 
     await runTurns();
 
     for (const { body } of anthropic.requests) {
-      expect(body.output_config).toEqual({ effort: "medium" });
+      expect(body.output_config).toEqual({ effort: "high" });
       expect(body.thinking).toEqual({ type: "adaptive", display: "omitted" });
       expect(body.tool_choice).toEqual({ type: "auto" });
       expect(body).not.toHaveProperty("temperature");

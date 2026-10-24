@@ -29,6 +29,8 @@ Qloo still decides which Style Icons and Brands are candidates. The tools still 
 - Claude's thinking is never shown or stored.
 - While a Styling runs, its photo, Previews and the Stylist's conversation sit encrypted in the Workflow's run data. They're unreadable the moment it ends and gone within 36 days, and the Privacy Policy says so.
 
+> **Partly replaced** by the [Cheaper Stylist spec](../cheaper-stylist/spec.md) and [ADR-0012](../../docs/adr/0012-haiku-drives-the-stylist-sonnet-judges-previews.md): Claude Haiku 5.5, at high effort, now drives the Stylist, and the Stylist no longer checks Previews. Once it has saved every Outfit, our code draws each Preview, asks Claude Sonnet 5.5 for a verdict, redraws once on a fault, and keeps an image by the hard rules.
+
 ## User Stories
 
 ### Waiting for Outfits
@@ -65,6 +67,8 @@ Qloo still decides which Style Icons and Brands are candidates. The tools still 
 27. As a user in a photo with other people, I want the Stylist to style only the Main Person, so that nobody else is dressed or described.
 
 ### Checking Previews
+
+> **Partly replaced** by the [Cheaper Stylist spec](../cheaper-stylist/spec.md) ("The Preview phase") and [ADR-0012](../../docs/adr/0012-haiku-drives-the-stylist-sonnet-judges-previews.md): the Stylist no longer checks Previews. Once its loop ends, with finish or at the turn cap, our code draws each Preview and asks Claude Sonnet 5.5 for a verdict on it, redraws once on a fault, and keeps an image by these hard rules. What the user gets is unchanged.
 
 28. As a user, I want the Stylist to check each Preview against my photo and the Products, so that a wrong garment, a changed face or an invented face is caught before I see it.
 29. As a user whose Preview is wrong, I want the Stylist to redraw it once, with a correction, so that I get a Preview that shows the Outfit.
@@ -136,6 +140,8 @@ Qloo still decides which Style Icons and Brands are candidates. The tools still 
 
 ### The Stylist and its tools
 
+> **Partly replaced** by the [Cheaper Stylist spec](../cheaper-stylist/spec.md) ("The Stylist's loop") and [ADR-0012](../../docs/adr/0012-haiku-drives-the-stylist-sonnet-judges-previews.md): the Stylist's tools are findStyleIcons, fetchBrands, searchProducts, passOverStyleIcon, saveOutfit, writeNote and finish. Drawing, redrawing and keeping a Preview are no longer tools: our code draws and judges each Preview after the Stylist finishes ("The Preview phase"). Finish is never refused. Passing over a Style Icon takes a kind of reason, style or hair length, and hair length is accepted only on a Face Photo, at most twice a Styling.
+
 - **The Stylist runs on the AI SDK's Workflow agent** (ADR-0011). Our own AI interface supplies the agent's model, configured for the Stylist, beside the photo check and the Preview, so which provider runs it still appears only in the adapters. The tailoring method goes: the Stylist's "save an Outfit" tool takes its place. The agent's package is added, pinned to the release built for the app's AI SDK version, since each release pins exactly one.
 - **The Stylist's tools** are the only way it acts. Each tool checks its own rules and returns an error the Stylist can read and correct in its next turn, instead of today's "ask again once":
   - **Find Style Icons:** today's person calls for the Styling's lines, ranked and saved as today. It's offered only to Stylings that rank their own Style Icons. Others get the current list in their brief.
@@ -160,6 +166,8 @@ Qloo still decides which Style Icons and Brands are candidates. The tools still 
 - **The Stylist's prompt** carries today's tailoring rules: style only the Main Person, named as the most prominent person; never guess age or gender, never infer ethnicity, skin tone, body measurements or health; no prices; prefer separates to a One-Piece; the Hairstyle rules. It adds the rules for notes: second person, English, short, about style, naming Qloo but not the product search provider.
 
 ### The loop
+
+> **Partly replaced** by the [Cheaper Stylist spec](../cheaper-stylist/spec.md) ("The Stylist's loop", "The Preview phase") and [ADR-0012](../../docs/adr/0012-haiku-drives-the-stylist-sonnet-judges-previews.md): the Stylist's conversation holds no image but the photo. No Preview or seller photo enters it, so its model step fetches none. The Preview phase runs in the Styling's Workflow once the loop ends, with finish or at the turn cap, and never after a turn that broke the Styling.
 
 - **The loop is the Workflow agent's** (ADR-0011). A Styling's Workflow loads what the brief needs in a step, then runs the agent. Each model call is a durable step the agent makes, and each tool's work is a durable step of ours.
   - **The conversation** lives in the run, not in our database. The agent sends the whole conversation each turn, the photo included, and keeps Claude's thinking blocks as Claude needs them back.
@@ -196,6 +204,8 @@ Qloo still decides which Style Icons and Brands are candidates. The tools still 
 - **The "taking longer than usual" line** waits 3 minutes on "Building Outfits". Every other item keeps 60 seconds.
 
 ### Models and providers
+
+> **Partly replaced** by the [Cheaper Stylist spec](../cheaper-stylist/spec.md) ("Models and the AI config", "The Anthropic adapter") and [ADR-0012](../../docs/adr/0012-haiku-drives-the-stylist-sonnet-judges-previews.md): Claude Haiku 5.5, at high effort, drives the Stylist. Its turn's output cap is unchanged, and its prompt caching, thinking display and never-forced tool calls are as here. Claude Sonnet 5.5, at medium effort, judges each Preview in a call of its own, through a new method of our AI interface. Claude is sent each seller photo at most 768 pixels on its long side and each Preview at most 1024. The photo check and the Preview model are unchanged.
 
 - **Models:** Claude Haiku 5.5 for the photo check (medium effort), and Claude Sonnet 5.5 for the Stylist (medium effort), moved from Haiku 5.5 at high effort after the Haiku check (ticket 12). Gemini's Nano Banana 2.1 for Previews. Every model name stays in the AI config. The Gemini photo-check and tailoring model settings go.
 - **The new Anthropic adapter** implements the photo check and supplies the Stylist's model, both through the AI SDK's Anthropic provider at the version built for the app's AI SDK. The Gemini adapter keeps only the Preview.
