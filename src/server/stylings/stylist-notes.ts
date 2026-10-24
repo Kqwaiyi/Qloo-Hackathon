@@ -108,8 +108,23 @@ export async function readStylistNotes(db: Database | Transaction, stylingId: st
 export function notesIn(texts: readonly string[]): string[] {
   return texts
     .flatMap((text) => text.split(/\r?\n/))
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter((line) => line.length > 0 && line.length <= STYLIST_NOTE_MAX_LENGTH && !statesAPrice(line));
+    .map(asOneNote)
+    .filter((line) => noteFault(line) === null);
+}
+
+/** Text the Stylist wrote, as one note: its line breaks and runs of spaces made single spaces, trimmed. */
+export function asOneNote(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** What can be wrong with a note the Stylist wrote, checked like a "why" line. */
+export type NoteFault = "empty" | "states a price" | "too long";
+
+/** Why a note, as `asOneNote` makes it, can't be kept, or null when it can. */
+export function noteFault(note: string): NoteFault | null {
+  if (note.length === 0) return "empty";
+  if (statesAPrice(note)) return "states a price";
+  return note.length > STYLIST_NOTE_MAX_LENGTH ? "too long" : null;
 }
 
 /**
@@ -134,6 +149,8 @@ export const STEPS = {
   brandsFetched: (styleIconName: string) => `Asked Qloo for the Brands ${styleIconName}'s fans favour`,
   /** A Style Icon passed over, as its Brands can't complete an Outfit. */
   passedOver: (styleIconName: string) => `Passed over ${styleIconName}: the Brands their fans favour can't complete an Outfit`,
+  /** A Style Icon the Stylist chose to pass over, whose reason follows as a note. */
+  passedOverByStylist: (styleIconName: string) => `Passed over ${styleIconName}`,
   /** One Piece's search, by how many Products qualified, or null when it never answered. */
   searched: (brandName: string, category: ProductCategory, found: number | null) =>
     `Searched ${brandName}'s ${SEARCHED_FOR[category]}: ${found === null ? "no answer" : `${found === 0 ? "none" : found} in stock`}`,

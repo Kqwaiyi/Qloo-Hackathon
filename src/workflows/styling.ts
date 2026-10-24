@@ -12,6 +12,7 @@ import {
   type ProductsSearched,
   runStylist,
   type SavedOutfit,
+  type StyleIconPassedOver,
   type StylingOutcome,
   type StylistStepResult,
 } from "@/server/stylings/stylist";
@@ -42,6 +43,7 @@ export async function stylingWorkflow(stylingId: string): Promise<void> {
       readBrandsInPlay,
       lookUpBrand,
       searchProducts,
+      passOverStyleIcon,
       saveOutfit,
       startPreviews,
       openPreview,
@@ -131,6 +133,12 @@ async function searchProducts(stylingId: string, input: unknown): Promise<Stylis
   return runWorkflowStep((steps) => steps.searchProducts(stylingId, input), { maxRetries: PRODUCT_SEARCH_STEP_MAX_RETRIES });
 }
 searchProducts.maxRetries = PRODUCT_SEARCH_STEP_MAX_RETRIES;
+
+async function passOverStyleIcon(stylingId: string, turn: number, input: unknown): Promise<StylistStepResult<StyleIconPassedOver>> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.passOverStyleIcon(stylingId, turn, input));
+}
 
 async function saveOutfit(stylingId: string, input: unknown): Promise<StylistStepResult<SavedOutfit>> {
   "use step";

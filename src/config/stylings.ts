@@ -64,6 +64,12 @@ export const OUTFITS_PER_STYLING = 2;
 /** A Styling fetches Brands for at most this many Style Icons, so Style Icons whose Brands don't fit can't use up Qloo's calls. */
 export const MAX_BRAND_FETCHES_PER_STYLING = 6;
 
+/**
+ * For each Category, the Stylist chooses among this many of a Style Icon's Brands still in play,
+ * best first (ADR-0010): one that drops out of play makes way for the next.
+ */
+export const TOP_BRANDS_PER_CATEGORY = 3;
+
 /** A Styling never has more Qloo calls than this waiting at once. There's no shared rate limiter. */
 export const QLOO_CALLS_AT_ONCE = 3;
 

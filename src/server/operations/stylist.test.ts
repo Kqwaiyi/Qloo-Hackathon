@@ -1,10 +1,11 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { PhotoType } from "@/config/consultations";
-import type { FakeStylistRequest } from "@/server/ai/fake-stylist";
+import type { FakeStylistRequest, FakeStylistTurn } from "@/server/ai/fake-stylist";
 import { brandMatch, consultation, qlooCache, styleIcon, styling, stylistNote, usageRecord } from "@/server/db/schema";
 import { deleteAccount } from "@/server/operations/account";
 import { deleteConsultation, readConsultation, startConsultation } from "@/server/operations/consultations";
@@ -164,10 +165,37 @@ describe("the Stylist's prompt", () => {
     await harness.stylings.runPending();
 
     const [first] = harness.ai.stylistRequests;
-    expect(first!.tools.toSorted()).toEqual(["fetchBrands", "findStyleIcons", "finish", "renderPreview", "saveOutfit", "searchProducts", "startPreviews"]);
+    expect(first!.tools.toSorted()).toEqual([
+      "fetchBrands",
+      "findStyleIcons",
+      "finish",
+      "passOverStyleIcon",
+      "renderPreview",
+      "saveOutfit",
+      "searchProducts",
+      "startPreviews",
+    ]);
     for (const tool of first!.tools) expect(first!.instructions).toContain(tool);
-    expect(first!.instructions).toMatch(/first Brand on its list that's still in play/i);
+    expect(first!.instructions).toMatch(/top 3 Brands/i);
     expect(first!.instructions).toMatch(/One-Piece/);
+  });
+
+  it("explains how to choose each Category's Brand among a Style Icon's top 3, weighing the photo, the Photo Style and the rest of the Outfit", async () => {
+    const prompt = await promptSent();
+
+    expect(prompt).toMatch(/choose whichever of its top 3 Brands best suits/i);
+    expect(prompt).toMatch(/what the person is wearing in the photo/i);
+    expect(prompt).toMatch(/their Photo Style/i);
+    expect(prompt).toMatch(/the rest of the Outfit/i);
+    expect(prompt).toMatch(/Qloo decides which Style Icons and Brands you choose among/i);
+  });
+
+  it("explains passing over a Style Icon that doesn't suit the photo, giving reasons about style, never about the user or the Style Icon as a person", async () => {
+    const prompt = await promptSent();
+
+    expect(prompt).toMatch(/pass over a Style Icon whose style doesn't suit the photo/i);
+    expect(prompt).toContain("her shoe Brands only sell heels, which don't fit your sporty Photo Style");
+    expect(prompt).toMatch(/reasons? (are|is) about style, never about the user or the Style Icon as a person/i);
   });
 });
 
@@ -187,7 +215,7 @@ describe("each kind of Styling's brief", () => {
       ageGroup: "30–34",
       outfits: 2,
     });
-    expect(first!.tools.toSorted()).toEqual(["findStyleIcons", "finish", "renderPreview", "saveOutfit", "startPreviews"]);
+    expect(first!.tools.toSorted()).toEqual(["findStyleIcons", "finish", "passOverStyleIcon", "renderPreview", "saveOutfit", "startPreviews"]);
   });
 
   it('gives "Show 2 more Outfits" the next unused Style Icons, and those already used, to carry on down without asking Qloo', async () => {
@@ -497,6 +525,126 @@ describe("the Stylist's tools", () => {
   });
 });
 
+describe("passing over a Style Icon", () => {
+  const REASON = "Ava Stone's signature cut is a sleek bob, which doesn't go with your casual Photo Style.";
+
+  it("marks it skipped, and adds a step saying so to the Stylist's Notes, then the Stylist's reason, so the next Style Icons' Outfits are made", async () => {
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? call("passOverStyleIcon", { styleIcon: 1, reason: `  ${REASON}\n` }) : undefined);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests[2]!.toolResults.at(-1)).toMatchObject({ toolName: "passOverStyleIcon", output: { styleIcon: 1 }, error: null });
+    expect(await styleIconStatusesOf(consultationId)).toEqual(["skipped", "used", "used"]);
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown.outfits.map((o) => [o.position, o.styleIconName])).toEqual([
+      [1, "Bea Marsh"],
+      [2, "Cleo Hart"],
+    ]);
+    expect(shown.stylistNotes[0]!.notes.slice(1, 4)).toEqual([
+      { kind: "step", text: "Asked Qloo for Style Icons popular in the United States with a casual Photo Style: 3 found" },
+      { kind: "step", text: "Passed over Ava Stone" },
+      { kind: "note", text: REASON },
+    ]);
+  });
+
+  it.each([
+    ["no reason", { styleIcon: 1, reason: " \n " }, "Refused: Say why you're passing over Ava Stone, about style."],
+    ["a reason that states a price", { styleIcon: 1, reason: "Her signature cut costs about $90 to keep up." }, "Refused: Your reason for passing over Ava Stone must not state a price."],
+    [
+      "a reason too long for a note",
+      { styleIcon: 1, reason: `Her signature cut is ${"very ".repeat(60)}sleek.` },
+      "Refused: Your reason for passing over Ava Stone is too long: keep it to a sentence.",
+    ],
+    ["a Style Icon not on the list", { styleIcon: 4, reason: REASON }, "Refused: There's no Style Icon 4 on your list."],
+  ])("refuses to pass over a Style Icon with %s, passing nothing over", async (_name, input, refusal) => {
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? call("passOverStyleIcon", input) : undefined);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests[2]!.toolResults.at(-1)).toMatchObject({ toolName: "passOverStyleIcon", output: null, error: refusal });
+    expect(await styleIconStatusesOf(consultationId)).toEqual(["used", "used", "unused"]);
+    expect(JSON.stringify((await readConsultation(harness.context(browser), consultationId))!.stylistNotes)).not.toContain("Passed over");
+  });
+
+  it("refuses to pass over a Style Icon that has inspired an Outfit, and any once the Previews start", async () => {
+    harness.ai.stylistTurn = ({ turn, toolResults }) => {
+      if (turn === 3) return call("passOverStyleIcon", { styleIcon: 1, reason: REASON });
+      return toolResults.at(-1)?.toolName === "startPreviews" ? call("passOverStyleIcon", { styleIcon: 3, reason: REASON }) : undefined;
+    };
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    expect(saveResults().map(({ error }) => error)).toEqual([null, null]);
+    expect(harness.ai.stylistRequests.at(-1)!.toolResults.filter(({ toolName }) => toolName === "passOverStyleIcon").map(({ error }) => error)).toEqual([
+      "Refused: Ava Stone has already inspired an Outfit.",
+      "Refused: You've started the Previews, so no Style Icon can be passed over now.",
+    ]);
+    expect(await styleIconStatusesOf(consultationId)).toEqual(["used", "used", "unused"]);
+  });
+});
+
+describe("the fake Stylist's scenarios", () => {
+  it("pass over a Face Photo's first Style Icon, saying why, in style-icon-passed-over", async () => {
+    harness.ai.scenario = "style-icon-passed-over";
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    expect(await styleIconStatusesOf(consultationId)).toEqual(["skipped", "used", "used"]);
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown.outfits.map((o) => o.styleIconName)).toEqual(["Bea Marsh", "Cleo Hart"]);
+    expect(shown.stylistNotes[0]!.notes.slice(2, 5)).toEqual([
+      { kind: "note", text: "I'll pass over Ava Stone, and go on to the next Style Icon." },
+      { kind: "step", text: "Passed over Ava Stone" },
+      { kind: "note", text: "Ava Stone's signature cut doesn't go with your casual Photo Style." },
+    ]);
+  });
+
+  it("pass over a body photo's first Style Icon once its Brands are fetched, saying why, in style-icon-passed-over", async () => {
+    harness.ai.scenario = "style-icon-passed-over";
+    harness.qloo.respond = qlooWithBrands(WOMEN);
+    const browser = await signedInUser();
+    const consultationId = await start(browser, "body_only");
+
+    await harness.stylings.runPending();
+
+    expect(await styleIconStatusesOf(consultationId)).toEqual(["skipped", "used", "used"]);
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Bea Marsh", ["Bolt", "Jeanery", "Stride"]],
+      ["Cleo Hart", ["Dune", "Bolt", "Sole"]],
+    ]);
+    const notes = shown.stylistNotes[0]!.notes.map(({ text }) => text);
+    expect(notes.indexOf("Passed over Ava Stone")).toBeGreaterThan(notes.indexOf("Asked Qloo for the Brands Ava Stone's fans favour"));
+    expect(notes[notes.indexOf("Passed over Ava Stone") + 1]).toBe("The Brands Ava Stone's fans favour don't go with your casual Photo Style.");
+  });
+
+  it("take each Category's second Brand still in play in second-brand, from Qloo's Brand calls as ever", async () => {
+    harness.ai.scenario = "second-brand";
+    harness.qloo.respond = qlooWithBrands(WOMEN);
+    const browser = await signedInUser();
+    const consultationId = await start(browser, "body_only");
+
+    await harness.stylings.runPending();
+
+    expect(saveResults().map(({ error }) => error)).toEqual([null, null]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
+      ["Ava Stone", ["Dune", "Bolt", "Sole"]],
+      ["Bea Marsh", ["Jeanery", "Dune", "Pace"]],
+    ]);
+    // The Photo Style steers only the Style Icons Qloo picks, never their Brands (ADR-0002).
+    expect(brandCalls()).toHaveLength(3);
+    for (const params of brandCalls()) expect(params.has("signal.interests.tags")).toBe(false);
+  });
+});
+
 describe("a body photo's Stylist", () => {
   /** Ava Stone's Outfit as the Stylist saves it by default: Bolt's, Jeanery's and Stride's first Products. */
   const AVAS_OUTFIT = {
@@ -513,8 +661,13 @@ describe("a body photo's Stylist", () => {
   }
 
   it.each([
-    ["Brands that aren't each Category's first still in play", { brands: { ...AVAS_OUTFIT.brands, top: "Dune" } }, "Refused: Bolt is Ava Stone's first Top Brand still in play, not Dune."],
+    [
+      "a 4th Brand for a Category, beyond the Style Icon's top 3",
+      { brands: { ...AVAS_OUTFIT.brands, top: "Ember" } },
+      "Refused: Ember isn't among Ava Stone's top 3 Top Brands still in play: Bolt, Dune and Jeanery.",
+    ],
     ["a Brand Qloo didn't give for the Category", { brands: { ...AVAS_OUTFIT.brands, top: "Stride" } }, "Refused: Stride isn't one of Ava Stone's Top Brands that the product search knows."],
+    ["a Brand Qloo didn't give at all", { brands: { ...AVAS_OUTFIT.brands, shoes: "Gucci" } }, "Refused: Gucci isn't one of Ava Stone's Shoes Brands that the product search knows."],
     ["no Brands", { brands: undefined }, "Refused: Name the Outfit's Brands: its top, bottom and shoes, each by its name as fetchBrands listed it."],
     [
       "a Product its Brand's search didn't find",
@@ -561,6 +714,84 @@ describe("a body photo's Stylist", () => {
         ["shoes", "Stride", "Product c3-stride-shoes-1"],
       ],
     ]);
+  });
+
+  it("saves an Outfit on any of a Style Icon's top 3 Brands for a Category, such as its second or third", async () => {
+    harness.qloo.respond = qlooWithBrands([WOMEN[0]!]);
+    // Ava Stone's third Top Brand, her second Bottom Brand and her second Shoes Brand.
+    const outfit = {
+      styleIcon: 1,
+      brands: { top: "Jeanery", bottom: "Bolt", shoes: "Sole" },
+      top: { product: "c3-jeanery-top-1", why: "A relaxed denim shirt for your casual Photo Style." },
+      bottom: { product: "c3-bolt-bottom-1", why: "Easy trousers that keep the Outfit light." },
+      shoes: { product: "c3-sole-shoes-1", why: "Trainers that finish the Outfit." },
+    };
+    harness.ai.stylistTurn = ({ toolResults }) => {
+      if (toolResults.at(-1)?.toolName === "fetchBrands") {
+        return call(
+          "searchProducts",
+          { styleIcon: 1, category: "top", brand: "Jeanery" },
+          { styleIcon: 1, category: "bottom", brand: "Bolt" },
+          { styleIcon: 1, category: "shoes", brand: "Sole" },
+        );
+      }
+      return toolResults.at(-1)?.toolName === "searchProducts" && !toolResults.some(({ toolName }) => toolName === "saveOutfit") ? save(outfit) : undefined;
+    };
+    const browser = await signedInUser();
+    const consultationId = await start(browser, "body_only");
+
+    await harness.stylings.runPending();
+
+    expect(saveResults().map(({ error }) => error)).toEqual([null]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.pieces.map((p) => [p.category, p.brand?.name, p.item]))).toEqual([
+      [
+        ["top", "Jeanery", "Product c3-jeanery-top-1"],
+        ["bottom", "Bolt", "Product c3-bolt-bottom-1"],
+        ["shoes", "Sole", "Product c3-sole-shoes-1"],
+      ],
+    ]);
+  });
+
+  it("lets a Category's 4th Brand into its top 3 once the first's search finds nothing, for the Stylist to search for, save, and see when it fetches again", async () => {
+    harness.qloo.respond = qlooWithBrands([WOMEN[0]!]);
+    // Bolt's tops are all shown on a model, so its search for Ava Stone's Top finds none.
+    harness.channel3.respond = channel3SellingEveryBrand({
+      products: (search) =>
+        search.brandId === "c3-bolt" && search.category === "top"
+          ? [channel3Product("bolt-on-model", { brandIds: ["c3-bolt"], images: [{ url: "https://images.example/bolt.jpg", cleaned_url: null, shot_type: "on_model" }] })]
+          : channel3SmallCatalogue(search),
+    });
+    const emberTop = { styleIcon: 1, category: "top", brand: "Ember" };
+    const outfit = {
+      ...AVAS_OUTFIT,
+      brands: { ...AVAS_OUTFIT.brands, top: "Ember" },
+      top: { product: "c3-ember-top-1", why: "A soft knit that keeps the Outfit easy." },
+    };
+    // Having fetched Ava Stone's Brands, it tries Ember's Tops, then searches Bolt's, then fetches again.
+    const turns: Record<number, FakeStylistTurn> = {
+      3: call("searchProducts", emberTop),
+      4: call("searchProducts", { styleIcon: 1, category: "top", brand: "Bolt" }, { styleIcon: 1, category: "bottom", brand: "Jeanery" }, { styleIcon: 1, category: "shoes", brand: "Stride" }),
+      5: call("fetchBrands", { styleIcon: 1 }),
+      6: call("searchProducts", emberTop),
+      7: save(outfit),
+    };
+    harness.ai.stylistTurn = ({ turn }) => turns[turn];
+    const browser = await signedInUser();
+    const consultationId = await start(browser, "body_only");
+
+    await harness.stylings.runPending();
+
+    const results = harness.ai.stylistRequests.at(-1)!.toolResults;
+    expect(results.filter(({ input }) => isDeepStrictEqual(input, emberTop)).map(({ output, error }) => [error, (output as { candidates?: string[] } | null)?.candidates?.length])).toEqual([
+      ["Refused: Ember isn't among Ava Stone's top 3 Top Brands still in play: Bolt, Dune and Jeanery.", undefined],
+      [null, 2],
+    ]);
+    expect(results.filter(({ toolName }) => toolName === "fetchBrands").map(({ output }) => (output as { brands: { top: string[] } }).brands.top)).toEqual([
+      ["Bolt", "Dune", "Jeanery"],
+      ["Dune", "Jeanery", "Ember"],
+    ]);
+    expect(saveResults().map(({ error }) => error)).toEqual([null]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.pieces.map((p) => p.brand?.name))).toEqual([["Ember", "Jeanery", "Stride"]]);
   });
 
   it("refuses a Brand another Outfit uses in the same Category, a current Outfit's included", async () => {
@@ -612,13 +843,13 @@ describe("a body photo's Stylist", () => {
 
   it("refuses a 25th search, counting 24 towards the Styling's and this month's product searches", async () => {
     harness.qloo.respond = qlooWithBrands(WOMEN);
-    // Every Brand Ava Stone's fans favour, for every Piece it can be, then one more.
+    // Each of Ava Stone's and Bea Marsh's top 3 Brands, for every Piece it can be, then one more.
     const everySearch = [
-      ...["Bolt", "Dune", "Jeanery", "Ember", "Hem", "Loom", "Weft"].flatMap((brand) =>
-        ["top", "bottom", "onePiece"].map((category) => ({ styleIcon: 1, category, brand })),
-      ),
-      ...["Stride", "Sole", "Pace"].map((brand) => ({ styleIcon: 1, category: "shoes", brand })),
-      { styleIcon: 2, category: "top", brand: "Bolt" },
+      ...[1, 2].flatMap((styleIcon) => [
+        ...["Bolt", "Dune", "Jeanery"].flatMap((brand) => ["top", "bottom", "onePiece"].map((category) => ({ styleIcon, category, brand }))),
+        ...["Stride", "Sole", "Pace"].map((brand) => ({ styleIcon, category: "shoes", brand })),
+      ]),
+      { styleIcon: 3, category: "top", brand: "Bolt" },
     ];
     harness.ai.stylistTurn = ({ toolResults }) =>
       toolResults.at(-1)?.toolName === "fetchBrands" ? call("searchProducts", ...everySearch) : undefined;
@@ -633,7 +864,7 @@ describe("a body photo's Stylist", () => {
     expect(searches).toHaveLength(25);
     expect(searches.flatMap(({ error }) => error ?? [])).toEqual(["Refused: This Styling has made all 24 of its product searches."]);
     expect(harness.channel3.requests.filter(({ url }) => url.pathname === "/v1/browse")).toHaveLength(24);
-    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ productSearches: 24, outfitsMade: 1 })]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ productSearches: 24, outfitsMade: 2 })]);
     expect(await harness.db.$count(usageRecord, eq(usageRecord.kind, "product_search"))).toBe(24);
   });
 

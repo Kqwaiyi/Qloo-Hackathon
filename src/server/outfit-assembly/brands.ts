@@ -257,6 +257,26 @@ export function firstBrandsInPlay<B>(
   return { top, bottom, shoes };
 }
 
+/**
+ * The Brands a Style Icon's Outfit may take for each Category (ADR-0010): the first `count` of its
+ * list still in play, best first, by `inPlay` as `firstBrandsInPlay` reads it. The Bottom's list puts
+ * `denimFirst` first, as a Bottom takes a denim Brand before any other, and its `denimFirst` is the
+ * denim Brands among them. One that drops out of play makes way for the next on its list. The
+ * Brands `firstBrandsInPlay` would pick, the fixed pipeline's, are always among them. Brands are
+ * the same by `sameBrand`.
+ */
+export function topBrandsInPlay<B>(
+  lists: BrandLists<B>,
+  inPlay: (category: BrandCategory, brand: B) => boolean,
+  count: number,
+  sameBrand: (a: B, b: B) => boolean,
+): BrandLists<B> {
+  const firstInPlay = (category: BrandCategory, brands: readonly B[]) => brands.filter((brand) => inPlay(category, brand)).slice(0, count);
+  const isDenim = (brand: B) => lists.denimFirst.some((denim) => sameBrand(denim, brand));
+  const bottom = firstInPlay("bottom", [...lists.bottom.filter(isDenim), ...lists.bottom.filter((brand) => !isDenim(brand))]);
+  return { shoes: firstInPlay("shoes", lists.shoes), top: firstInPlay("top", lists.top), bottom, denimFirst: bottom.filter(isDenim) };
+}
+
 /** A Brand Piece's price range: its Brand's `price_range_usd_min`–`max`, or null without both. */
 export function brandPriceRange(min: number | null, max: number | null): PriceRangeUsd | null {
   return min === null || max === null ? null : { min, max };

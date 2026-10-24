@@ -1,8 +1,14 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
-import { type BrandCategory, type BudgetTier, CATEGORY_LABELS, type ProductCategory } from "@/config/consultations";
+import { type BrandCategory, type BudgetTier, CATEGORY_LABELS, inASentence, type ProductCategory } from "@/config/consultations";
 import { PRODUCT_SEARCH_MARKET_CURRENCIES } from "@/config/product-search";
-import { MAX_BRAND_FETCHES_PER_STYLING, MAX_PRODUCT_SEARCHES_PER_STYLING, type PieceSearchState, type StylingKind } from "@/config/stylings";
+import {
+  MAX_BRAND_FETCHES_PER_STYLING,
+  MAX_PRODUCT_SEARCHES_PER_STYLING,
+  type PieceSearchState,
+  type StylingKind,
+  TOP_BRANDS_PER_CATEGORY,
+} from "@/config/stylings";
 import type { Clock } from "@/server/clock";
 import type { Database, Transaction } from "@/server/db/database";
 import { consultation, outfit, pieceCandidates, styleIcon, styleIconBrands, styling } from "@/server/db/schema";
@@ -19,6 +25,7 @@ import {
   fullestPool,
   isThinPool,
   needsBrands,
+  topBrandsInPlay,
   type UsedBrands,
 } from "@/server/outfit-assembly/brands";
 import { outfitCategories } from "@/server/outfit-assembly/categories";
@@ -55,9 +62,9 @@ import { addSteps, STEPS } from "./stylist-notes";
 // fetching a Style Icon's Brands, and searching for a Piece's Products. They keep the fixed
 // pipeline's rules: Qloo's Brand call and its widening, the Brands the product search knows, looked
 // up as they're about to be used, and the product search's filters, never loosened. Each returns
-// what the Stylist needs and nothing more, so its conversation stays small. For now the Stylist
-// takes each Category's first Brand still in play, as the pipeline did; choosing among a Style
-// Icon's top few, as ADR-0010 has it, comes next.
+// what the Stylist needs and nothing more, so its conversation stays small. For each Category, the
+// Stylist chooses among a Style Icon's top few Brands still in play (ADR-0010), and searches and
+// saves refuse any other, so Qloo still decides which Brands are candidates, and in what order.
 
 /** The Stylist's steps for a body photo's Brands and Products, running on `ctx`, as this try of them. */
 export function brandSteps(
@@ -118,9 +125,9 @@ export function brandSteps(
       return { ok: true, styleIcon: icon.number };
     },
 
-    // Only the Brands its first Brands in play would be are looked up, as they're about to be used,
-    // and looked up again until they're all known: a Brand the product search doesn't know is out of
-    // play, and the next one in its list takes its place.
+    // Only the Brands the Outfit may take are looked up, as they're about to be used, and looked up
+    // again until they're all known, so the Stylist is only told Brands the product search knows: one
+    // it doesn't know is out of play, and the next one in its list takes its place.
     async readBrandsInPlay(stylingId, styleIconNumber) {
       const running = await readRunningStyling(ctx.db, stylingId);
       const state = await readBrandState(ctx.db, ctx.clock, { stylingId, ...running });
@@ -128,23 +135,16 @@ export function brandSteps(
       const pool = icon && state.pools.get(icon.id);
       if (!icon || !pool) throw new Error(`Style Icon ${styleIconNumber}'s Brands haven't been fetched.`);
       const fetchesLeft = Math.max(MAX_BRAND_FETCHES_PER_STYLING - state.pools.size, 0);
-      const picks = firstInPlay(state, icon);
-      if (picks) {
-        const lookUp = [...new Map([picks.shoes, picks.top, picks.bottom].map((brand) => [brand.entityId, brand])).values()]
+      if (firstInPlay(state, icon)) {
+        const offered = topInPlay(state, icon);
+        const lookUp = [...new Map([...offered.shoes, ...offered.top, ...offered.bottom].map((brand) => [brand.entityId, brand])).values()]
           .filter((brand) => !state.matches.has(brand.entityId))
           .map(({ entityId, name, officialSite }): BrandToLookUp => ({ entityId, name, officialSite }));
         if (lookUp.length > 0) return { lookUp };
-        const lists = listsOf(state, icon);
-        const inPlay = inPlayIn(state);
-        const names = (category: BrandCategory, brands: readonly QlooBrand[]) => brands.filter((brand) => inPlay(category, brand)).map(({ name }) => name);
+        const names = (brands: readonly QlooBrand[]) => brands.map(({ name }) => name);
         return {
           styleIcon: icon.number,
-          brands: {
-            shoes: names("shoes", lists.shoes),
-            top: names("top", lists.top),
-            bottom: names("bottom", lists.bottom),
-            denimFirst: names("bottom", lists.denimFirst),
-          },
+          brands: { shoes: names(offered.shoes), top: names(offered.top), bottom: names(offered.bottom), denimFirst: names(offered.denimFirst) },
           fetchesLeft,
         } satisfies BrandsFetched;
       }
@@ -204,9 +204,10 @@ export function brandSteps(
         if (match === null) {
           return { ok: true, done: { ...askedFor(asked, brand), candidates: [], out: "every Category", searchesLeft: searchesLeft(state.searches.length) } };
         }
+        // Only a Brand the Outfit may take is searched for, so no search goes on one it can't.
+        const cantTake = cantTakeRefusal(state, icon!, brandCategory, brand);
+        if (cantTake) return refused(cantTake);
         if (match === undefined) return { ok: true, lookUp: { entityId: brand.entityId, name: brand.name, officialSite: brand.officialSite } };
-        const outOfPlay = outOfPlayRefusal(state, brandCategory, brand);
-        if (outOfPlay) return refused(outOfPlay);
         if (building.productSearches >= MAX_PRODUCT_SEARCHES_PER_STYLING) {
           return refused(`This Styling has made all ${MAX_PRODUCT_SEARCHES_PER_STYLING} of its product searches.`);
         }
@@ -358,12 +359,17 @@ export function searchFor(state: BrandState, icon: ListedStyleIcon, category: Pr
   return state.searches.find((search) => search.styleIconId === icon.id && search.category === category && search.brandEntityId === brand.entityId);
 }
 
-/** Why a Brand can't be a Category's, as it's out of play there, or null when it's still in play. */
-export function outOfPlayRefusal(state: BrandState, category: BrandCategory, brand: QlooBrand): string | null {
+/**
+ * Why a Style Icon's Outfit can't take one of its Brands for a Category, or null when it can: it's
+ * out of play there, or it isn't among the Style Icon's top few still in play (ADR-0010).
+ */
+export function cantTakeRefusal(state: BrandState, icon: ListedStyleIcon, category: BrandCategory, brand: QlooBrand): string | null {
   const label = CATEGORY_LABELS[category];
   if (state.built[category].has(brand.entityId)) return `${brand.name} is already another Outfit's ${label}: no Brand repeats within a Category.`;
   if (droppedFrom(state, category).has(brand.entityId)) return `${brand.name} is out of ${label}s for the rest of this Styling: its search found none.`;
-  return null;
+  const offered = topInPlay(state, icon)[category];
+  if (offered.some((listed) => sameBrand(listed, brand))) return null;
+  return `${brand.name} isn't among ${icon.name}'s top ${TOP_BRANDS_PER_CATEGORY} ${label} Brands still in play: ${inASentence(offered.map(({ name }) => name))}.`;
 }
 
 /**
@@ -377,7 +383,16 @@ function inPlayIn(state: BrandState): (category: BrandCategory, brand: QlooBrand
 
 /** A Style Icon's Outfit's Brands: each Category's first Brand still in play, or null when it can't complete one. */
 export function firstInPlay(state: BrandState, icon: ListedStyleIcon): Record<BrandCategory, QlooBrand> | null {
-  return firstBrandsInPlay(listsOf(state, icon), inPlayIn(state), (a, b) => a.entityId === b.entityId);
+  return firstBrandsInPlay(listsOf(state, icon), inPlayIn(state), sameBrand);
+}
+
+/** The Brands a Style Icon's Outfit may take for each Category: its top few still in play, best first (`topBrandsInPlay`). */
+function topInPlay(state: BrandState, icon: ListedStyleIcon): BrandLists<QlooBrand> {
+  return topBrandsInPlay(listsOf(state, icon), inPlayIn(state), TOP_BRANDS_PER_CATEGORY, sameBrand);
+}
+
+function sameBrand(a: QlooBrand, b: QlooBrand): boolean {
+  return a.entityId === b.entityId;
 }
 
 /** The Brands out of a Category for the rest of the Styling: those whose search in it found none or never answered. */

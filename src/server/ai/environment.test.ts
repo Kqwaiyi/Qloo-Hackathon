@@ -103,6 +103,15 @@ describe("switching real AI on", () => {
   });
 });
 
+describe("the fake AI's scenario", () => {
+  it.each(["style-icon-passed-over", "second-brand"])("may be the fake Stylist's %s, picked with FAKE_AI_SCENARIO", (scenario) => {
+    vi.stubEnv("AI_PROVIDER", "");
+    vi.stubEnv("FAKE_AI_SCENARIO", scenario);
+
+    expect(aiFromEnvironment()).toMatchObject({ scenario });
+  });
+});
+
 describe("a browser's fake AI scenario in local development", () => {
   it("plays in the Previews of each photo the browser checked, which its Stylings draw on the app's own fake", async () => {
     vi.stubEnv("NODE_ENV", "development");

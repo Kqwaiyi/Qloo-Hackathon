@@ -357,14 +357,14 @@ describe("each Outfit's Pieces", () => {
       expect(brief).toEqual({ styling: "First Styling", photo: "Full-Body Photo", pieces: ["Hairstyle", "Top", "Bottom", "Shoes"], photoStyle: ["casual"], ageGroup: "30–34", outfits: 2 });
       expect(images).toEqual([{ mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) }]);
     }
-    // Each Category's usable Brands, best first, and the denim one a Bottom takes first.
+    // Each Category's top 3 usable Brands, best first, with the Bottom's denim one first.
     expect(stylistToolResults("fetchBrands").map(({ output }) => output)).toEqual([
       {
         styleIcon: 1,
         brands: {
           shoes: ["Stride", "Sole", "Pace"],
-          top: ["Bolt", "Dune", "Jeanery", "Ember", "Hem", "Loom", "Weft"],
-          bottom: ["Bolt", "Dune", "Jeanery", "Ember", "Hem", "Loom", "Weft"],
+          top: ["Bolt", "Dune", "Jeanery"],
+          bottom: ["Jeanery", "Bolt", "Dune"],
           denimFirst: ["Jeanery"],
         },
         fetchesLeft: 5,
@@ -683,17 +683,19 @@ describe("the Brands the product search knows", () => {
     ]);
   });
 
-  it("are looked up only as a pick is about to use them: the next in Qloo's order only once one before it isn't known", async () => {
+  it("are looked up only as the Stylist may take them, each Category's top 3: the next in Qloo's order only once one before it isn't known, so the Stylist is never offered it", async () => {
     harness.channel3.respond = channel3SellingEveryBrand({ except: ["Bolt"] });
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
     await start(browser, "body_only");
     await harness.stylings.runPending();
 
-    // Dune was looked up for the first Outfit's Top once Bolt wasn't known. Ember, Pace, Hem, Loom
-    // and Weft were never about to be used, nor were the Brands of Cleo Hart, whose fans' Brands were
-    // fetched as a spare.
-    expect(brandLookups().toSorted()).toEqual(["Bolt", "Dune", "Jeanery", "Sole", "Stride"]);
+    // Ember moved into the top 3 Tops and Bottoms once Bolt wasn't known. Hem, Loom and Weft were
+    // never among them.
+    expect(brandLookups().toSorted()).toEqual(["Bolt", "Dune", "Ember", "Jeanery", "Pace", "Sole", "Stride"]);
+    expect(stylistToolResults("fetchBrands").map(({ output }) => (output as { brands: object }).brands)).toEqual(
+      Array.from({ length: 3 }, () => ({ shoes: ["Stride", "Sole", "Pace"], top: ["Dune", "Jeanery", "Ember"], bottom: ["Jeanery", "Dune", "Ember"], denimFirst: ["Jeanery"] })),
+    );
   });
 
   it("are looked up at most 3 at once", async () => {
@@ -710,8 +712,8 @@ describe("the Brands the product search knows", () => {
     await start(browser, "body_only");
     await harness.stylings.runPending();
 
-    // The two Outfits' picks use 5 Brands: Stride, Bolt and Jeanery, then Sole, Dune and Bolt.
-    expect(brandLookups()).toHaveLength(5);
+    // Each Category's top 3 are 6 Brands: Stride, Sole and Pace, and Bolt, Dune and Jeanery.
+    expect(brandLookups()).toHaveLength(6);
     expect(mostInFlight).toBe(3);
   });
 
@@ -739,7 +741,7 @@ describe("the Brands the product search knows", () => {
     const latestConsultationId = await start(latest, "body_only");
     await harness.stylings.runPending();
 
-    expect(brandLookups().toSorted()).toEqual(["Bolt", "Dune", "Jeanery", "Sole", "Stride"]);
+    expect(brandLookups().toSorted()).toEqual(["Bolt", "Dune", "Jeanery", "Pace", "Sole", "Stride"]);
     expect((await readConsultation(harness.context(latest), latestConsultationId))!.outfits.map((o) => o.pieces.map((p) => p.brand?.name))).toEqual([
       ["Bolt", "Jeanery", "Stride"],
       ["Dune", "Bolt", "Sole"],
@@ -769,26 +771,37 @@ describe("the Brands the product search knows", () => {
   });
 
   it("are looked up as a search is about to use them too, one it doesn't know being out of every Category, with no search spent on it", async () => {
-    harness.channel3.respond = channel3SellingEveryBrand({ except: ["Sole"] });
+    harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
+    // Bolt's tops are never found, so Ember, which the product search doesn't know, moves into Ava Stone's top 3 Tops.
+    harness.channel3.respond = channel3SellingEveryBrand({
+      except: ["Ember"],
+      products: (search) => (search.brandId === "c3-bolt" && search.category === "top" ? [] : channel3SmallCatalogue(search)),
+    });
+    // The Stylist searches Ember's Tops straight away, without fetching Ava Stone's Brands again.
+    let tried = false;
+    harness.ai.stylistTurn = ({ toolResults }) => {
+      if (tried || !toolResults.some(({ output }) => (output as { out?: string } | null)?.out === "this Category")) return undefined;
+      tried = true;
+      return { calls: [{ tool: "searchProducts", input: { styleIcon: 1, category: "top", brand: "Ember" } }] };
+    };
     const browser = await signedInUser({ stylePreference: "womenswear" });
 
     const consultationId = await start(browser, "body_only");
     await harness.stylings.runPending();
 
-    // Sole, Bea Marsh's Shoes once Ava Stone's Outfit takes Stride, was looked up only as it was searched for.
-    expect(stylistToolResults("searchProducts").find(({ input }) => isDeepStrictEqual(input, { styleIcon: 2, category: "shoes", brand: "Sole" }))?.output).toEqual({
-      styleIcon: 2,
-      category: "shoes",
-      brand: "Sole",
+    expect(stylistToolResults("searchProducts").find(({ input }) => isDeepStrictEqual(input, { styleIcon: 1, category: "top", brand: "Ember" }))?.output).toEqual({
+      styleIcon: 1,
+      category: "top",
+      brand: "Ember",
       candidates: [],
       out: "every Category",
       searchesLeft: expect.any(Number),
     });
+    expect(brandLookups()).toContain("Ember");
     expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => [o.styleIconName, o.pieces.map((p) => p.brand?.name)])).toEqual([
-      ["Ava Stone", ["Bolt", "Jeanery", "Stride"]],
-      ["Bea Marsh", ["Dune", "Bolt", "Pace"]],
+      ["Ava Stone", ["Dune", "Jeanery", "Stride"]],
     ]);
-    expect(productSearchesSent().map(({ brandId }) => brandId)).not.toContain("c3-sole");
+    expect(productSearchesSent().map(({ brandId }) => brandId)).not.toContain("c3-ember");
     expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ productSearches: browseRequests().length })]);
   });
 

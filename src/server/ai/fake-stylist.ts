@@ -8,7 +8,13 @@ import type {
 import { createHash } from "node:crypto";
 
 import { BRAND_CATEGORIES, type BrandCategory, CATEGORY_LABELS, inASentence, type PhotoStyleWords, photoStyleText, type ProductCategory } from "@/config/consultations";
-import { MAX_BRAND_FETCHES_PER_STYLING, MAX_PRODUCT_SEARCHES_PER_STYLING, PRODUCT_CALLS_AT_ONCE, QLOO_CALLS_AT_ONCE } from "@/config/stylings";
+import {
+  MAX_BRAND_FETCHES_PER_STYLING,
+  MAX_PRODUCT_SEARCHES_PER_STYLING,
+  PRODUCT_CALLS_AT_ONCE,
+  QLOO_CALLS_AT_ONCE,
+  TOP_BRANDS_PER_CATEGORY,
+} from "@/config/stylings";
 import { type BrandLists, firstBrandsInPlay } from "@/server/outfit-assembly/brands";
 import type {
   BrandsFetched,
@@ -19,6 +25,7 @@ import type {
   SaveOutfitInput,
   SearchCategory,
   SearchProductsInput,
+  StyleIconPassedOver,
 } from "@/server/stylings/stylist";
 import { readStylistBrief, type StylistBrief, type StylistStyleIcon } from "@/server/stylings/stylist-brief";
 
@@ -70,7 +77,13 @@ export interface FakeStylistCall {
 export type FakeStylistTurn = { calls: FakeStylistCall[]; text?: string } | { text: string } | { refused: true };
 
 /** How the fake plays the Stylist for one Style Icon's Outfit: making the fixed pipeline's choices, or one of its scenarios. */
-export type FakeStylistScenario = "pass" | "one-piece" | "unknown-cut" | "tailoring-fails";
+export type FakeStylistScenario = "pass" | "one-piece" | "unknown-cut" | "tailoring-fails" | "passed-over" | "second-brand";
+
+/** A Style Icon the fake picks a scenario for: by its name, and whether it's the first the Styling may use. */
+export interface FakeScenarioStyleIcon {
+  name: string;
+  first: boolean;
+}
 
 /**
  * A first Styling of a body photo fetches the Brands of this many Style Icons at once before its
@@ -102,27 +115,34 @@ export function fakeStylistModel(play: (request: FakeStylistRequest) => Promise<
  * it has made as many as its brief allows, starts the Previews, draws each saved Outfit's, then
  * finishes. Every Hairstyle is the fake's own (`fakeHairstyle`). A body photo's Outfits are built on
  * Brands first, as `bodyPhotoCalls` plays them. How it plays each Style Icon's Outfit is
- * `scenarioFor` its name:
+ * `scenarioFor` the Style Icon:
  * - `one-piece`: the Top Brand's first One-Piece in place of the Top and Bottom, when it has any.
  * - `unknown-cut`: the Hairstyle's cut is marked unknown, based on the Photo Style, and its `why`
  *   doesn't name the Style Icon.
  * - `tailoring-fails`: every Outfit it saves breaks a rule, a different one each turn, so it keeps
  *   saving until the turn cap.
+ * - `passed-over`: it passes over the Style Icon, saying why, in place of its Outfit: for a body
+ *   photo, once it has fetched its Brands.
+ * - `second-brand`: each Category's second Brand still in play, where it has one, not its first.
  *
  * Each turn, before its tool calls, it writes a note to the user on what they're for, one line for
  * each kind of tool it calls (`fakeNotes`).
  */
-export function fakeStylistTurn(request: FakeStylistRequest, scenarioFor: (styleIconName: string) => FakeStylistScenario): FakeStylistTurn {
+export function fakeStylistTurn(request: FakeStylistRequest, scenarioFor: (styleIcon: FakeScenarioStyleIcon) => FakeStylistScenario): FakeStylistTurn {
   const calls = fakeStylistCalls(request, scenarioFor);
   return { calls, text: fakeNotes(request, calls) };
 }
 
-function fakeStylistCalls(request: FakeStylistRequest, scenarioFor: (styleIconName: string) => FakeStylistScenario): FakeStylistCall[] {
+/** How the fake plays the Stylist for a Style Icon's Outfit. */
+type ScenarioOf = (styleIcon: StylistStyleIcon) => FakeStylistScenario;
+
+function fakeStylistCalls(request: FakeStylistRequest, scenarioFor: (styleIcon: FakeScenarioStyleIcon) => FakeStylistScenario): FakeStylistCall[] {
   if (request.tools.includes("findStyleIcons") && succeeded(request, "findStyleIcons").length === 0) return [{ tool: "findStyleIcons", input: {} }];
   const saved = succeeded(request, "saveOutfit");
   if (succeeded(request, "startPreviews").length === 0) {
     const styleIcons = styleIconsOf(request);
-    const building = request.tools.includes("fetchBrands") ? bodyPhotoCalls(request, styleIcons, scenarioFor) : hairstyleSaves(request, styleIcons, scenarioFor);
+    const scenarioOf: ScenarioOf = (icon) => scenarioFor({ name: icon.name, first: icon.number === styleIcons[0]?.number });
+    const building = request.tools.includes("fetchBrands") ? bodyPhotoCalls(request, styleIcons, scenarioOf) : hairstyleSaves(request, styleIcons, scenarioOf);
     if (building.length > 0) return building;
     return [{ tool: saved.length > 0 ? "startPreviews" : "finish", input: {} }];
   }
@@ -144,7 +164,7 @@ function fakeNotes(request: FakeStylistRequest, calls: readonly FakeStylistCall[
   const nameOf = new Map(styleIconsOf(request).map((icon) => [icon.number, icon.name]));
   // Only the fake's own calls: a broken save may leave out its Style Icon.
   const inputsOf = <T>(tool: string) => calls.flatMap((call) => (call.tool === tool ? [call.input as Partial<T>] : []));
-  const styleIconNames = (tool: "fetchBrands" | "saveOutfit") =>
+  const styleIconNames = (tool: "fetchBrands" | "passOverStyleIcon" | "saveOutfit") =>
     inputsOf<{ styleIcon: number }>(tool).flatMap(({ styleIcon }) => (styleIcon === undefined ? [] : (nameOf.get(styleIcon) ?? [])));
   const note = (tool: string): string | null => {
     switch (tool) {
@@ -152,6 +172,10 @@ function fakeNotes(request: FakeStylistRequest, calls: readonly FakeStylistCall[
         return `I'll ask Qloo for Style Icons in tune with your ${style} Photo Style.`;
       case "fetchBrands":
         return `I'll look at the Brands that fans of ${inASentence(styleIconNames(tool))} favour.`;
+      case "passOverStyleIcon": {
+        const names = styleIconNames(tool);
+        return `I'll pass over ${inASentence(names)}, and go on to the next ${names.length === 1 ? "Style Icon" : "Style Icons"}.`;
+      }
       case "searchProducts":
         return `I'll look for Products from ${inASentence([...new Set(inputsOf<SearchProductsInput>(tool).flatMap(({ brand }) => brand ?? []))])} that go together.`;
       case "saveOutfit": {
@@ -176,19 +200,44 @@ function fakeNotes(request: FakeStylistRequest, calls: readonly FakeStylistCall[
   return [...new Set(calls.map((call) => call.tool))].flatMap((tool) => note(tool) ?? []).join("\n");
 }
 
+/** Passing over a Style Icon, with the fake's reason: about its signature cut, or for a body photo, its Brands. */
+function passOverCall(request: FakeStylistRequest, icon: StylistStyleIcon): FakeStylistCall {
+  const style = photoStyleText(request.brief?.photoStyle ?? ["casual"]);
+  const reason = request.tools.includes("fetchBrands")
+    ? `The Brands ${icon.name}'s fans favour don't go with your ${style} Photo Style.`
+    : `${icon.name}'s signature cut doesn't go with your ${style} Photo Style.`;
+  return { tool: "passOverStyleIcon", input: { styleIcon: icon.number, reason } };
+}
+
+/** The numbers of the Style Icons the Stylist has passed over with passOverStyleIcon. */
+function styleIconsPassedOver(request: FakeStylistRequest): Set<number> {
+  return new Set(succeeded(request, "passOverStyleIcon").map((result) => (result.output as StyleIconPassedOver).styleIcon));
+}
+
 /** The tool calls of this name that came back with an output, in order. */
 function succeeded(request: FakeStylistRequest, toolName: string): FakeStylistToolResult[] {
   return request.toolResults.filter((result) => result.toolName === toolName && result.error === null);
 }
 
-/** A Face Photo's turn: saving an Outfit, a Hairstyle alone, for each next Style Icon, as many as the brief allows. */
-function hairstyleSaves(request: FakeStylistRequest, styleIcons: readonly StylistStyleIcon[], scenarioFor: (styleIconName: string) => FakeStylistScenario): FakeStylistCall[] {
+/**
+ * A Face Photo's turn: saving an Outfit, a Hairstyle alone, for each next Style Icon, as many as the
+ * brief allows, unless a turn of its own passes over one of them first.
+ */
+function hairstyleSaves(request: FakeStylistRequest, styleIcons: readonly StylistStyleIcon[], scenarioOf: ScenarioOf): FakeStylistCall[] {
   const saved = succeeded(request, "saveOutfit");
   const savedFor = new Set(saved.map((result) => (result.input as SaveOutfitInput).styleIcon));
-  const toSave = styleIcons.filter((icon) => !savedFor.has(icon.number)).slice(0, Math.max((request.brief?.outfits ?? 0) - saved.length, 0));
+  const passedOver = styleIconsPassedOver(request);
+  const wanted = Math.max((request.brief?.outfits ?? 0) - saved.length, 0);
+  const toPassOver: StylistStyleIcon[] = [];
+  const toSave: StylistStyleIcon[] = [];
+  for (const icon of styleIcons.filter(({ number }) => !savedFor.has(number) && !passedOver.has(number))) {
+    if (toSave.length >= wanted) break;
+    (scenarioOf(icon) === "passed-over" ? toPassOver : toSave).push(icon);
+  }
+  if (toPassOver.length > 0) return toPassOver.map((icon) => passOverCall(request, icon));
   const photoStyle = request.brief?.photoStyle ?? ["casual"];
   return toSave.map((icon) => {
-    const scenario = scenarioFor(icon.name);
+    const scenario = scenarioOf(icon);
     const outfit: SaveOutfitInput = { styleIcon: icon.number, hairstyle: savedHairstyle(icon, photoStyle, scenario) };
     return { tool: "saveOutfit", input: scenario === "tailoring-fails" ? BROKEN_OUTFITS[request.turn % BROKEN_OUTFITS.length]!(outfit) : outfit };
   });
@@ -196,16 +245,17 @@ function hairstyleSaves(request: FakeStylistRequest, styleIcons: readonly Stylis
 
 /**
  * A body photo's turn, as the fixed pipeline built its Outfits: Style Icons in Qloo's order, each
- * Outfit's Brands each Category's first still in play, fixed before the next Outfit's, so no Brand
- * repeats within a Category. A first Styling fetches the Brands of 3 Style Icons up front, any other
- * as many as it still needs Outfits, one turn's fetches at most as many as Qloo's calls at once.
- * Then each planned Outfit's Top, Bottom and Shoes are searched for, as many at once as the product
- * search's calls, then once they're all found, each one's One-Pieces on its Top Brand. A Brand whose
- * search finds none is out of that Category, and the plan changes around it. Once every planned
- * Outfit's Brands are found, or the Styling has made all its searches, the Outfits found are saved,
- * each Piece its search's first Product. None once it's saved all it can.
+ * Outfit's Brands each Category's first still in play (`picksFrom`), fixed before the next Outfit's,
+ * so no Brand repeats within a Category. A first Styling fetches the Brands of 3 Style Icons up
+ * front, any other as many as it still needs Outfits, one turn's fetches at most as many as Qloo's
+ * calls at once. Then each planned Outfit's Top, Bottom and Shoes are searched for, as many at once
+ * as the product search's calls, then once they're all found, each one's One-Pieces on its Top
+ * Brand. A Brand whose search finds none is out of that Category, and the plan changes around it.
+ * Once every planned Outfit's Brands are found, or the Styling has made all its searches, the
+ * Outfits found are saved, each Piece its search's first Product. None once it's saved all it can.
+ * A Style Icon to pass over is passed over in a turn of its own, once its Brands are fetched.
  */
-function bodyPhotoCalls(request: FakeStylistRequest, styleIcons: readonly StylistStyleIcon[], scenarioFor: (styleIconName: string) => FakeStylistScenario): FakeStylistCall[] {
+function bodyPhotoCalls(request: FakeStylistRequest, styleIcons: readonly StylistStyleIcon[], scenarioOf: ScenarioOf): FakeStylistCall[] {
   const brief = request.brief;
   const saved = succeeded(request, "saveOutfit").map((result) => result.input as SaveOutfitInput);
   const wanted = (brief?.outfits ?? 0) - saved.length;
@@ -220,34 +270,61 @@ function bodyPhotoCalls(request: FakeStylistRequest, styleIcons: readonly Stylis
     ...searches.flatMap((search) => (search.category === category && search.out === "this Category" ? [search.brand] : [])),
   ];
   const savedFor = new Set(saved.map((outfit) => outfit.styleIcon));
-  const left = styleIcons.filter((icon) => !savedFor.has(icon.number) && !isPassedOver(fetched.get(icon.number)));
-  // Style Icons are planned in order, so one whose Brands haven't come back holds up the rest.
-  const firstUnfetched = left.findIndex((icon) => !fetched.has(icon.number));
-  const ready = firstUnfetched === -1 ? left : left.slice(0, firstUnfetched);
+  const passedOver = styleIconsPassedOver(request);
+  const left = styleIcons.filter((icon) => !savedFor.has(icon.number) && !passedOver.has(icon.number) && !isPassedOver(fetched.get(icon.number)));
   const taken = { top: new Set(outOfPlay("top")), bottom: new Set(outOfPlay("bottom")), shoes: new Set(outOfPlay("shoes")) };
   const planned: { icon: StylistStyleIcon; brands: Record<BrandCategory, string> }[] = [];
-  for (const icon of ready) {
+  // Style Icons are planned in order, so one whose Brands haven't come back holds up the rest, as
+  // does one whose top Brands, as fetchBrands last listed them, no longer settle its picks. Those
+  // are fetched again, free, once Brands have gone out of play since, or the Outfits planned before
+  // it are what took them, and they're saved.
+  let holdUp: { at: number; fetchAgain: boolean } | null = null;
+  const toPassOver: StylistStyleIcon[] = [];
+  for (const [at, icon] of left.entries()) {
     if (planned.length >= wanted) break;
-    const brands = firstBrandsInPlay(fetchedLists(fetched.get(icon.number)!, unknown), (category, brand) => !taken[category].has(brand));
-    if (!brands) continue;
-    planned.push({ icon, brands });
-    for (const category of BRAND_CATEGORIES) taken[category].add(brands[category]);
+    const brands = fetched.get(icon.number);
+    if (!brands) {
+      holdUp = { at, fetchAgain: false };
+      break;
+    }
+    const scenario = scenarioOf(icon);
+    if (scenario === "passed-over") {
+      toPassOver.push(icon);
+      continue;
+    }
+    const picks = picksFrom(brands, unknown, (category, brand) => !taken[category].has(brand), scenario === "second-brand" ? secondBrandsInPlay : firstBrandsInPlay);
+    if (picks === "unsure") {
+      holdUp = { at, fetchAgain: planned.length === 0 || outOfPlaySince(request, icon.number) };
+      break;
+    }
+    if (!picks) continue;
+    planned.push({ icon, brands: picks });
+    for (const category of BRAND_CATEGORIES) taken[category].add(picks[category]);
   }
+  if (toPassOver.length > 0) return toPassOver.map((icon) => passOverCall(request, icon));
   const searchOf = (icon: StylistStyleIcon, category: SearchCategory, brand: string) =>
     searches.find((search) => search.styleIcon === icon.number && search.category === category && search.brand === brand);
   type Search = [StylistStyleIcon, SearchCategory, string];
   const notSearched = ([icon, category, brand]: Search) => !searchOf(icon, category, brand);
   const separates = planned.flatMap(({ icon, brands }) => BRAND_CATEGORIES.map((category): Search => [icon, category, brands[category]])).filter(notSearched);
-  // A One-Piece's search moves no Brand, so it waits until no search can move one.
-  const toSearch = separates.length > 0 ? separates : planned.map(({ icon, brands }): Search => [icon, "onePiece", brands.top]).filter(notSearched);
+  // A One-Piece's search moves no Brand, so it waits until no search can move one: none of the
+  // planned Outfits' separates, nor those of a Style Icon to plan again once it's fetched again.
+  const toSearch =
+    separates.length > 0 || holdUp?.fetchAgain ? separates : planned.map(({ icon, brands }): Search => [icon, "onePiece", brands.top]).filter(notSearched);
   const searchesLeft = Math.min(MAX_PRODUCT_SEARCHES_PER_STYLING, ...searches.map((search) => search.searchesLeft));
   if (searchesLeft > 0) {
     const stillWanted = wanted - planned.length;
     const fetchesLeft = Math.min(MAX_BRAND_FETCHES_PER_STYLING, ...fetches.map((brands) => brands.fetchesLeft));
     const upFront = fetched.size === 0 && brief?.styling === "First Styling";
     const fetchCount = stillWanted <= 0 ? 0 : Math.min(upFront ? BRAND_FETCHES_UP_FRONT : stillWanted, fetchesLeft, QLOO_CALLS_AT_ONCE);
+    let toFetch: readonly StylistStyleIcon[] = [];
+    if (holdUp && stillWanted > 0) {
+      const heldUp = left[holdUp.at]!;
+      if (!fetched.has(heldUp.number)) toFetch = left.slice(holdUp.at, holdUp.at + Math.max(fetchCount, 0));
+      else if (holdUp.fetchAgain) toFetch = [heldUp];
+    }
     const calls = [
-      ...left.slice(ready.length, ready.length + Math.max(fetchCount, 0)).map((icon) => ({ tool: "fetchBrands", input: { styleIcon: icon.number } })),
+      ...toFetch.map((icon) => ({ tool: "fetchBrands", input: { styleIcon: icon.number } })),
       ...toSearch
         .slice(0, Math.min(PRODUCT_CALLS_AT_ONCE, searchesLeft))
         .map(([icon, category, brand]) => ({ tool: "searchProducts", input: { styleIcon: icon.number, category, brand } })),
@@ -259,7 +336,7 @@ function bodyPhotoCalls(request: FakeStylistRequest, styleIcons: readonly Stylis
   return planned
     .filter(({ icon, brands }) => BRAND_CATEGORIES.every((category) => searchOf(icon, category, brands[category])?.candidates.length))
     .map(({ icon, brands }) => {
-      const scenario = scenarioFor(icon.name);
+      const scenario = scenarioOf(icon);
       const piece = (category: SearchCategory, pieceCategory: ProductCategory, brand: string) => ({
         product: candidateId(searchOf(icon, category, brand)!.candidates[0]!),
         why: fakeWhy(pieceCategory, icon.name, photoStyle),
@@ -280,6 +357,57 @@ function bodyPhotoCalls(request: FakeStylistRequest, styleIcons: readonly Stylis
 
 function isPassedOver(fetched: BrandsFetched | undefined): boolean {
   return fetched !== undefined && "passedOver" in fetched;
+}
+
+/** Stands for a Brand the fake hasn't been shown, beyond the top few a cut-short list gives. */
+const BEYOND_THE_TOP = "\u0000 a Brand beyond the top";
+
+/** How the fake picks an Outfit's Brands from a Style Icon's lists, by `firstBrandsInPlay`'s rules. */
+type BrandPicker = (lists: BrandLists<string>, inPlay: (category: BrandCategory, brand: string) => boolean) => Record<BrandCategory, string> | null;
+
+/**
+ * A Style Icon's Outfit's Brands as `pick` picks them from its top Brands, as fetchBrands last
+ * listed them, less those `inPlay` says are out of play since; or null when they can't complete an
+ * Outfit. A list fetchBrands cut short at the top few may have more beyond it: when one beyond would
+ * change the picks, they're "unsure", and the Style Icon's Brands are to be fetched again as they
+ * now stand.
+ */
+function picksFrom(
+  fetched: BrandsFetched,
+  unknown: ReadonlySet<string>,
+  inPlay: (category: BrandCategory, brand: string) => boolean,
+  pick: BrandPicker,
+): Record<BrandCategory, string> | null | "unsure" {
+  const lists = fetchedLists(fetched, unknown);
+  const picks = pick(lists, inPlay);
+  const shown = "passedOver" in fetched ? null : fetched.brands;
+  const withMore = (category: BrandCategory) =>
+    shown && shown[category].length >= TOP_BRANDS_PER_CATEGORY ? [...lists[category], `${BEYOND_THE_TOP} ${category}`] : lists[category];
+  const ifMore = pick({ ...lists, shoes: withMore("shoes"), top: withMore("top"), bottom: withMore("bottom") }, inPlay);
+  return BRAND_CATEGORIES.every((category) => picks?.[category] === ifMore?.[category]) ? picks : "unsure";
+}
+
+/**
+ * An Outfit's Brands as `firstBrandsInPlay` picks them, but from each Category's second Brand in play
+ * on, its first coming last: so its second where it has one, ignoring the Bottom's preference for denim.
+ */
+function secondBrandsInPlay(lists: BrandLists<string>, inPlay: (category: BrandCategory, brand: string) => boolean): Record<BrandCategory, string> | null {
+  const firstLast = (category: BrandCategory) => {
+    const first = lists[category].find((brand) => inPlay(category, brand));
+    return first === undefined ? lists[category] : [...lists[category].filter((brand) => brand !== first), first];
+  };
+  return firstBrandsInPlay({ shoes: firstLast("shoes"), top: firstLast("top"), bottom: firstLast("bottom"), denimFirst: [] }, inPlay);
+}
+
+/** Whether a Brand has gone out of play since fetchBrands last listed this Style Icon's: used by a saved Outfit, or out of a Category. */
+function outOfPlaySince(request: FakeStylistRequest, styleIcon: number): boolean {
+  const results = request.toolResults;
+  const fetchedAt = results.findLastIndex(
+    (result) => result.toolName === "fetchBrands" && result.error === null && (result.output as BrandsFetched).styleIcon === styleIcon,
+  );
+  return results
+    .slice(fetchedAt + 1)
+    .some((result) => result.error === null && (result.toolName === "saveOutfit" || (result.toolName === "searchProducts" && (result.output as ProductsSearched).out)));
 }
 
 /** A fetched Style Icon's lists of Brands, by name, less those the product search turned out not to know. */

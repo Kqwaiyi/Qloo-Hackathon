@@ -17,7 +17,7 @@ import { outfitCategories } from "@/server/outfit-assembly/categories";
 import type { Candidate } from "@/server/outfit-assembly/products";
 import type { QlooBrand } from "@/server/qloo/client";
 
-import { type BrandState, brandSteps, firstInPlay, listsOf, outOfPlayRefusal, readBrandState, readBuilding, searchFor } from "./brand-steps";
+import { type BrandState, brandSteps, cantTakeRefusal, firstInPlay, listsOf, readBrandState, readBuilding, searchFor } from "./brand-steps";
 import { type ListedStyleIcon, readBuildingBeside, readCurrentBrandNames, readStyleIconList } from "./current-outfits";
 import { statesAPrice } from "./prices-in-text";
 import {
@@ -32,9 +32,9 @@ import {
   stylingSteps,
   whileRunning,
 } from "./steps";
-import { type SaveOutfitInput, saveOutfitInputSchema, type StylistSteps } from "./stylist";
+import { passOverStyleIconInputSchema, type SaveOutfitInput, saveOutfitInputSchema, type StylistSteps } from "./stylist";
 import type { StylistBrief, StylistStyleIcon } from "./stylist-brief";
-import { addSteps, addStylistNotes, hasNotesFromTurn, notesIn, STEPS } from "./stylist-notes";
+import { addSteps, addStylistNotes, asOneNote, hasNotesFromTurn, type NoteFault, noteFault, notesIn, STEPS } from "./stylist-notes";
 
 /** Every Styling step, on `ctx`, as this try of them. */
 export function allStylingSteps(ctx: StylingContext, stepTry: StepTry = {}): StylistSteps {
@@ -53,7 +53,7 @@ const STYLING_KINDS_BRIEFED: Record<StylingKind, string> = {
 /** The Stylist's own steps for its Style Icons, its Outfits, its Previews and its notes, running on `ctx`. */
 function stylistSteps(
   ctx: StylingContext,
-): Pick<StylistSteps, "readBrief" | "readPhoto" | "readStyleIcons" | "saveOutfit" | "startPreviews" | "openPreview" | "saveNotes"> {
+): Pick<StylistSteps, "readBrief" | "readPhoto" | "readStyleIcons" | "passOverStyleIcon" | "saveOutfit" | "startPreviews" | "openPreview" | "saveNotes"> {
   return {
     async saveNotes(stylingId, turn, texts) {
       const notes = notesIn(texts);
@@ -106,6 +106,34 @@ function stylistSteps(
       const running = await readRunningStyling(ctx.db, stylingId);
       const { styleIconList } = await readBuildingBeside(ctx.db, { stylingId, ...running });
       return withStatus(await readStyleIconList(ctx.db, styleIconList), "unused");
+    },
+
+    // Qloo's order binds the Stylist, but it may pass over a Style Icon (ADR-0010), saying why, in
+    // style terms, in a note to the user.
+    async passOverStyleIcon(stylingId, turn, input) {
+      const parsed = passOverStyleIconInputSchema.safeParse(input);
+      if (!parsed.success) return refused("Give the number of the Style Icon to pass over, and your reason, about style.");
+      const asked = parsed.data;
+      return whileRunning(ctx.db, stylingId, async (tx) => {
+        const building = await readBuilding(tx, stylingId);
+        if (building.stage === "style_icons") return refused("Find this Styling's Style Icons first, with findStyleIcons.");
+        if (building.stage === "previews") return refused("You've started the Previews, so no Style Icon can be passed over now.");
+        const icon = (await readStyleIconList(tx, building.styleIconList)).find((listed) => listed.number === asked.styleIcon);
+        if (!icon) return refused(`There's no Style Icon ${asked.styleIcon} on your list.`);
+        if (icon.status === "used") return refused(`${icon.name} has already inspired an Outfit.`);
+        // A retry after the pass-over went through has nothing left to do.
+        if (icon.status === "skipped") return { ok: true, styleIcon: icon.number };
+        // Checked like a note, but refused rather than dropped, so the Stylist can say it again.
+        const reason = asOneNote(asked.reason);
+        const fault = noteFault(reason);
+        if (fault) return refused(REASON_REFUSALS[fault](icon.name));
+        await tx.update(styleIcon).set({ status: "skipped" }).where(eq(styleIcon.id, icon.id));
+        await addStylistNotes(tx, stylingId, [
+          { kind: "step", text: STEPS.passedOverByStylist(icon.name) },
+          { kind: "note", text: reason, turn },
+        ]);
+        return { ok: true, styleIcon: icon.number };
+      });
     },
 
     async saveOutfit(stylingId, input) {
@@ -237,6 +265,13 @@ function stylistSteps(
   };
 }
 
+/** Why a reason for passing over a Style Icon is refused, by what's wrong with it as a note. */
+const REASON_REFUSALS: Record<NoteFault, (styleIconName: string) => string> = {
+  empty: (name) => `Say why you're passing over ${name}, about style.`,
+  "states a price": (name) => `Your reason for passing over ${name} must not state a price.`,
+  "too long": (name) => `Your reason for passing over ${name} is too long: keep it to a sentence.`,
+};
+
 /** The Style Icons with this status, as the Stylist is told them. */
 function withStatus(list: readonly ListedStyleIcon[], status: ListedStyleIcon["status"]): StylistStyleIcon[] {
   return list.filter((icon) => icon.status === status).map(({ number, name, line }) => ({ number, name, line }));
@@ -277,10 +312,10 @@ const PRODUCT_FIELDS: Record<ProductCategory, "top" | "bottom" | "onePiece" | "s
 /**
  * A body photo's Outfit's Brands and Product Pieces, when they keep every rule, or why they're
  * refused: each Category's Brand is one of the Style Icon's, repeats no Outfit's Brand in the
- * Category, isn't out of play there, and is its first still in play, the Shoes' never the Top's or
- * Bottom's; each Brand's search found Products; and each Piece is one of its own search's candidates,
- * or a One-Piece, one of the Top Brand's, takes the place of the Top and the Bottom (ADR-0003), each
- * "why" non-empty and stating no price.
+ * Category, isn't out of play there, and is whichever of its top few still in play the Stylist chose
+ * (ADR-0010), the Shoes' never the Top's or Bottom's; each Brand's search found Products; and each
+ * Piece is one of its own search's candidates, or a One-Piece, one of the Top Brand's, takes the
+ * place of the Top and the Bottom (ADR-0003), each "why" non-empty and stating no price.
  */
 function checkedProducts(
   state: BrandState,
@@ -296,21 +331,12 @@ function checkedProducts(
     const label = CATEGORY_LABELS[category];
     const brand = lists[category].find(({ name }) => name === named);
     if (!brand) return { refusal: `${named} isn't one of ${icon.name}'s ${label} Brands that the product search knows.` };
-    const outOfPlay = outOfPlayRefusal(state, category, brand);
-    if (outOfPlay) return { refusal: outOfPlay };
+    const cantTake = cantTakeRefusal(state, icon, category, brand);
+    if (cantTake) return { refusal: cantTake };
     brands[category] = brand;
   }
   if (brands.shoes.entityId === brands.top.entityId || brands.shoes.entityId === brands.bottom.entityId) {
     return { refusal: "An Outfit's Shoes never share their Brand with its Top or Bottom." };
-  }
-  // Each Category's first Brand still in play, as the fixed pipeline picked it: choosing among a
-  // Style Icon's top few, as ADR-0010 has it, comes next.
-  const first = firstInPlay(state, icon);
-  if (!first) return { refusal: `${icon.name}'s Brands can't complete an Outfit still in play.` };
-  for (const category of BRAND_CATEGORIES) {
-    if (first[category].entityId !== brands[category].entityId) {
-      return { refusal: `${first[category].name} is ${icon.name}'s first ${CATEGORY_LABELS[category]} Brand still in play, not ${brands[category].name}.` };
-    }
   }
   // Each Brand is the Outfit's only once its search has found Products, which fixes it, even the
   // Bottom's when a One-Piece leaves it out.

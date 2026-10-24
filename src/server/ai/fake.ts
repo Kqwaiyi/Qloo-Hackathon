@@ -4,7 +4,14 @@ import sharp from "sharp";
 
 import type { PhotoType } from "@/config/consultations";
 
-import { type FakeStylistRequest, type FakeStylistScenario, fakeStylistModel, fakeStylistTurn, type FakeStylistTurn } from "./fake-stylist";
+import {
+  type FakeScenarioStyleIcon,
+  type FakeStylistRequest,
+  type FakeStylistScenario,
+  fakeStylistModel,
+  fakeStylistTurn,
+  type FakeStylistTurn,
+} from "./fake-stylist";
 import type {
   AiProvider,
   Photo,
@@ -46,6 +53,10 @@ import type {
  *   its `why` doesn't name the Style Icon.
  * - `tailoring-fails`: every Outfit the Stylist saves breaks a rule, a different one each turn, as a
  *   broken model's would, so it saves until the turn cap.
+ * - `style-icon-passed-over`: the Stylist passes over the first Style Icon it may use, saying why,
+ *   once it has fetched its Brands for a body photo, and builds on the rest as usual.
+ * - `second-brand`: each Outfit takes each Category's second Brand still in play, where it has one,
+ *   rather than the first.
  *
  * A Preview is the user's own photo with a "Fake Preview" banner across its foot. Its scenarios
  * pass every photo and style as usual:
@@ -67,6 +78,8 @@ export const FAKE_AI_SCENARIOS = [
   "one-piece",
   "unknown-cut",
   "tailoring-fails",
+  "style-icon-passed-over",
+  "second-brand",
   "preview-refused",
   "preview-fails",
 ] as const;
@@ -148,7 +161,7 @@ export class FakeAiProvider implements AiProvider {
       await this.wait("stylistModel");
       // The conversation's first image is the photo.
       const scenario = this.scenarioOf(request.images[0]?.sha256);
-      return this.stylistTurn?.(request) ?? fakeStylistTurn(request, (styleIconName) => this.styleIconScenarios[styleIconName] ?? stylistScenario(scenario));
+      return this.stylistTurn?.(request) ?? fakeStylistTurn(request, (styleIcon) => this.styleIconScenarios[styleIcon.name] ?? stylistScenario(scenario, styleIcon));
     });
   }
 
@@ -238,15 +251,27 @@ function reportFor(scenario: Exclude<FakeAiScenario, "blocked" | "check-errors">
     case "one-piece":
     case "unknown-cut":
     case "tailoring-fails":
+    case "style-icon-passed-over":
+    case "second-brand":
     case "preview-refused":
     case "preview-fails":
       return passing;
   }
 }
 
-/** How the fake's Stylist plays a scenario: its own scenarios, and the fixed pipeline's choices for any other. */
-function stylistScenario(scenario: FakeAiScenario): FakeStylistScenario {
-  return scenario === "one-piece" || scenario === "unknown-cut" || scenario === "tailoring-fails" ? scenario : "pass";
+/** How the fake's Stylist plays a scenario for a Style Icon: its own scenarios, and the fixed pipeline's choices for any other. */
+function stylistScenario(scenario: FakeAiScenario, styleIcon: FakeScenarioStyleIcon): FakeStylistScenario {
+  switch (scenario) {
+    case "one-piece":
+    case "unknown-cut":
+    case "tailoring-fails":
+    case "second-brand":
+      return scenario;
+    case "style-icon-passed-over":
+      return styleIcon.first ? "passed-over" : "pass";
+    default:
+      return "pass";
+  }
 }
 
 /** The fake adapter as local development configures it: FAKE_AI_SCENARIO and FAKE_AI_DELAY_MS. */

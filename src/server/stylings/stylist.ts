@@ -5,7 +5,14 @@ import * as z from "zod";
 
 import type { Line } from "@/config/accounts";
 import { CATEGORY_LABELS } from "@/config/consultations";
-import { MAX_STYLIST_TURNS, PRODUCT_CALLS_AT_ONCE, PREVIEWS_AT_ONCE, type PreviewState, QLOO_CALLS_AT_ONCE } from "@/config/stylings";
+import {
+  MAX_STYLIST_TURNS,
+  PRODUCT_CALLS_AT_ONCE,
+  PREVIEWS_AT_ONCE,
+  type PreviewState,
+  QLOO_CALLS_AT_ONCE,
+  TOP_BRANDS_PER_CATEGORY,
+} from "@/config/stylings";
 import type { Photo } from "@/server/ai/provider";
 import type { BrandLists, BrandToLookUp } from "@/server/outfit-assembly/brands";
 import type { QlooPerson } from "@/server/qloo/client";
@@ -81,6 +88,16 @@ export const searchProductsInputSchema = z.object({
 });
 export type SearchProductsInput = z.infer<typeof searchProductsInputSchema>;
 
+/** What passing over a Style Icon takes: its number, and why, which the user reads in the Stylist's Notes. */
+export const passOverStyleIconInputSchema = z.object({
+  styleIcon: z.number().int().describe("The number of the Style Icon to pass over, as listed."),
+  reason: z
+    .string()
+    .describe(
+      'Why, in one short sentence to the user as "you", about style: such as "Her shoe Brands only sell heels, which don\'t fit your sporty Photo Style." Never about the user, or the Style Icon as a person. Never a price.',
+    ),
+});
+
 /** What drawing a Preview takes: the saved Outfit's number. */
 export const renderPreviewInputSchema = z.object({
   outfit: z.number().int().describe("The number of the saved Outfit whose Preview to draw."),
@@ -93,12 +110,13 @@ export interface FoundStyleIcons {
 }
 
 /**
- * What `fetchBrands` gives the Stylist: for each Category, the Style Icon's usable Brands still in
- * play, best first, by name, and `denimFirst`, the denim Brands Qloo ranks highly, which a Bottom
- * takes before any other. Like the fixed pipeline's picks, they include Brands not yet looked up in
- * the product search, which a search looks up first: one it doesn't know is then out of every
- * Category. Or that the Style Icon is passed over, since its Brands can't complete an
- * Outfit. Either way, how many more Style Icons' Brands the Styling may fetch.
+ * What `fetchBrands` gives the Stylist: for each Category, the Style Icon's top few usable Brands
+ * still in play, best first, by name, the Outfit's to choose among (`topBrandsInPlay`), the Bottom's
+ * denim Brands Qloo ranks highly first, which `denimFirst` names. Like the fixed pipeline's picks,
+ * they include Brands not yet looked up in the product search, which a search looks up first: one
+ * it doesn't know is then out of every Category, and the next moves in. Or that the Style Icon is
+ * passed over, since its Brands can't complete an Outfit. Either way, how many more Style Icons'
+ * Brands the Styling may fetch.
  */
 export type BrandsFetched =
   | { styleIcon: number; brands: BrandLists<string>; fetchesLeft: number }
@@ -118,6 +136,11 @@ export interface ProductsSearched {
   candidates: string[];
   out?: "this Category" | "every Category";
   searchesLeft: number;
+}
+
+/** What `passOverStyleIcon` gives the Stylist: the number of the Style Icon passed over. */
+export interface StyleIconPassedOver {
+  styleIcon: number;
 }
 
 /** What `saveOutfit` gives the Stylist: the saved Outfit's number, as the user sees it. */
@@ -182,7 +205,8 @@ export interface StylistSteps {
   /**
    * One Piece's search in the product search, as `searchProductsInputSchema` describes it, its
    * candidates kept for the rest of the Styling: refused for a Brand that isn't one of the Style
-   * Icon's for the Piece, or is out of play, and once the Styling has made all the searches it may.
+   * Icon's for the Piece, is out of play, or isn't among its top few still in play, and once the
+   * Styling has made all the searches it may.
    * Searched already, it gives the same candidates again. First, a Brand not yet looked up in the
    * product search, to look up before asking again. Throws on errors worth retrying; on the last
    * try, it keeps that the search never answered instead, unless the product search refused the key,
@@ -190,11 +214,19 @@ export interface StylistSteps {
    */
   searchProducts(stylingId: string, input: unknown): Promise<StylistStepResult<ProductsSearched | { lookUp: BrandToLookUp }>>;
   /**
+   * Passes over a Style Icon, as `passOverStyleIconInputSchema` describes it, so it inspires no
+   * Outfit, and adds a step saying so to the Stylist's Notes, then the reason, a note of the turn
+   * that wrote it, checked like one: refused before the Style Icons are found or once the Previews
+   * start, for a Style Icon not on the list or that has inspired an Outfit, and for a reason that's
+   * empty, states a price or is too long. Passed over already, there's nothing left to do.
+   */
+  passOverStyleIcon(stylingId: string, turn: number, input: unknown): Promise<StylistStepResult<StyleIconPassedOver>>;
+  /**
    * Saves one Outfit, as `saveOutfitInputSchema` describes it, after checking it as the Stylist
    * gave it: refused unless its Style Icon is the next one on the list that can still inspire one,
-   * each Brand is its Category's first still in play, each Product is one its Brand's search found,
-   * every Piece the Outfit needs is there, nothing states a price, and the Styling may make another
-   * Outfit.
+   * each Brand is one of its Category's top few still in play (`topBrandsInPlay`), each Product is
+   * one its Brand's search found, every Piece the Outfit needs is there, nothing states a price, and
+   * the Styling may make another Outfit.
    */
   saveOutfit(stylingId: string, input: unknown): Promise<StylistStepResult<SavedOutfit>>;
   /** Closes saving and opens the Previews, moving the Styling on to Generating Previews. Refused before any Outfit is saved. */
@@ -283,6 +315,7 @@ function toolsFor(brief: StylistBrief): StylistToolName[] {
   return [
     ...(brief.styleIcons ? [] : (["findStyleIcons"] as const)),
     ...(buildsOnBrands ? (["fetchBrands", "searchProducts"] as const) : []),
+    "passOverStyleIcon",
     "saveOutfit",
     "startPreviews",
     "renderPreview",
@@ -327,10 +360,14 @@ function turnNoteSaver(stylingId: string, steps: Pick<StylistSteps, "saveNotes">
     saveFrom(messages) {
       const own = messages.at(-1);
       if (own?.role !== "assistant") return Promise.resolve();
-      const turn = messages.filter((message) => message.role === "assistant").length;
-      return save(turn, typeof own.content === "string" ? [own.content] : textsOf(own.content));
+      return save(turnOf(messages), typeof own.content === "string" ? [own.content] : textsOf(own.content));
     },
   };
+}
+
+/** The number of the turn whose own message ends the conversation a tool is handed, from 1. */
+function turnOf(messages: readonly ModelMessage[]): number {
+  return messages.filter((message) => message.role === "assistant").length;
 }
 
 /** The text a turn wrote, part by part: never its thinking. */
@@ -345,11 +382,14 @@ function textsOf(content: readonly { type: string }[]): string[] {
 function stylistTools(stylingId: string, steps: StylistSteps, notes: TurnNoteSaver) {
   const state = { broken: null as unknown, finished: false };
 
-  /** A tool's work, once the notes the Stylist wrote this turn are saved, so they come before the steps it writes. */
-  function afterTurnNotes<I, O>(work: (input: I) => Promise<O>) {
+  /**
+   * A tool's work, given the number of the turn that called it, once the notes the Stylist wrote
+   * that turn are saved, so they come before the steps it writes.
+   */
+  function afterTurnNotes<I, O>(work: (input: I, turn: number) => Promise<O>) {
     return async (input: I, { messages }: { messages: ModelMessage[] }): Promise<O> => {
       await notes.saveFrom(messages);
-      return work(input);
+      return work(input, turnOf(messages));
     };
   }
   // The tools that build Outfits run one at a time, in the order the Stylist called them, so its
@@ -416,7 +456,7 @@ function stylistTools(stylingId: string, steps: StylistSteps, notes: TurnNoteSav
     }),
     fetchBrands: tool({
       description:
-        "Asks Qloo for the Brands one Style Icon's fans favour, and gives, for each Category, the usable Brands still in play, best first, or says the Style Icon is passed over when they can't complete an Outfit. Fetch a Style Icon's Brands before searching for its Outfit's Products. A Styling may fetch the Brands of only a few Style Icons; fetching them again is free, and gives them as they now stand.",
+        `Asks Qloo for the Brands one Style Icon's fans favour, and gives, for each Category, the top ${TOP_BRANDS_PER_CATEGORY} still in play, best first, for its Outfit to choose among, or says the Style Icon is passed over when they can't complete an Outfit. Fetch a Style Icon's Brands before searching for its Outfit's Products. A Styling may fetch the Brands of only a few Style Icons; fetching them again is free, and gives them as they now stand.`,
       inputSchema: fetchBrandsInputSchema,
       execute: afterTurnNotes(async ({ styleIcon }): Promise<BrandsFetched> => {
         let fetched = fetching.get(styleIcon);
@@ -437,7 +477,7 @@ function stylistTools(stylingId: string, steps: StylistSteps, notes: TurnNoteSav
     }),
     searchProducts: tool({
       description:
-        "Searches for one Piece's Products: one Brand's Tops, Bottoms or Shoes, or the Top Brand's One-Pieces, sold where the user lives, new, in stock and within the Brand's price range. Gives the Products that qualify, one line each by its id, title, description and colours. A Brand whose search finds none is out of that Category for the rest of this Styling. A Styling may make only so many searches; searching again is free, and gives the same Products.",
+        `Searches for one Piece's Products: the Tops, Bottoms or Shoes of one of the Style Icon's top ${TOP_BRANDS_PER_CATEGORY} Brands for the Piece, or the Top Brand's One-Pieces, sold where the user lives, new, in stock and within the Brand's price range. Gives the Products that qualify, one line each by its id, title, description and colours. A Brand whose search finds none is out of that Category for the rest of this Styling. A Styling may make only so many searches; searching again is free, and gives the same Products.`,
       inputSchema: searchProductsInputSchema,
       execute: afterTurnNotes((input): Promise<ProductsSearched> => {
         const key = JSON.stringify([input.styleIcon, input.category, input.brand]);
@@ -460,9 +500,17 @@ function stylistTools(stylingId: string, steps: StylistSteps, notes: TurnNoteSav
         return search;
       }),
     }),
+    passOverStyleIcon: tool({
+      description:
+        "Passes over a Style Icon that doesn't suit the photo, so it inspires no Outfit and the next one takes its place. Your reason is shown to the user in your notes.",
+      inputSchema: passOverStyleIconInputSchema,
+      execute: afterTurnNotes(
+        (input, turn): Promise<StyleIconPassedOver> => inOrder(async () => unlessRefused(await orBreak(() => steps.passOverStyleIcon(stylingId, turn, input)))),
+      ),
+    }),
     saveOutfit: tool({
       description:
-        "Saves one Outfit, inspired by one Style Icon, and gives its number. Use the Style Icons in their order: each Outfit's is the next one not yet used or passed over. A save that breaks a rule is refused, saying why: correct it and save again.",
+        `Saves one Outfit, inspired by one Style Icon, and gives its number. Use the Style Icons in their order: each Outfit's is the next one not yet used or passed over. Each Category's Brand is one of the Style Icon's top ${TOP_BRANDS_PER_CATEGORY} still in play. A save that breaks a rule is refused, saying why: correct it and save again.`,
       inputSchema: saveOutfitInputSchema,
       execute: afterTurnNotes(
         (input): Promise<SavedOutfit> => inOrder(async () => unlessRefused(await orBreak(() => steps.saveOutfit(stylingId, input)))),
