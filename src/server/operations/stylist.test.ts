@@ -1746,6 +1746,29 @@ describe("the Preview phase", () => {
     expect(JSON.stringify(notes)).not.toMatch(/[$£]/);
   });
 
+  it("clears a verdict's note of the braces and tags a model can leave in it, keeping its words", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    // As Claude Sonnet 5.5 returned both of a Styling's redraw verdicts in the check's run 14-54-16.
+    const asReturned = "This Preview didn't show you as you are.}}</br>";
+    harness.ai.previewVerdicts = [
+      { ...BREAKS_A_HARD_RULE, note: `${BREAKS_A_HARD_RULE.note}<br/>` },
+      { breaksHardRule: true, better: "first", note: asReturned },
+    ];
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    const { notes } = (await readConsultation(harness.context(browser), consultationId))!.stylistNotes[0]!;
+    expect(notes.slice(-5)).toEqual([
+      { kind: "step", text: "Drew Outfit 1's Preview" },
+      { kind: "note", text: BREAKS_A_HARD_RULE.note },
+      { kind: "step", text: "Redrew Outfit 1's Preview" },
+      { kind: "note", text: "This Preview didn't show you as you are." },
+      { kind: "step", text: "Left Outfit 1 without a Preview" },
+    ]);
+  });
+
   it('moves the Styling on to "Generating Previews" as it starts, counting the Previews kept, refused or failed, so a redraw doesn\'t move the count', async () => {
     harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
     harness.ai.previewVerdicts = [WRONG];

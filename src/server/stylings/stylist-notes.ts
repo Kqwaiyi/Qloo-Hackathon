@@ -122,10 +122,17 @@ export function notesIn(texts: readonly string[]): string[] {
     .filter((line) => noteFault(line) === null);
 }
 
-/** Text the Stylist wrote, as one note: its line breaks and runs of spaces made single spaces, trimmed. */
+/**
+ * Text the Stylist wrote, as one note: its line breaks and runs of spaces made single spaces, trimmed,
+ * and cleared of the tags and braces a model can leave in it, such as the "}}</br>" a verdict's note
+ * once ended with. A note is plain words, so it never needs either.
+ */
 export function asOneNote(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
+  return text.replace(MARKUP, " ").replace(/\s+/g, " ").trim();
 }
+
+/** A tag, such as <br/> or </br>, or a brace. */
+const MARKUP = /<\/?[a-z][^<>]*>|[{}]/gi;
 
 /** What can be wrong with a note the Stylist wrote, checked like a "why" line. */
 export type NoteFault = "empty" | "states a price" | "too long";
