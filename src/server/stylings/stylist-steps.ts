@@ -41,9 +41,10 @@ import {
   type SaveOutfitInput,
   saveOutfitInputSchema,
   type StylistSteps,
+  writeNoteInputSchema,
 } from "./stylist";
 import type { StylistBrief, StylistStyleIcon } from "./stylist-brief";
-import { addSteps, addStylistNotes, asOneNote, hasNotesFromTurn, type NoteFault, noteFault, notesIn, STEPS } from "./stylist-notes";
+import { addSteps, addStylistNotes, asOneNote, hasNoteFromTurn, hasNotesFromTurn, type NoteFault, noteFault, notesIn, STEPS } from "./stylist-notes";
 
 /** Every Styling step, on `ctx`, as this try of them. */
 export function allStylingSteps(ctx: StylingContext, stepTry: StepTry = {}): StylistSteps {
@@ -75,6 +76,7 @@ function stylistSteps(
   | "openRedraw"
   | "keepPreview"
   | "saveNotes"
+  | "writeNote"
 > {
   return {
     async saveNotes(stylingId, turn, texts) {
@@ -83,6 +85,21 @@ function stylistSteps(
         // A retry after the save went through has nothing left to do.
         if (await hasNotesFromTurn(tx, stylingId, turn)) return;
         await addStylistNotes(tx, stylingId, notes.map((text) => ({ kind: "note" as const, text, turn })));
+      });
+    },
+
+    // A note the Stylist wrote with writeNote is checked like one in its text, but refused rather
+    // than dropped, so it can write it again, as the reason for passing over a Style Icon is.
+    async writeNote(stylingId, turn, input) {
+      const parsed = writeNoteInputSchema.safeParse(input);
+      if (!parsed.success) return refused("Give your note's text.");
+      const note = asOneNote(parsed.data.text);
+      const fault = noteFault(note);
+      if (fault) return refused(NOTE_REFUSALS[fault]);
+      return whileRunning(ctx.db, stylingId, async (tx) => {
+        // A retry after the note went through, or a note the turn gave already, has nothing left to do.
+        if (!(await hasNoteFromTurn(tx, stylingId, turn, note))) await addStylistNotes(tx, stylingId, [{ kind: "note", text: note, turn }]);
+        return { ok: true, shown: true };
       });
     },
 
@@ -155,9 +172,11 @@ function stylistSteps(
         const fault = noteFault(reason);
         if (fault) return refused(REASON_REFUSALS[fault](icon.name));
         await tx.update(styleIcon).set({ status: "skipped" }).where(eq(styleIcon.id, icon.id));
+        // A reason the turn wrote as a note already isn't shown twice.
+        const noted = await hasNoteFromTurn(tx, stylingId, turn, reason);
         await addStylistNotes(tx, stylingId, [
           { kind: "step", text: STEPS.passedOverByStylist(icon.name) },
-          { kind: "note", text: reason, turn },
+          ...(noted ? [] : [{ kind: "note" as const, text: reason, turn }]),
         ]);
         return { ok: true, styleIcon: icon.number };
       });
@@ -406,6 +425,13 @@ const REASON_REFUSALS: Record<NoteFault, (styleIconName: string) => string> = {
   empty: (name) => `Say why you're passing over ${name}, about style.`,
   "states a price": (name) => `Your reason for passing over ${name} must not state a price.`,
   "too long": (name) => `Your reason for passing over ${name} is too long: keep it to a sentence.`,
+};
+
+/** Why a note written with writeNote is refused, by what's wrong with it. */
+const NOTE_REFUSALS: Record<NoteFault, string> = {
+  empty: "Your note is empty, so it wasn't shown.",
+  "states a price": "Your note states a price, so it wasn't shown: nothing you write states a price.",
+  "too long": "Your note is too long, so it wasn't shown: keep each note to one or two short sentences.",
 };
 
 /** The Style Icons with this status, as the Stylist is told them. */

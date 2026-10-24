@@ -78,6 +78,16 @@ export async function hasNotesFromTurn(tx: Transaction, stylingId: string, turn:
   return saved !== undefined;
 }
 
+/** Whether the Styling has saved this note, by its text, from this turn of the Stylist's already. */
+export async function hasNoteFromTurn(tx: Transaction, stylingId: string, turn: number, text: string): Promise<boolean> {
+  const [saved] = await tx
+    .select({ position: stylistNote.position })
+    .from(stylistNote)
+    .where(and(eq(stylistNote.stylingId, stylingId), eq(stylistNote.turn, turn), eq(stylistNote.text, text)))
+    .limit(1);
+  return saved !== undefined;
+}
+
 /** Each of these Stylings' entries, in order, by the Styling. A Styling with none has no entry in the map. */
 export async function readStylistNotesOf(db: Database | Transaction, stylingIds: readonly string[]): Promise<Map<string, StylistNoteEntry[]>> {
   const byStyling = new Map<string, StylistNoteEntry[]>();

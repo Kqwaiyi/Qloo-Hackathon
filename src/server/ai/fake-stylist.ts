@@ -164,7 +164,7 @@ export function fakeStylistModel(play: (request: FakeStylistRequest) => Promise<
  * Any other keeps each Preview as it was first drawn.
  *
  * Each turn, before its tool calls, it writes a note to the user on what they're for, one line for
- * each kind of tool it calls (`fakeNotes`).
+ * each kind of tool it calls (`fakeNotes`), as text, never with writeNote, unless a test scripts it.
  */
 export function fakeStylistTurn(request: FakeStylistRequest, scenarioFor: (styleIcon: FakeScenarioStyleIcon) => FakeStylistScenario): FakeStylistTurn {
   const calls = fakeStylistCalls(request, scenarioFor);

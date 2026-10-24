@@ -7,6 +7,7 @@ import type { BrandToLookUp } from "@/server/outfit-assembly/brands";
 import type { QlooPerson } from "@/server/qloo/client";
 import {
   type BrandsFetched,
+  type NoteWritten,
   type PeopleByLine,
   type PreviewKept,
   type PreviewsStarted,
@@ -57,6 +58,7 @@ export async function stylingWorkflow(stylingId: string): Promise<void> {
       keepPreview,
       finish,
       saveNotes,
+      writeNote,
     },
     workflowStylistModel(),
   );
@@ -219,4 +221,11 @@ async function saveNotes(stylingId: string, turn: number, texts: string[]): Prom
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
   return runWorkflowStep((steps) => steps.saveNotes(stylingId, turn, texts));
+}
+
+/** Saves a note the Stylist wrote with writeNote to our database, as `saveNotes` saves its text. */
+async function writeNote(stylingId: string, turn: number, input: unknown): Promise<StylistStepResult<NoteWritten>> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.writeNote(stylingId, turn, input));
 }

@@ -104,6 +104,15 @@ export const passOverStyleIconInputSchema = z.object({
     ),
 });
 
+/** What writing the user a note takes: its text, which the user reads in the Stylist's Notes. */
+export const writeNoteInputSchema = z.object({
+  text: z
+    .string()
+    .describe(
+      'The note: one or two short sentences, in English, to the user as "you", on what you\'re doing and why, about style. Never about their body, skin, ethnicity or age, or the Style Icon as a person. Never a price.',
+    ),
+});
+
 /** What drawing a Preview takes: the saved Outfit's number. */
 export const renderPreviewInputSchema = z.object({
   outfit: z.number().int().describe("The number of the saved Outfit whose Preview to draw."),
@@ -167,6 +176,11 @@ export interface ProductsSearched {
 /** What `passOverStyleIcon` gives the Stylist: the number of the Style Icon passed over. */
 export interface StyleIconPassedOver {
   styleIcon: number;
+}
+
+/** What `writeNote` gives the Stylist: that the user was shown its note. */
+export interface NoteWritten {
+  shown: true;
 }
 
 /** What `saveOutfit` gives the Stylist: the saved Outfit's number, as the user sees it. */
@@ -283,9 +297,10 @@ export interface StylistSteps {
   /**
    * Passes over a Style Icon, as `passOverStyleIconInputSchema` describes it, so it inspires no
    * Outfit, and adds a step saying so to the Stylist's Notes, then the reason, a note of the turn
-   * that wrote it, checked like one: refused before the Style Icons are found or once the Previews
-   * start, for a Style Icon not on the list or that has inspired an Outfit, and for a reason that's
-   * empty, states a price or is too long. Passed over already, there's nothing left to do.
+   * that wrote it, unless that turn wrote the same note already, checked like one: refused before
+   * the Style Icons are found or once the Previews start, for a Style Icon not on the list or that
+   * has inspired an Outfit, and for a reason that's empty, states a price or is too long. Passed
+   * over already, there's nothing left to do.
    */
   passOverStyleIcon(stylingId: string, turn: number, input: unknown): Promise<StylistStepResult<StyleIconPassedOver>>;
   /**
@@ -340,9 +355,18 @@ export interface StylistSteps {
   /**
    * Saves the text the Stylist wrote in one turn, by the turn's number, as its notes to the user,
    * after the Styling's last entry. Each line is a note, checked like a "why" line: one that's
-   * empty, states a price or is too long is dropped silently. A turn's notes are saved once.
+   * empty, states a price or is too long is dropped silently. A turn's notes are saved once: with
+   * any note of the turn's saved already, its text is taken as saved, so it must be saved before any
+   * note the turn wrote with writeNote.
    */
   saveNotes(stylingId: string, turn: number, texts: string[]): Promise<void>;
+  /**
+   * Adds a note the Stylist wrote with writeNote, as `writeNoteInputSchema` describes it, after the
+   * Styling's last entry, as a note of the turn that wrote it, checked like one: refused, saying why,
+   * when it's empty, states a price or is too long. One its turn has saved already, as a retry finds
+   * it, or as the turn's text or another writeNote gave it, is saved once.
+   */
+  writeNote(stylingId: string, turn: number, input: unknown): Promise<StylistStepResult<NoteWritten>>;
 }
 
 /** A tool's refusal, which the Stylist reads as its result, starting "Refused:", and corrects on its next turn. */
@@ -396,13 +420,15 @@ export async function runStylist(stylingId: string, steps: StylistSteps, model: 
 type StylistToolName = keyof ReturnType<typeof stylistTools>["tools"];
 
 /**
- * The tools the Stylist is offered for its brief: finding Style Icons only for a Styling that ranks
- * its own, which has none in its brief, and fetching Brands and searching Products only for Outfits
- * built on Brands, which a Face Photo's, a Hairstyle alone, aren't.
+ * The tools the Stylist is offered for its brief, the same on every turn: writing notes always,
+ * from the first turn, so the tools never change within a Styling; finding Style Icons only for a
+ * Styling that ranks its own, which has none in its brief; and fetching Brands and searching
+ * Products only for Outfits built on Brands, which a Face Photo's, a Hairstyle alone, aren't.
  */
 function toolsFor(brief: StylistBrief): StylistToolName[] {
   const buildsOnBrands = brief.pieces.some((piece) => piece !== CATEGORY_LABELS.hairstyle);
   return [
+    "writeNote",
     ...(brief.styleIcons ? [] : (["findStyleIcons"] as const)),
     ...(buildsOnBrands ? (["fetchBrands", "searchProducts"] as const) : []),
     "passOverStyleIcon",
@@ -419,8 +445,16 @@ function toolsFor(brief: StylistBrief): StylistToolName[] {
 interface TurnNoteSaver {
   /** Saves a turn's notes, by its number, from the text it wrote, unless they're saved already. */
   save(turn: number, texts: string[]): Promise<void>;
-  /** Saves the notes of the turn whose own message ends the conversation a tool is handed, unless they're saved already. */
+  /**
+   * Saves the notes of the turn whose own message ends the conversation a tool is handed, unless
+   * they're saved already: its text, then each note it wrote with writeNote, in order.
+   */
   saveFrom(messages: readonly ModelMessage[]): Promise<void>;
+  /**
+   * What came of a note the Stylist wrote with writeNote, by its call's ID, writing it unless it's
+   * written already: the step's result, or null when the note couldn't be saved.
+   */
+  write(turn: number, toolCallId: string, input: unknown): Promise<StylistStepResult<NoteWritten> | null>;
 }
 
 /**
@@ -428,11 +462,13 @@ interface TurnNoteSaver {
  * entries: as its tools start, from the turn's own message, which the Workflow agent hands each of
  * its tools as the last of the conversation, so they appear before the steps those tools write; or
  * as the turn ends, for a turn whose tools never ran. The agent calls its step-end callback only
- * once a turn's tools are done, which for Previews is a while. A note that can't be saved is lost,
- * never the Styling.
+ * once a turn's tools are done, which for Previews is a while. The notes it wrote with writeNote
+ * follow its text, one after another, in the order it called writeNote, wherever that is among the
+ * turn's tools, which all run at once. A note that can't be saved is lost, never the Styling.
  */
-function turnNoteSaver(stylingId: string, steps: Pick<StylistSteps, "saveNotes">): TurnNoteSaver {
+function turnNoteSaver(stylingId: string, steps: Pick<StylistSteps, "saveNotes" | "writeNote">): TurnNoteSaver {
   const saving = new Map<number, Promise<void>>();
+  const writing = new Map<string, Promise<StylistStepResult<NoteWritten> | null>>();
 
   function save(turn: number, texts: string[]): Promise<void> {
     let saved = saving.get(turn);
@@ -447,13 +483,35 @@ function turnNoteSaver(stylingId: string, steps: Pick<StylistSteps, "saveNotes">
     return saved;
   }
 
+  /** Writes one of a turn's notes written with writeNote, once `after` is done, unless it's written already. */
+  function write(turn: number, toolCallId: string, input: unknown, after: Promise<unknown> = saving.get(turn) ?? Promise.resolve()) {
+    let written = writing.get(toolCallId);
+    if (!written) {
+      written = after.then(() =>
+        steps.writeNote(stylingId, turn, input).catch((error: unknown) => {
+          console.error("A note of the Stylist's couldn't be saved:", error instanceof Error ? error.message : "unknown error");
+          return null;
+        }),
+      );
+      writing.set(toolCallId, written);
+    }
+    return written;
+  }
+
   return {
     save,
-    saveFrom(messages) {
+    async saveFrom(messages) {
       const own = messages.at(-1);
-      if (own?.role !== "assistant") return Promise.resolve();
-      return save(turnOf(messages), typeof own.content === "string" ? [own.content] : textsOf(own.content));
+      if (own?.role !== "assistant") return;
+      const turn = turnOf(messages);
+      if (typeof own.content === "string") return save(turn, [own.content]);
+      let saved: Promise<unknown> = save(turn, textsOf(own.content));
+      for (const part of own.content) {
+        if (part.type === "tool-call" && part.toolName === "writeNote") saved = write(turn, part.toolCallId, part.input, saved);
+      }
+      await saved;
     },
+    write: (turn, toolCallId, input) => write(turn, toolCallId, input),
   };
 }
 
@@ -475,13 +533,13 @@ function stylistTools(stylingId: string, steps: StylistSteps, notes: TurnNoteSav
   const state = { broken: null as unknown, finished: false };
 
   /**
-   * A tool's work, given the number of the turn that called it, once the notes the Stylist wrote
-   * that turn are saved, so they come before the steps it writes.
+   * A tool's work, given the number of the turn that called it and the call's ID, once the notes the
+   * Stylist wrote that turn are saved, so they come before the steps it writes.
    */
-  function afterTurnNotes<I, O>(work: (input: I, turn: number) => Promise<O>) {
-    return async (input: I, { messages }: { messages: ModelMessage[] }): Promise<O> => {
+  function afterTurnNotes<I, O>(work: (input: I, turn: number, toolCallId: string) => Promise<O>) {
+    return async (input: I, { messages, toolCallId }: { messages: ModelMessage[]; toolCallId: string }): Promise<O> => {
       await notes.saveFrom(messages);
-      return work(input, turnOf(messages));
+      return work(input, turnOf(messages), toolCallId);
     };
   }
   // The tools that build Outfits run one at a time, in the order the Stylist called them, so its
@@ -537,6 +595,17 @@ function stylistTools(stylingId: string, steps: StylistSteps, notes: TurnNoteSav
   }
 
   const tools = {
+    writeNote: tool({
+      description:
+        "Writes the user a note, which they're shown as you work: what you're doing and why. Call it first in a turn, beside the tool calls it explains. A note that breaks a rule is refused, saying why, and isn't shown.",
+      inputSchema: writeNoteInputSchema,
+      // The turn's notes, this one among them, are written as its first tool starts.
+      execute: afterTurnNotes(async (input, turn, toolCallId): Promise<NoteWritten> => {
+        const written = await notes.write(turn, toolCallId, input);
+        if (!written) throw new Error("Your note couldn't be shown to the user.");
+        return unlessRefused(written);
+      }),
+    }),
     findStyleIcons: tool({
       description:
         "Asks Qloo for this Styling's Style Icons: well-known people popular with people like the user, in their Country, in tune with the Photo Style. Gives them in Qloo's order, best first, each by its number. Call it once, before saving any Outfit.",

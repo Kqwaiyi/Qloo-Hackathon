@@ -160,6 +160,14 @@ describe("the Stylist's prompt", () => {
     expect(prompt).toMatch(/never name any other service/i);
   });
 
+  it("asks for each note through writeNote, called first in the turn, beside the calls it explains", async () => {
+    const prompt = await promptSent();
+
+    expect(prompt).toMatch(/write the user a note on what you're doing and why, with writeNote/i);
+    expect(prompt).toMatch(/call writeNote first, in the same turn as the tool calls it explains/i);
+    expect(prompt).toMatch(/writeNote is only for these notes/i);
+  });
+
   it("says what to check in each Preview, against the photo and the Products' seller photos, and lists the hard rules", async () => {
     const prompt = await promptSent();
 
@@ -204,10 +212,23 @@ describe("the Stylist's prompt", () => {
       "saveOutfit",
       "searchProducts",
       "startPreviews",
+      "writeNote",
     ]);
     for (const tool of first!.tools) expect(first!.instructions).toContain(tool);
     expect(first!.instructions).toMatch(/top 3 Brands/i);
     expect(first!.instructions).toMatch(/One-Piece/);
+  });
+
+  it.each(["face", "body_only"] as const)("offers the same tools on every turn of a Styling, writeNote among them from the first, for a %s photo", async (photoType) => {
+    harness.qloo.respond = qlooWithBrands(WOMEN);
+    await start(await signedInUser(), photoType);
+
+    await harness.stylings.runPending();
+
+    const [first, ...later] = harness.ai.stylistRequests;
+    expect(later.length).toBeGreaterThan(0);
+    expect(first!.tools).toContain("writeNote");
+    for (const { tools } of later) expect(tools).toEqual(first!.tools);
   });
 
   it("explains how to choose each Category's Brand among a Style Icon's top 3, weighing the photo, the Photo Style and the rest of the Outfit", async () => {
@@ -254,6 +275,7 @@ describe("each kind of Styling's brief", () => {
       "renderPreview",
       "saveOutfit",
       "startPreviews",
+      "writeNote",
     ]);
   });
 
@@ -586,6 +608,24 @@ describe("passing over a Style Icon", () => {
       { kind: "step", text: "Passed over Ava Stone" },
       { kind: "note", text: REASON },
     ]);
+  });
+
+  it("adds the reason once when the Stylist wrote it with writeNote in the same turn, before the step", async () => {
+    harness.ai.stylistTurn = ({ turn }) =>
+      turn === 2 ? { calls: [...call("writeNote", { text: REASON }).calls, ...call("passOverStyleIcon", { styleIcon: 1, reason: REASON }).calls] } : undefined;
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    expect(await styleIconStatusesOf(consultationId)).toEqual(["skipped", "used", "used"]);
+    const { notes } = (await readConsultation(harness.context(browser), consultationId))!.stylistNotes[0]!;
+    expect(notes.slice(1, 4)).toEqual([
+      { kind: "step", text: "Asked Qloo for Style Icons popular in the United States with a casual Photo Style: 3 found" },
+      { kind: "note", text: REASON },
+      { kind: "step", text: "Passed over Ava Stone" },
+    ]);
+    expect(notes.filter(({ text }) => text === REASON)).toHaveLength(1);
   });
 
   it.each([
@@ -1105,6 +1145,99 @@ describe("the Stylist's Notes", () => {
       { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
     ]);
     expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toHaveLength(1);
+  });
+
+  it("keep a note the Stylist writes with writeNote, before the steps its turn's other tools write", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    const note = "Ava Stone's soft layers suit your casual Photo Style, so her cut comes first.";
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? { calls: [...call("writeNote", { text: note }).calls, ...save(hairstyleOutfit(1)).calls] } : undefined);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    const notes = watchNotes(browser, consultationId);
+    harness.ai.duringCall = () => notes.poll();
+
+    await harness.stylings.runPending();
+
+    expect(notes.seen.slice(2, 4)).toEqual([
+      { kind: "note", text: note },
+      { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
+    ]);
+    expect(harness.ai.stylistRequests[2]!.toolResults.find(({ toolName }) => toolName === "writeNote")).toMatchObject({ output: { shown: true }, error: null });
+  });
+
+  it("keep a turn's notes written with writeNote after its text and before its steps, in the order written, wherever writeNote is called among its tools", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    const [first, second] = ["Ava Stone's soft layers suit your casual Photo Style.", "Her cut is easy to reach from your current length."];
+    harness.ai.stylistTurn = ({ turn }) =>
+      turn === 2
+        ? {
+            text: "Here's your first Outfit.",
+            calls: [...call("writeNote", { text: first }).calls, ...save(hairstyleOutfit(1)).calls, ...call("writeNote", { text: second }).calls],
+          }
+        : undefined;
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    const notes = watchNotes(browser, consultationId);
+    harness.ai.duringCall = () => notes.poll();
+
+    await harness.stylings.runPending();
+
+    expect(notes.seen.slice(2, 6)).toEqual([
+      { kind: "note", text: "Here's your first Outfit." },
+      { kind: "note", text: first },
+      { kind: "note", text: second },
+      { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
+    ]);
+  });
+
+  it("refuse a note written with writeNote that states a price, is empty, or runs too long, saying why, so the Stylist can write it again, keeping the turn's others", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    const kept = "It frames your face without much upkeep.";
+    const texts = ["Yours for about $40 at most salons.", "   ", `This cut is ${"really ".repeat(45)}easy to keep.`, `  ${kept}\n`];
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? { calls: [...call("writeNote", ...texts.map((text) => ({ text }))).calls, ...save(hairstyleOutfit(1)).calls] } : undefined);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    const notes = watchNotes(browser, consultationId);
+    harness.ai.duringCall = () => notes.poll();
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests[2]!.toolResults.filter(({ toolName }) => toolName === "writeNote").map(({ output, error }) => output ?? error)).toEqual([
+      "Refused: Your note states a price, so it wasn't shown: nothing you write states a price.",
+      "Refused: Your note is empty, so it wasn't shown.",
+      "Refused: Your note is too long, so it wasn't shown: keep each note to one or two short sentences.",
+      { shown: true },
+    ]);
+    expect(notes.seen.slice(2, 4)).toEqual([
+      { kind: "note", text: kept },
+      { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
+    ]);
+  });
+
+  it("keep a note once when writeNote is given it twice in a turn, or the turn's text gave it already", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    const [written, twice] = ["Ava Stone's soft layers suit your casual Photo Style.", "Her cut is easy to reach from your current length."];
+    harness.ai.stylistTurn = ({ turn }) =>
+      turn === 2
+        ? { text: written, calls: [...call("writeNote", { text: written }, { text: twice }, { text: ` ${twice}` }).calls, ...save(hairstyleOutfit(1)).calls] }
+        : undefined;
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    const notes = watchNotes(browser, consultationId);
+    harness.ai.duringCall = () => notes.poll();
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests[2]!.toolResults.filter(({ toolName }) => toolName === "writeNote").map(({ output }) => output)).toEqual([
+      { shown: true },
+      { shown: true },
+      { shown: true },
+    ]);
+    expect(notes.seen.slice(2, 5)).toEqual([
+      { kind: "note", text: written },
+      { kind: "note", text: twice },
+      { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
+    ]);
   });
 
   it("come from the status only after the index the page asks for", async () => {

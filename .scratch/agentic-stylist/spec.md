@@ -147,6 +147,7 @@ Qloo still decides which Style Icons and Brands are candidates. The tools still 
   - **Redraw a Preview** with one correction sentence the Stylist writes, added to the fixed Preview instruction rather than replacing it. At most once per Outfit.
   - **Keep a Preview:** the first image, the redraw, or none when both break a hard rule (a changed or invented face, a removed head covering, another person changed). None leaves the Outfit with no Preview, as a refusal does.
   - **Finish.**
+  - **Write a note** to the user, its text checked like any written note. Claude Sonnet 5.5 returns a note longer than a sentence or two as a progress-update thinking block, empty under the "omitted" display, so the prompt asks for every note through this tool, called first in the turn whose calls it explains. It's offered from the first turn, so the tools never change within a Styling.
 - **Qloo's queries are built exactly as today.** The Brand query never carries the Photo Style (ADR-0002). The Stylist may weigh the photo and the Photo Style only when choosing among what came back (ADR-0010).
 - **A brief for each kind of Styling:**
   - **A first Styling** finds its own Style Icons.
@@ -166,7 +167,7 @@ Qloo still decides which Style Icons and Brands are candidates. The tools still 
   - **A Preview the Stylist checks** enters the conversation as its image, read from Blob by the step that rendered it.
   - **Seller photos** enter only as their public URLs. The model step fetches them, so the run data holds the URL, never the image.
   - **Tool steps** keep today's retries and today's at-once limits: 3 Qloo calls, 3 product-search calls, 2 Previews. Each gets the Styling's ID and the call's input, and loads the rest itself.
-  - **Notes reach our database** from a step after each model call: the agent's step-end callback hands it the turn's text. Tool steps write their own entries. The Stylist's Notes never wait on the run's data. (The Workflow agent calls its step-end callback only once the turn's tools are done, so ticket 05 saves a turn's text as its first tool starts, from the turn's own message, and keeps the step-end callback for a turn with no tool call.)
+  - **Notes reach our database** from a step after each model call: the agent's step-end callback hands it the turn's text. Tool steps write their own entries. The Stylist's Notes never wait on the run's data. (The Workflow agent calls its step-end callback only once the turn's tools are done, so ticket 05 saves a turn's text as its first tool starts, from the turn's own message, and keeps the step-end callback for a turn with no tool call.) The notes a turn writes with the note tool are saved from that message too, after its text and before any of its tools' steps, in the order it wrote them.
   - **Styling runs keep starting with zero retention,** so the run data is unreadable the moment the Styling ends and gone within 36 days.
 - **The turn cap** is a stop condition on the agent: 30 turns per Styling, 60 on the Demo Account. A Styling that reaches it finishes with the Outfits it saved, as if the Stylist had called Finish. It replaces today's 2 tailoring attempts and 2 substitutes: a Stylist that keeps getting an Outfit wrong is bounded by its turns instead.
 - **When a step fails:** a turn that still fails after its retries, or that Claude refuses, breaks the Styling, keeping what today's finish keeps. A tool that still fails after its retries behaves as today: a product search that never answers passes that Brand over, and every search failing breaks the Styling.
@@ -176,7 +177,7 @@ Qloo still decides which Style Icons and Brands are candidates. The tools still 
 
 - **The Stylist's conversation** isn't stored by us: it lives in the run's data (see The loop). With thinking display omitted, its thinking blocks hold no text.
 - **The Stylist's Notes** are a new table: one Styling's entries, in order. Each is either a note the Stylist wrote or a step our code wrote for a tool call and its result. Our code writes the steps from the data (Qloo's names, the Brand, the Category, counts), so names never come from the model.
-  - Each written note is checked like a "why" line: not empty, no price, and a short length cap. A note that fails is dropped silently.
+  - Each written note is checked like a "why" line: not empty, no price, and a short length cap. A note in a turn's text that fails is dropped silently. One written with the note tool is refused instead, saying why, so the Stylist can write it again. Either way the user never sees it. A note written with the tool, or a pass-over reason, that its turn has already shown isn't shown again.
 - **Which notes are kept:** a Styling's notes are kept while any of its Outfits is current, or while it is the failed Styling whose line the Consultation shows. A Styling that switches in and replaces the current Outfits deletes the notes of the Stylings it replaced. Everything goes with the Consultation and the account.
 - **The stored stage moves with the tools:**
   - Finding Style Icons: "Finding Style Icons".
