@@ -41,7 +41,11 @@ export function Hero({ notice }: { notice?: ReactNode }) {
   );
 }
 
-/** One line, filled word by word as it's read: who decides, and who picks the real Products (ADR-0001, ADR-0008). */
+/**
+ * One line, filled word by word as it's read: Qloo finds the candidates, and the Stylist chooses
+ * among them, picks the real Products and checks each Preview (ADR-0008, ADR-0010). It's the page's
+ * first mention of AI, so it says "AI Stylist".
+ */
 export function Statement() {
   return (
     <section
@@ -54,7 +58,7 @@ export function Statement() {
         <span data-fill-hold className="text-mute">
           How it works.
         </span>{" "}
-        Qloo decides what to recommend. The AI picks real Products and shows them on you.
+        Qloo finds the candidates. Your AI Stylist chooses among them, picks real Products and checks each Preview.
       </p>
     </section>
   );

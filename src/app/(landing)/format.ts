@@ -7,7 +7,7 @@ export function budgetTierChip(budgetTier: BudgetTier | null): string {
   return !budgetTier || budgetTier === "no_budget" ? "No Budget: any price" : `${BUDGET_TIER_LABELS[budgetTier]} Budget Tier`;
 }
 
-/** Which Brands Qloo picks from, by the sample's Budget Tier. */
+/** Which Brands Qloo finds, by the sample's Budget Tier. */
 export function budgetTierPhrase(budgetTier: BudgetTier | null): string {
   if (!budgetTier || budgetTier === "no_budget") return "at any price";
   return `within the ${BUDGET_TIER_LABELS[budgetTier]} Budget Tier`;

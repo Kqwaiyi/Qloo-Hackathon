@@ -44,7 +44,7 @@ export function StyleIcons({ sample }: { sample: LandingSampleView }) {
             );
           })}
         </ol>
-        <Label className="px-4 text-mute-dark md:px-6">Each one inspires one Outfit.</Label>
+        <Label className="px-4 text-mute-dark md:px-6">Each inspires one Outfit, unless your AI Stylist passes it over.</Label>
       </div>
     </section>
   );
