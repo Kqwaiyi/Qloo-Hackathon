@@ -60,4 +60,9 @@ It costs money, so it runs only with the team's go-ahead and never in CI. Runnin
     - `stylist-check.test.ts` runs the operation on the fake AI. It covers the Outfits and Brands reported; the cost priced by the model that ran it, past 100,000 tokens included; the cache figures; the turn cap and refused calls; fewer Outfits; the time, searches and notes; a fresh account each time; a rejected photo; the check's own drawn Previews, redrawn, with neither kept, declined and failed; and each Outfit's own images when two Outfits' Pieces are alike.
     - `gemini.test.ts` covers drawing on another model.
   - **Dry run.** A throwaway copy of the script, with every service faked and not committed, ran start to finish. It printed the report and saved the expected files. The cut photos and faults were checked by eye.
-  - **Not done:** a live run. There was no `ANTHROPIC_API_KEY` in `.env.local` or the environment, and the check draws Previews on Gemini, which this session didn't do. Running it, with the team's go-ahead, is ticket 12's.
+- 2026-10-24: **A live run, to spend less.** The user asked for one with every Preview on Nano Banana 2 Lite.
+  - **The new option.** `--image-model gemini-3.1-flash-lite-image` draws every Preview that Nano Banana 2.1 would draw on Lite instead, redraws included. Those Previews aren't production's, so the report leaves them to the eye, not to the tallies. With every Preview on Lite, the Lite-first Body-Only case is left out, since it would repeat the Body-Only Styling.
+  - **The run.** `npm run check:stylist -- --go-ahead --image-model gemini-3.1-flash-lite-image` made 6 Stylings, all valid, in 68 turns.
+    - Cost: $0.056 of Claude, against $0.18 with nothing cached; 12 Lite Previews, about $0.41; 36 searches, about $0.25.
+    - The largest prompt was 61,489 tokens, well under 100,000. Nothing errored.
+  - **What it found.** The report and what the eye saw are in ticket 12's Comments. The finding that matters: the Stylist missed a head added to the Body-Only Photo in both its Previews, and kept them.

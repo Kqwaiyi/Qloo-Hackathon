@@ -16,14 +16,18 @@
 //
 // For each Styling it reports whether its Outfits are valid, the Stylist's turns, the time it took,
 // what its turns cost, against what they'd cost with nothing cached, its largest prompt, and what the
-// Stylist did with each Preview: a report to paste into ticket 12. It saves no photo or Preview to the repository: they go, with each Styling's
-// Stylist's Notes and turns, to a folder of the system's temporary files, to check by eye.
+// Stylist did with each Preview: a report to paste into ticket 12. It saves no photo or Preview to the
+// repository: they go, with each Styling's Stylist's Notes and turns, to a folder of the system's
+// temporary files, to check by eye.
 //
 // It says first roughly what a run costs, and spends it only with --go-ahead, once the team has
-// agreed to the cost:
+// agreed to the cost. --image-model draws every Preview that Nano Banana 2.1 would on another image
+// model, such as the cheaper Nano Banana 2 Lite. Those Previews aren't production's, so the report
+// leaves them to the eye.
 //
 //   npm run check:stylist
 //   npm run check:stylist -- --go-ahead
+//   npm run check:stylist -- --go-ahead --image-model gemini-3.1-flash-lite-image
 //
 // It needs QLOO_API_URL, QLOO_API_KEY, CHANNEL3_API_KEY, ANTHROPIC_API_KEY and GEMINI_API_KEY in
 // .env.local, whatever AI_PROVIDER and PRODUCT_SEARCH say.
@@ -39,6 +43,7 @@ import {
   CLAUDE_PHOTO_CHECK_MODEL,
   CLAUDE_STYLIST_EFFORT,
   CLAUDE_STYLIST_MODEL,
+  GEMINI_PREVIEW_MODEL,
   GEMINI_PREVIEW_MODELS,
   GEMINI_PREVIEW_PRICES_USD,
   type GeminiPreviewModel,
@@ -65,7 +70,7 @@ import { createFreshApp } from "./fresh-app";
 import { publicFile } from "./landing-sample-files";
 import { exitWithUsage } from "./team-script";
 
-const USAGE = "npm run check:stylist -- [--go-ahead]";
+const USAGE = `npm run check:stylist -- [--go-ahead] [--image-model <${Object.values(GEMINI_PREVIEW_MODELS).join(" | ")}>]`;
 
 const KEYS = ["QLOO_API_URL", "QLOO_API_KEY", "CHANNEL3_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"] as const;
 
@@ -131,25 +136,42 @@ interface CheckCase {
   note?: string;
 }
 
-const NANO_BANANA_21: Drawing = { model: GEMINI_PREVIEW_MODELS.nanoBanana21 };
 const NANO_BANANA_2_LITE: Drawing = { model: GEMINI_PREVIEW_MODELS.nanoBanana2Lite };
 
-const goAhead = readOptions();
+const { goAhead, imageModel } = readOptions();
+/** Previews drawn as production draws them: on production's image model, unless --image-model names another. */
+const AS_IN_PRODUCTION: Drawing = { model: imageModel };
+/** Whether those are production's own, which the Stylist should keep as drawn. Another model's are left to the eye. */
+const onProductionsModel = imageModel === GEMINI_PREVIEW_MODEL;
 const photos = await fixedPhotos();
+const asInProduction = (name: string, photo: FixedPhoto): CheckCase => ({
+  name,
+  photo,
+  first: AS_IN_PRODUCTION,
+  redraw: AS_IN_PRODUCTION,
+  ...(onProductionsModel
+    ? { expected: "kept" }
+    : { expected: null, note: `Drawn on ${imageModel}, not production's ${GEMINI_PREVIEW_MODEL}: check its Previews by eye, to see whether the Stylist was right to keep or redraw each one.` }),
+});
 const CASES: CheckCase[] = [
-  { name: "Full-Body Photo", photo: photos.fullBody, first: NANO_BANANA_21, redraw: NANO_BANANA_21, expected: "kept" },
-  { name: "Face Photo", photo: photos.face, first: NANO_BANANA_21, redraw: NANO_BANANA_21, expected: "kept" },
-  { name: "Body-Only Photo", photo: photos.bodyOnly, first: NANO_BANANA_21, redraw: NANO_BANANA_21, expected: "kept" },
-  {
-    name: "Body-Only Photo, first drawn on Nano Banana 2 Lite",
-    photo: photos.bodyOnly,
-    first: NANO_BANANA_2_LITE,
-    redraw: NANO_BANANA_21,
-    expected: null,
-    note: "Lite invented a face on a Body-Only Photo in the bake-off, but may not have this time: check its first Previews by eye, to see whether the Stylist was right to redraw or keep each one.",
-  },
-  { name: "Full-Body Photo, first drawn as the photo unchanged", photo: photos.fullBody, first: { fault: "unchanged" }, redraw: NANO_BANANA_21, expected: "redrawn-kept-redraw" },
-  { name: "Face Photo, first drawn with the face pixelated", photo: photos.face, first: { fault: "face-pixelated" }, redraw: NANO_BANANA_21, expected: "redrawn-kept-redraw" },
+  asInProduction("Full-Body Photo", photos.fullBody),
+  asInProduction("Face Photo", photos.face),
+  asInProduction("Body-Only Photo", photos.bodyOnly),
+  // With every Preview on Lite already, this would be the Body-Only Photo's again.
+  ...(imageModel === NANO_BANANA_2_LITE.model
+    ? []
+    : [
+        {
+          name: "Body-Only Photo, first drawn on Nano Banana 2 Lite",
+          photo: photos.bodyOnly,
+          first: NANO_BANANA_2_LITE,
+          redraw: AS_IN_PRODUCTION,
+          expected: null,
+          note: "Lite invented a face on a Body-Only Photo in the bake-off, but may not have this time: check its first Previews by eye, to see whether the Stylist was right to redraw or keep each one.",
+        },
+      ]),
+  { name: "Full-Body Photo, first drawn as the photo unchanged", photo: photos.fullBody, first: { fault: "unchanged" }, redraw: AS_IN_PRODUCTION, expected: "redrawn-kept-redraw" },
+  { name: "Face Photo, first drawn with the face pixelated", photo: photos.face, first: { fault: "face-pixelated" }, redraw: AS_IN_PRODUCTION, expected: "redrawn-kept-redraw" },
   { name: "Body-Only Photo, drawn and redrawn with a face added", photo: photos.bodyOnly, first: { fault: "face-added" }, redraw: { fault: "face-added" }, expected: "redrawn-kept-none" },
 ];
 
@@ -195,13 +217,19 @@ try {
 }
 console.log(`\nThe report, for ticket 12:\n\n${reportText()}`);
 
-function readOptions(): boolean {
+function readOptions(): { goAhead: boolean; imageModel: GeminiPreviewModel } {
   try {
-    const { values } = parseArgs({ options: { "go-ahead": { type: "boolean", default: false } } });
-    return values["go-ahead"];
+    const { values } = parseArgs({ options: { "go-ahead": { type: "boolean", default: false }, "image-model": { type: "string", default: GEMINI_PREVIEW_MODEL } } });
+    const model = values["image-model"];
+    if (!isImageModel(model)) exitWithUsage(USAGE);
+    return { goAhead: values["go-ahead"], imageModel: model };
   } catch {
     exitWithUsage(USAGE);
   }
+}
+
+function isImageModel(model: string): model is GeminiPreviewModel {
+  return (Object.values(GEMINI_PREVIEW_MODELS) as string[]).includes(model);
 }
 
 /** The fixed photos: the landing page's Full-Body sample photo, and the others cut from it, with those its faults are made from. */
@@ -268,8 +296,8 @@ function planText(): string {
   const claudeUsd = stylings * (stylistUsd + (claudeCostUsd(CLAUDE_PHOTO_CHECK_MODEL, usage(ROUGH_PHOTO_CHECK_TOKENS)) ?? 0));
   const previewUsd = (how: Drawing) => ("model" in how ? GEMINI_PREVIEW_PRICES_USD[how.model] : 0);
   const onGemini = (how: Drawing) => ("model" in how ? 1 : 0);
-  // As expected, or as the bake-off would have it for Lite: every bad Preview redrawn, and no good one.
-  const redraws = (checkCase: CheckCase) => (checkCase.expected === "kept" ? 0 : OUTFITS_PER_STYLING);
+  // Previews drawn as in production aren't expected to be redrawn; every bad one is.
+  const redraws = ({ first, redraw }: CheckCase) => (first === AS_IN_PRODUCTION && redraw === AS_IN_PRODUCTION ? 0 : OUTFITS_PER_STYLING);
   const previews = sum(CASES.map((checkCase) => OUTFITS_PER_STYLING * onGemini(checkCase.first) + redraws(checkCase) * onGemini(checkCase.redraw)));
   const geminiUsd = sum(CASES.map((checkCase) => OUTFITS_PER_STYLING * previewUsd(checkCase.first) + redraws(checkCase) * previewUsd(checkCase.redraw)));
   const geminiAtMostUsd = sum(CASES.map((checkCase) => OUTFITS_PER_STYLING * (previewUsd(checkCase.first) + previewUsd(checkCase.redraw))));
@@ -278,6 +306,7 @@ function planText(): string {
   const searchesAtMost = bodyStylings * EVERYONES_STYLING_LIMITS.productSearches;
   return [
     `The Haiku check runs ${stylings} Stylings on ${CLAUDE_STYLIST_MODEL} at ${CLAUDE_STYLIST_EFFORT} effort, with live Qloo and Channel3, each a new user's first, in the United States, at No Budget.`,
+    `Previews production would draw on ${GEMINI_PREVIEW_MODEL} are drawn on ${imageModel}${onProductionsModel ? ", as in production" : ", which is cheaper, so the report leaves them to the eye"}.`,
     `Its photos, all AI-generated, are ${photos.fullBody.name}, and ${photos.face.name} and ${photos.bodyOnly.name}:`,
     ...CASES.map(({ name, first, redraw }, index) => `  ${index + 1}. ${name}: ${previewsText(first, redraw)}.`),
     "",
@@ -347,6 +376,7 @@ function reportText(): string {
   const date = new Date().toISOString().slice(0, 10);
   return [
     `- ${date}: **The Haiku check** (\`npm run check:stylist\`) on ${CLAUDE_STYLIST_MODEL} at ${CLAUDE_STYLIST_EFFORT} effort, with live Qloo and Channel3. Each Styling was a new user's first, in the United States, at No Budget, with everyone's limits.`,
+    `  - Previews production would draw on ${GEMINI_PREVIEW_MODEL} were drawn on ${imageModel}${onProductionsModel ? ", as in production." : `, which is cheaper. So the "good" Previews here are ${imageModel}'s, which may have faults of their own, and only the eye can judge what the Stylist did with them.`}`,
     ...checked.flatMap(({ checkCase, result }) => caseLines(checkCase, result)),
     [
       `  - **Totals:** valid Outfits in ${valid.length} of ${checked.length} Stylings.`,
@@ -358,8 +388,8 @@ function reportText(): string {
       `  - **The Preview check:** kept ${count(bad, keptFromTheUser)} of ${bad.length} bad Previews from the user, redrawing each and keeping a redraw that put it right, or neither.`,
       `Kept the redraw for ${count(fixable, ({ preview }) => preview === "redrawn-kept-redraw")} of the ${fixable.length} a redraw could put right,`,
       `and rightly kept neither image for ${count(unfixable, ({ preview }) => preview === "redrawn-kept-none")} of the ${unfixable.length} whose redraws broke a hard rule too.`,
-      `Kept ${count(good, ({ preview }) => preview === "kept")} of ${good.length} good Previews as drawn.`,
-      `Of Nano Banana 2 Lite's ${byEye.length} Previews, judged only by eye, it redrew ${count(byEye, ({ preview }) => preview.startsWith("redrawn"))}.`,
+      ...(good.length > 0 ? [`Kept ${count(good, ({ preview }) => preview === "kept")} of ${good.length} good Previews as drawn.`] : []),
+      ...(byEye.length > 0 ? [`Of the ${byEye.length} Previews left to the eye, it redrew ${count(byEye, ({ preview }) => preview.startsWith("redrawn"))}.`] : []),
       ...(judged.length < sum(styled.filter(({ checkCase }) => checkCase.expected !== null).map(({ result }) => result.outfits.length))
         ? ["Previews the image model declined, or that couldn't be drawn, aren't counted."]
         : []),
