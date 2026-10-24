@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 
@@ -8,7 +8,6 @@ import {
   addsToCurrentOutfits,
   isStuck,
   type KeptPreview,
-  PREVIEW_REDRAW_STATES,
   type PreviewRedrawOutcome,
   type PreviewRefusalReason,
   stylingLimitsFor,
@@ -138,7 +137,8 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
 
     async renderPreview(stylingId, outfitId) {
       const toRender = await readOutfitToRender(ctx.db, stylingId, outfitId);
-      // A retry after the save went through has nothing left to draw. Only finishing marks a Preview failed.
+      // A retry after the save went through has nothing left to draw: one this step couldn't draw
+      // stays pending until finishing marks it failed.
       if (toRender.previewState !== "pending") return toRender.previewPathname ? "ready" : "refused";
       let preview: PreviewResult;
       try {
@@ -161,9 +161,30 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
 
     async judgeFirstDraw(stylingId, outfitId) {
       const toJudge = await readOutfitToRender(ctx.db, stylingId, outfitId);
+      // A retry after a verdict judging it right went through has nothing left to judge.
+      if (toJudge.previewChecked) return { refused: false, verdict: { right: true } };
       if (!toJudge.previewPathname) throw new Error(`Outfit ${outfitId} has no Preview to judge.`);
       const [drawnFrom, preview] = await Promise.all([previewDrawnFrom(ctx, { lastTry }, outfitId, toJudge), readPhoto(ctx.blob, toJudge.previewPathname)]);
-      return ctx.ai.judgePreview({ draw: "first", ...drawnFrom, preview });
+      const verdict = await ctx.ai.judgePreview({ draw: "first", ...drawnFrom, preview });
+      // Judged right, it's checked, so finishing shows it. Any other verdict leaves it to the Preview phase.
+      if (!verdict.refused && verdict.verdict.right) {
+        await whileRunning(ctx.db, stylingId, (tx) => tx.update(outfit).set({ previewChecked: true }).where(awaitingFirstVerdict(stylingId, outfitId)));
+      }
+      return verdict;
+    },
+
+    async dropUncheckedPreview(stylingId, outfitId) {
+      const dropped = await whileRunning(ctx.db, stylingId, async (tx) => {
+        const [saved] = await tx
+          .update(outfit)
+          .set({ previewState: "failed", previewPathname: null })
+          .where(awaitingFirstVerdict(stylingId, outfitId))
+          .returning({ position: outfit.position, consultationId: outfit.consultationId });
+        if (saved) await addSteps(tx, stylingId, STEPS.previewUnchecked(saved.position));
+        return saved;
+      });
+      // Once dropped, its image goes, as no Outfit shows it.
+      if (dropped) await ctx.blob.delete(previewPathnameFor(dropped.consultationId, outfitId));
     },
 
     async redrawPreview(stylingId, outfitId, { correction, note }) {
@@ -225,15 +246,19 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
 
     async finish(stylingId, outcome) {
       await finishStyling(ctx, stylingId, outcome);
-      // A redrawn Preview neither of whose images was kept is left without a Preview as its
-      // Styling finishes, so both images go. A retry deletes them again, which does no harm.
-      const unkept = await ctx.db
-        .select({ id: outfit.id, consultationId: outfit.consultationId })
+      // A Preview left failed as its Styling finishes, such as one drawn but never checked, is never
+      // shown, so any image it has goes: its first draw, and its redraw if it had one. A retry
+      // deletes them again, which does no harm.
+      const failed = await ctx.db
+        .select({ id: outfit.id, consultationId: outfit.consultationId, previewRedraw: outfit.previewRedraw })
         .from(outfit)
-        .where(and(eq(outfit.stylingId, stylingId), inArray(outfit.previewRedraw, UNKEPT_REDRAWS), eq(outfit.previewState, "failed")));
+        .where(and(eq(outfit.stylingId, stylingId), eq(outfit.previewState, "failed")));
       await Promise.all(
-        unkept
-          .flatMap(({ id, consultationId }) => [previewPathnameFor(consultationId, id), previewRedrawPathnameFor(consultationId, id)])
+        failed
+          .flatMap(({ id, consultationId, previewRedraw }) => [
+            previewPathnameFor(consultationId, id),
+            ...(previewRedraw === null ? [] : [previewRedrawPathnameFor(consultationId, id)]),
+          ])
           .map((pathname) => ctx.blob.delete(pathname)),
       );
     },
@@ -384,8 +409,8 @@ const KEEPS: Record<
   KeptPreview,
   { saved: (images: RedrawnPreviewImages) => Partial<typeof outfit.$inferInsert>; notKept: (images: RedrawnPreviewImages) => string[] }
 > = {
-  first: { saved: () => ({ previewRedraw: "kept" }), notKept: ({ redraw }) => [redraw] },
-  redraw: { saved: ({ redraw }) => ({ previewRedraw: "kept", previewPathname: redraw }), notKept: ({ first }) => [first] },
+  first: { saved: () => ({ previewRedraw: "kept", previewChecked: true }), notKept: ({ redraw }) => [redraw] },
+  redraw: { saved: ({ redraw }) => ({ previewRedraw: "kept", previewChecked: true, previewPathname: redraw }), notKept: ({ first }) => [first] },
   none: {
     saved: () => ({ previewRedraw: "kept", previewState: "refused", previewPathname: null, previewRefusalReason: "not_kept" }),
     notKept: ({ first, redraw }) => [first, redraw],
@@ -432,8 +457,16 @@ async function savePreviewFailed(db: Database, stylingId: string, outfitId: stri
   });
 }
 
-/** Where a redraw is until the Preview phase keeps one of its Preview's images. */
-const UNKEPT_REDRAWS = PREVIEW_REDRAW_STATES.filter((state) => state !== "kept");
+/** The Styling's Outfit whose Preview, as first drawn, still awaits its verdict: drawn, and neither checked nor redrawn. */
+function awaitingFirstVerdict(stylingId: string, outfitId: string) {
+  return and(
+    eq(outfit.id, outfitId),
+    eq(outfit.stylingId, stylingId),
+    eq(outfit.previewState, "ready"),
+    eq(outfit.previewChecked, false),
+    isNull(outfit.previewRedraw),
+  );
+}
 
 /**
  * How a Styling finishes: after its steps, which all completed or one of which broke, or as stuck,
@@ -444,11 +477,11 @@ export type StylingFinish = StylingOutcome | "stuck";
 /**
  * Finishes a running Styling, returning whether it did. Whatever Outfits it made switch in at once,
  * after any it adds to, and the Consultation is ready; a Preview not ready by then never will be, so
- * it's marked failed, as is one redrawn without either image kept (the finish step deletes those
- * images). One that made none has failed, as nothing could be built if its steps all completed,
- * and otherwise as broken: nothing switches, and the Consultation keeps whatever it showed before,
- * or shows No Outfits. A Styling that isn't running any more is left as it is, and
- * so is one finishing as stuck whose stage has moved since it was found.
+ * it's marked failed, as is one the Preview phase never checked, such as one redrawn without either
+ * image kept (the finish step deletes their images). One that made none has failed, as nothing could
+ * be built if its steps all completed, and otherwise as broken: nothing switches, and the
+ * Consultation keeps whatever it showed before, or shows No Outfits. A Styling that isn't running any
+ * more is left as it is, and so is one finishing as stuck whose stage has moved since it was found.
  */
 export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, stylingId: string, how: StylingFinish): Promise<boolean> {
   const finishedAt = ctx.clock.now();
@@ -474,12 +507,13 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
         .update(outfit)
         .set({ previewState: "failed" })
         .where(and(eq(outfit.stylingId, stylingId), eq(outfit.previewState, "pending")));
-      // Nor will one redrawn without either image kept, as when the Styling finished as stuck
-      // before its Preview phase kept one: nothing chose which shows the user as they are.
+      // Nor will one never checked: drawn but never judged, or redrawn without either image kept, as
+      // when the Styling finished as stuck part-way through its Preview phase. Nothing checked that
+      // it shows the user as they are, so it's never shown.
       await tx
         .update(outfit)
         .set({ previewState: "failed", previewPathname: null })
-        .where(and(eq(outfit.stylingId, stylingId), inArray(outfit.previewRedraw, UNKEPT_REDRAWS)));
+        .where(and(eq(outfit.stylingId, stylingId), eq(outfit.previewState, "ready"), eq(outfit.previewChecked, false)));
       // Any other replaces the current Outfits, and with them their Style Icons.
       if (!addsToCurrentOutfits(running.kind)) {
         await tx
@@ -564,6 +598,7 @@ async function readOutfitToRender(db: Database, stylingId: string, outfitId: str
       previewState: outfit.previewState,
       previewPathname: outfit.previewPathname,
       previewRedraw: outfit.previewRedraw,
+      previewChecked: outfit.previewChecked,
       photoPathname: consultation.photoPathname,
       photoType: consultation.photoType,
       hairCovered: consultation.hairCovered,

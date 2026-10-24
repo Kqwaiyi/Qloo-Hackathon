@@ -50,6 +50,7 @@ export async function stylingWorkflow(stylingId: string): Promise<void> {
       startPreviews,
       renderPreview,
       judgeFirstDraw,
+      dropUncheckedPreview,
       redrawPreview,
       judgeRedraw,
       keepPreview,
@@ -179,7 +180,7 @@ renderPreview.maxRetries = PREVIEW_STEP_MAX_RETRIES;
 /**
  * One AI call, the verdict on a Preview as first drawn, after reading the photo and the Preview from
  * Blob and fetching the Outfit's Product photos, as for drawing it, so the run's data holds only the
- * verdict.
+ * verdict. One judged right is saved as checked.
  */
 async function judgeFirstDraw(stylingId: string, outfitId: string): Promise<VerdictResult<FirstDrawVerdict>> {
   "use step";
@@ -187,6 +188,13 @@ async function judgeFirstDraw(stylingId: string, outfitId: string): Promise<Verd
   return runWorkflowStep((steps) => steps.judgeFirstDraw(stylingId, outfitId), { maxRetries: PREVIEW_STEP_MAX_RETRIES });
 }
 judgeFirstDraw.maxRetries = PREVIEW_STEP_MAX_RETRIES;
+
+/** Leaves the Outfit without a Preview once its first draw has no verdict, deleting the image. */
+async function dropUncheckedPreview(stylingId: string, outfitId: string): Promise<void> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.dropUncheckedPreview(stylingId, outfitId));
+}
 
 /**
  * One AI call, as for a Preview, with the first draw's verdict's correction, after adding its note.

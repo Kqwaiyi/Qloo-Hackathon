@@ -176,6 +176,8 @@ export const STEPS = {
   previewDrawn: (outfit: number, drawn: boolean) => (drawn ? `Drew Outfit ${outfit}'s Preview` : `The image model declined to draw Outfit ${outfit}'s Preview`),
   /** One Preview not drawn by the time its Styling finished, as when the image model kept failing. */
   previewFailed: (outfit: number) => `Couldn't draw Outfit ${outfit}'s Preview`,
+  /** One Preview as first drawn whose verdict the model refused, or still couldn't give after its retries, so it's never shown. */
+  previewUnchecked: (outfit: number) => `Couldn't check Outfit ${outfit}'s Preview`,
   /** A Preview's one redraw: drawn, declined by the image model, or still failing after its retries. */
   previewRedrawn: (outfit: number, outcome: PreviewRedrawOutcome) =>
     outcome === "ready"

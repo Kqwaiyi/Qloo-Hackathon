@@ -1,0 +1,1 @@
+ALTER TABLE "outfit" ADD COLUMN "preview_checked" boolean DEFAULT false NOT NULL;

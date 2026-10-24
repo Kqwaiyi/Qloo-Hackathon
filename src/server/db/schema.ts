@@ -368,6 +368,10 @@ export const outfit = pgTable(
     // Where the one redraw of the Preview is, once its verdict calls for one. The redraw is kept in
     // the private Blob store beside the Preview until the Preview phase keeps one of them.
     previewRedraw: previewRedrawStateEnum("preview_redraw"),
+    // Whether the Preview phase has checked the Preview: its first draw judged right, or the image it
+    // kept of a redrawn one. One drawn but never checked by the time its Styling finishes is left
+    // failed, so no user sees a Preview that wasn't checked.
+    previewChecked: boolean("preview_checked").notNull().default(false),
     // Body photos only: the Qloo entity ID of the Brand picked for each Brand Category, fixed as the
     // Outfit is saved and kept apart from the Pieces, so a Brand stays reserved even if no Piece shows
     // it: a One-Piece leaves out the Bottom Brand.

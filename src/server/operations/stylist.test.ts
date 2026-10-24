@@ -5,6 +5,7 @@ import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { PhotoType } from "@/config/consultations";
+import type { FakeScriptedVerdict } from "@/server/ai/fake";
 import type { FakeStylistRequest, FakeStylistTurn } from "@/server/ai/fake-stylist";
 import { brandMatch, consultation, outfit, piece, qlooCache, styleIcon, styling, stylistNote, usageRecord } from "@/server/db/schema";
 import { deleteAccount } from "@/server/operations/account";
@@ -1579,6 +1580,26 @@ describe("the Preview phase", () => {
     expect([...harness.blob.objects.keys()]).toEqual([stored!.photoPathname]);
   });
 
+  it("leaves an Outfit with no Preview when its Styling ends before its first draw is judged, deleting it, so no unchecked Preview is shown", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    // The Styling is finished as stuck while its Preview is judged, which then judges it right.
+    harness.ai.duringCall = async (made) => {
+      if (made !== "judgePreview") return;
+      harness.clock.set("2026-10-16T12:11:00Z");
+      await readStylingStatus(harness.context(browser), consultationId);
+    };
+
+    await harness.stylings.runPending();
+
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown).toMatchObject({ state: "ready", outfits: [{ preview: { state: "failed" } }] });
+    expect(shown.stylistNotes[0]!.notes.at(-1)).toEqual({ kind: "step", text: "Drew Outfit 1's Preview" });
+    const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+    expect([...harness.blob.objects.keys()]).toEqual([stored!.photoPathname]);
+  });
+
   it("drops, silently, a verdict's note that states a price, as it drops any note that does, keeping the Preview's steps", async () => {
     harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
     harness.ai.previewVerdicts = [
@@ -1651,7 +1672,112 @@ describe("the Preview phase", () => {
     const [drawn] = await harness.db.select().from(outfit).where(eq(outfit.consultationId, consultationId));
     expect([...harness.blob.objects.keys()].toSorted()).toEqual([stored!.photoPathname, ...(drawn!.previewPathname ? [drawn!.previewPathname] : [])].toSorted());
   });
+
+  it.each([
+    ["still fails after its retries", failingVerdicts("first"), 2],
+    ["is refused", refusedVerdicts([]), 1],
+  ] as const)("leaves an Outfit with no Preview, as when the image model kept failing, when its first draw's verdict %s, saying it couldn't be checked", async (_how, verdictFails, verdictsAsked) => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    verdictFails();
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    // Never redrawn, and never shown unchecked.
+    expect(harness.ai.previewRequests).toHaveLength(1);
+    expect(harness.ai.verdictRequests).toHaveLength(verdictsAsked);
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown).toMatchObject({ state: "ready", everyPreviewRefused: false, outfits: [{ preview: { state: "failed" } }] });
+    expect(shown.stylistNotes[0]!.notes.slice(-2)).toEqual([
+      { kind: "step", text: "Drew Outfit 1's Preview" },
+      { kind: "step", text: "Couldn't check Outfit 1's Preview" },
+    ]);
+    const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+    expect([...harness.blob.objects.keys()]).toEqual([stored!.photoPathname]);
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1 })]);
+  });
+
+  it("carries on with the other Outfits' Previews when one's can't be judged, completing the Styling with every Outfit it saved", async () => {
+    const crop = "A short crop, trimmed close at the sides.";
+    harness.ai.stylistTurn = ({ turn }) =>
+      turn === 2 ? { calls: [...save(hairstyleOutfit(1), hairstyleOutfit(2, { details: crop })).calls, { tool: "finish", input: {} }] } : undefined;
+    harness.stylings.previewRetries = 1;
+    // Outfit 1's verdict keeps failing, and Outfit 2's judges it right.
+    harness.ai.duringCall = async (made) => {
+      const judged = harness.ai.verdictRequests.at(-1)?.pieces[0];
+      if (made === "judgePreview" && judged?.category === "hairstyle" && judged.details !== crop) throw new Error("The verdict model is down.");
+    };
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown).toMatchObject({
+      state: "ready",
+      outfits: [
+        { styleIconName: "Ava Stone", preview: { state: "failed" } },
+        { styleIconName: "Bea Marsh", preview: { state: "ready" } },
+      ],
+    });
+    expect(shown.stylistNotes[0]!.notes).toContainEqual({ kind: "step", text: "Couldn't check Outfit 1's Preview" });
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2 })]);
+  });
+
+  it.each([
+    ["still fails after its retries", failingVerdicts("redraw", [WRONG]), 3, WRONG, { state: "ready", url: expect.not.stringContaining("-redraw") }, "Kept Outfit 1's first Preview"],
+    ["still fails after its retries", failingVerdicts("redraw", [BREAKS_A_HARD_RULE]), 3, BREAKS_A_HARD_RULE, { state: "refused", by: "stylist" }, "Left Outfit 1 without a Preview"],
+    ["is refused", refusedVerdicts([WRONG]), 2, WRONG, { state: "ready", url: expect.not.stringContaining("-redraw") }, "Kept Outfit 1's first Preview"],
+    ["is refused", refusedVerdicts([BREAKS_A_HARD_RULE]), 2, BREAKS_A_HARD_RULE, { state: "refused", by: "stylist" }, "Left Outfit 1 without a Preview"],
+  ] as const)(
+    "keeps the first image when the redraw's verdict %s, or none when the first breaks a hard rule, never the redraw",
+    async (_how, verdictFails, verdictsAsked, firstVerdict, preview, keptStep) => {
+      harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+      verdictFails();
+      const browser = await signedInUser();
+      const consultationId = await start(browser);
+
+      await harness.stylings.runPending();
+
+      expect(harness.ai.verdictRequests.map(({ draw }) => draw)).toEqual(["first", ...Array.from({ length: verdictsAsked - 1 }, () => "redraw")]);
+      const shown = (await readConsultation(harness.context(browser), consultationId))!;
+      expect(shown.outfits.map((o) => o.preview)).toEqual([preview]);
+      expect(shown.stylistNotes[0]!.notes.slice(-4)).toEqual([
+        { kind: "step", text: "Drew Outfit 1's Preview" },
+        { kind: "note", text: firstVerdict.note },
+        { kind: "step", text: "Redrew Outfit 1's Preview" },
+        { kind: "step", text: keptStep },
+      ]);
+      // The redraw goes, and so does the first unless it's kept.
+      const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+      const [drawn] = await harness.db.select().from(outfit).where(eq(outfit.consultationId, consultationId));
+      expect([...harness.blob.objects.keys()].toSorted()).toEqual([stored!.photoPathname, ...(drawn!.previewPathname ? [drawn!.previewPathname] : [])].toSorted());
+      expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1 })]);
+    },
+  );
 });
+
+/**
+ * Scripts these verdicts, then makes every verdict on a `draw` throw, as a model that keeps erroring
+ * does, each Preview step tried once more, so it still fails after its retries.
+ */
+function failingVerdicts(draw: "first" | "redraw", before: readonly FakeScriptedVerdict[] = []) {
+  return () => {
+    harness.ai.previewVerdicts = [...before];
+    harness.stylings.previewRetries = 1;
+    harness.ai.duringCall = async (made) => {
+      if (made === "judgePreview" && harness.ai.verdictRequests.at(-1)?.draw === draw) throw new Error("The verdict model is down.");
+    };
+  };
+}
+
+/** Scripts these verdicts, then the model refusing to judge the next Preview. */
+function refusedVerdicts(before: readonly FakeScriptedVerdict[]) {
+  return () => {
+    harness.ai.previewVerdicts = [...before, { refused: true }];
+  };
+}
 
 /** A first draw's verdict that finds it wrong, breaking no hard rule. */
 const WRONG = {

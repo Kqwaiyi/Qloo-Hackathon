@@ -39,9 +39,18 @@ export interface PreviewSteps {
   renderPreview(stylingId: string, outfitId: string): Promise<PreviewDrawn>;
   /**
    * One AI call: the verdict on an Outfit's Preview as first drawn, judged against the photo and the
-   * Outfit's Pieces, each Product's seller photo fetched as `renderPreview` fetches it. Saves nothing.
+   * Outfit's Pieces, each Product's seller photo fetched as `renderPreview` fetches it. A Preview
+   * judged right is saved as checked, so it's shown; nothing else is saved. Judged right already, as
+   * a retry finds it, the model isn't asked again.
    */
   judgeFirstDraw(stylingId: string, outfitId: string): Promise<VerdictResult<FirstDrawVerdict>>;
+  /**
+   * Drops an Outfit's Preview as first drawn that couldn't be checked, as the model refused to judge
+   * it or its verdict still failed after its retries: the Outfit is left without a Preview, as one
+   * the image model kept failing on is, with a step saying it couldn't be checked, and the image is
+   * deleted. Dropped already, there's nothing left to drop.
+   */
+  dropUncheckedPreview(stylingId: string, outfitId: string): Promise<void>;
   /**
    * One AI call: opens the Outfit's one redraw of its Preview, adding the note of the verdict that
    * found it wrong to the Stylist's Notes, checked like any note, then redraws it as `renderPreview`
@@ -57,10 +66,10 @@ export interface PreviewSteps {
    */
   judgeRedraw(stylingId: string, outfitId: string, firstVerdict: WrongPreview): Promise<VerdictResult<RedrawVerdict>>;
   /**
-   * Keeps one of a redrawn Outfit's images: the first, the redraw, which becomes the Outfit's
-   * Preview, or neither, which leaves the Outfit with no Preview, as a refusal does, adding the note
-   * given, checked like any note, then a step saying which. Either way the images not kept are
-   * deleted. Kept already, there's nothing left to do but delete them.
+   * Keeps one of a redrawn Outfit's images, as checked: the first, the redraw, which becomes the
+   * Outfit's Preview, or neither, which leaves the Outfit with no Preview, as a refusal does, adding
+   * the note given, checked like any note, then a step saying which. Either way the images not kept
+   * are deleted. Kept already, there's nothing left to do but delete them.
    */
   keepPreview(stylingId: string, outfitId: string, keep: PreviewToKeep): Promise<void>;
 }
@@ -69,7 +78,8 @@ export interface PreviewSteps {
  * The Preview phase of a Styling the Stylist carried out to its end: each Outfit it saved, at most
  * PREVIEWS_AT_ONCE at once, has its Preview drawn and judged, and one judged wrong redrawn once and
  * judged again. A Preview the image model declined, or that still couldn't be drawn after its
- * retries, is left without one, as finishing marks it.
+ * retries, is left without one, as finishing marks it, and so is one never checked. It never breaks
+ * the Styling: one Outfit's Preview that fails leaves the others to carry on.
  */
 export async function runPreviews(stylingId: string, steps: PreviewSteps): Promise<void> {
   try {
@@ -83,21 +93,31 @@ export async function runPreviews(stylingId: string, steps: PreviewSteps): Promi
 }
 
 /**
- * One Outfit's Preview: drawn, then judged. One judged right is kept as it was drawn. One judged
- * wrong is redrawn, and the redraw judged, and an image kept as `kept` says, with the redraw's
- * verdict's note when it leaves the Outfit with no Preview. A redraw the image model declined, or
- * that still couldn't be drawn after its retries, keeps the first, unless it breaks a hard rule.
+ * One Outfit's Preview: drawn, then judged. One judged right is kept as it was drawn. One with no
+ * verdict, as the model refused to judge it or its verdict still failed after its retries, is
+ * dropped, so it's never shown unchecked. One judged wrong is redrawn, and the redraw judged, and an
+ * image kept as `kept` says, with the redraw's verdict's note when it leaves the Outfit with no
+ * Preview. A redraw the image model declined, that still couldn't be drawn after its retries, or that
+ * has no verdict, is never kept: the first is, unless it breaks a hard rule.
  */
 async function previewOf(stylingId: string, outfitId: string, steps: PreviewSteps): Promise<void> {
   if ((await orFailed("A Preview step", () => steps.renderPreview(stylingId, outfitId))) !== "ready") return;
-  const first = verdictOf(await steps.judgeFirstDraw(stylingId, outfitId));
+  const first = verdictOf(await orFailed("A Preview's verdict step", () => steps.judgeFirstDraw(stylingId, outfitId)));
+  if (first === null) return steps.dropUncheckedPreview(stylingId, outfitId);
   if (first.right) return;
+  const firstUnlessBreaking: PreviewToKeep = { kept: first.breaksHardRule ? "none" : "first" };
   if ((await orFailed("A Preview's redraw step", () => steps.redrawPreview(stylingId, outfitId, first))) !== "ready") {
-    return steps.keepPreview(stylingId, outfitId, { kept: first.breaksHardRule ? "none" : "first" });
+    return steps.keepPreview(stylingId, outfitId, firstUnlessBreaking);
   }
-  const redraw = verdictOf(await steps.judgeRedraw(stylingId, outfitId, first));
+  const redraw = verdictOf(await orFailed("A Preview's redraw verdict step", () => steps.judgeRedraw(stylingId, outfitId, first)));
+  if (redraw === null) return steps.keepPreview(stylingId, outfitId, firstUnlessBreaking);
   const keep = kept(first, redraw);
   await steps.keepPreview(stylingId, outfitId, keep === "none" ? { kept: keep, note: redraw.note } : { kept: keep });
+}
+
+/** The verdict a verdict step gave, or null when it gave none: the model refused, or the step still failed after its retries. */
+function verdictOf<Verdict>(result: VerdictResult<Verdict> | "failed"): Verdict | null {
+  return result === "failed" || result.refused ? null : result.verdict;
 }
 
 /**
@@ -110,12 +130,6 @@ function kept(first: WrongPreview, redraw: RedrawVerdict): KeptPreview {
   if (first.breaksHardRule) return "redraw";
   if (redraw.breaksHardRule) return "first";
   return redraw.better;
-}
-
-/** A verdict the model gave, or an error once it refused to judge the Preview. */
-function verdictOf<Verdict>(result: VerdictResult<Verdict>): Verdict {
-  if (result.refused) throw new Error("The model refused to judge the Preview.");
-  return result.verdict;
 }
 
 /** A Preview step's result, or that it failed, once it still fails after its retries. */
