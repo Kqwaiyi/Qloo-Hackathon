@@ -23,16 +23,20 @@
 // It says first roughly what a run costs, and spends it only with --go-ahead, once the team has
 // agreed to the cost. --image-model draws every Preview that Nano Banana 2.1 would on another image
 // model, such as the cheaper Nano Banana 2 Lite. Those Previews aren't production's, so the report
-// leaves them to the eye.
+// leaves them to the eye. --previews-from draws none at all: it serves each Preview an image model
+// would draw from the folder an earlier run saved, for the Outfit of the same Style Icon there, run
+// with the same --image-model so its cases match. One with no saved image is declined, as the image
+// model can decline. The faults the check makes itself are made as ever.
 //
 //   npm run check:stylist
 //   npm run check:stylist -- --go-ahead
 //   npm run check:stylist -- --go-ahead --image-model gemini-3.1-flash-lite-image
+//   npm run check:stylist -- --go-ahead --image-model gemini-3.1-flash-lite-image --previews-from <folder>
 //
 // It needs QLOO_API_URL, QLOO_API_KEY, CHANNEL3_API_KEY, ANTHROPIC_API_KEY and GEMINI_API_KEY in
 // .env.local, whatever AI_PROVIDER and PRODUCT_SEARCH say.
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual, parseArgs } from "node:util";
@@ -52,6 +56,7 @@ import { CATEGORY_LABELS, type PhotoType } from "@/config/consultations";
 import { EVERYONES_STYLING_LIMITS, OUTFITS_PER_STYLING } from "@/config/stylings";
 import { aiFromEnvironment } from "@/server/ai/environment";
 import { GeminiAiProvider } from "@/server/ai/gemini";
+import type { AiProvider } from "@/server/ai/provider";
 import { MemoryBlobStore } from "@/server/blob/memory";
 import { closeDatabase } from "@/server/db/connect";
 import { LANDING_SAMPLES } from "@/server/landing-samples";
@@ -70,7 +75,7 @@ import { createFreshApp } from "./fresh-app";
 import { publicFile } from "./landing-sample-files";
 import { exitWithUsage } from "./team-script";
 
-const USAGE = `npm run check:stylist -- [--go-ahead] [--image-model <${Object.values(GEMINI_PREVIEW_MODELS).join(" | ")}>]`;
+const USAGE = `npm run check:stylist -- [--go-ahead] [--image-model <${Object.values(GEMINI_PREVIEW_MODELS).join(" | ")}>] [--previews-from <folder>]`;
 
 const KEYS = ["QLOO_API_URL", "QLOO_API_KEY", "CHANNEL3_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"] as const;
 
@@ -138,7 +143,7 @@ interface CheckCase {
 
 const NANO_BANANA_2_LITE: Drawing = { model: GEMINI_PREVIEW_MODELS.nanoBanana2Lite };
 
-const { goAhead, imageModel } = readOptions();
+const { goAhead, imageModel, previewsFrom } = readOptions();
 /** Previews drawn as production draws them: on production's image model, unless --image-model names another. */
 const AS_IN_PRODUCTION: Drawing = { model: imageModel };
 /** Whether those are production's own, which the Stylist should keep as drawn. Another model's are left to the eye. */
@@ -187,11 +192,13 @@ if (!goAhead) {
 }
 
 const folder = path.join(os.tmpdir(), `stylist-check-${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}`);
+/** Each case's Previews served from the earlier run, or declined for want of one, by the case's name: what the report says of them. */
+const served = new Map<string, string[]>();
 const imageModels = new Map(
   Object.values(GEMINI_PREVIEW_MODELS).map((model) => [model, new GeminiAiProvider({ apiKey: process.env.GEMINI_API_KEY!, model })]),
 );
 const previewsDrawn = new Map<GeminiPreviewModel, number>();
-const app = await createFreshApp({ ai: new StylistCheckAi(aiFromEnvironment("real")), blob: new StylistCheckBlob(new MemoryBlobStore()) });
+const app = await createFreshApp({ ai: new StylistCheckAi(previewsFrom ? neverDrawing(aiFromEnvironment("real")) : aiFromEnvironment("real")), blob: new StylistCheckBlob(new MemoryBlobStore()) });
 const checked: { checkCase: CheckCase; result: StylistCheckResult | { error: string } }[] = [];
 try {
   for (const [index, checkCase] of CASES.entries()) {
@@ -202,7 +209,7 @@ try {
         photoType: photo.photoType,
         photo: new Blob([photo.bytes], { type: "image/jpeg" }),
         stylePreference: photo.stylePreference,
-        drawPreview: drawerFor(checkCase),
+        drawPreview: await drawerFor(checkCase),
       });
       checked.push({ checkCase, result });
       await saveCase(path.join(folder, `${index + 1}-${slug(checkCase.name)}`), photo, result);
@@ -217,15 +224,32 @@ try {
 }
 console.log(`\nThe report, for ticket 12:\n\n${reportText()}`);
 
-function readOptions(): { goAhead: boolean; imageModel: GeminiPreviewModel } {
+function readOptions(): { goAhead: boolean; imageModel: GeminiPreviewModel; previewsFrom: string | undefined } {
   try {
-    const { values } = parseArgs({ options: { "go-ahead": { type: "boolean", default: false }, "image-model": { type: "string", default: GEMINI_PREVIEW_MODEL } } });
+    const { values } = parseArgs({
+      options: {
+        "go-ahead": { type: "boolean", default: false },
+        "image-model": { type: "string", default: GEMINI_PREVIEW_MODEL },
+        "previews-from": { type: "string" },
+      },
+    });
     const model = values["image-model"];
     if (!isImageModel(model)) exitWithUsage(USAGE);
-    return { goAhead: values["go-ahead"], imageModel: model };
+    return { goAhead: values["go-ahead"], imageModel: model, previewsFrom: values["previews-from"] };
   } catch {
     exitWithUsage(USAGE);
   }
+}
+
+/** The real AI, its image model never asked: the check serves every Preview itself, and one that reached it would be a bug. */
+function neverDrawing(ai: AiProvider): AiProvider {
+  return {
+    checkPhoto: (input) => ai.checkPhoto(input),
+    stylistModel: () => ai.stylistModel(),
+    renderPreview: async () => {
+      throw new Error("The check serves its Previews from an earlier run's, so it asks the image model for none.");
+    },
+  };
 }
 
 function isImageModel(model: string): model is GeminiPreviewModel {
@@ -267,12 +291,24 @@ async function fixedPhotos() {
 }
 
 /** Draws the case's Previews: its first tries one way, its redraws, which carry a correction, the other. */
-function drawerFor({ first, redraw }: CheckCase): PreviewDrawer {
-  const [drawFirst, drawRedraw] = [drawing(first), drawing(redraw)];
-  return (input) => (input.correction ? drawRedraw(input) : drawFirst(input));
+async function drawerFor(checkCase: CheckCase): Promise<PreviewDrawer> {
+  const savedOutfits = previewsFrom ? await savedOutfitsOf(checkCase) : null;
+  const [drawFirst, drawRedraw] = [drawing(checkCase, checkCase.first, savedOutfits), drawing(checkCase, checkCase.redraw, savedOutfits)];
+  return (input, outfit) => (input.correction ? drawRedraw(input, outfit) : drawFirst(input, outfit));
 }
 
-function drawing(how: Drawing): PreviewDrawer {
+/** Where the earlier run saved a case's Previews, and the number its Outfit had there for each Style Icon, as its notes say. */
+async function savedOutfitsOf({ name }: CheckCase): Promise<{ caseFolder: string; numberOf: Map<string, number> }> {
+  const caseFolderName = (await readdir(previewsFrom!)).find((entry) => entry.replace(/^\d+-/, "") === slug(name));
+  if (!caseFolderName) throw new Error(`${previewsFrom} has no saved Previews for the ${name}.`);
+  const caseFolder = path.join(previewsFrom!, caseFolderName);
+  const notes = await readFile(path.join(caseFolder, "notes.txt"), "utf-8");
+  const numberOf = new Map([...notes.matchAll(/^Step: Saved Outfit (\d+), inspired by (.+)$/gm)].map(([, number, styleIconName]) => [styleIconName!.trim(), Number(number)]));
+  return { caseFolder, numberOf };
+}
+
+function drawing(checkCase: CheckCase, how: Drawing, savedOutfits: Awaited<ReturnType<typeof savedOutfitsOf>> | null): PreviewDrawer {
+  if ("model" in how && savedOutfits) return servedFrom(checkCase, savedOutfits);
   if ("model" in how) {
     return async (input) => {
       previewsDrawn.set(how.model, (previewsDrawn.get(how.model) ?? 0) + 1);
@@ -289,13 +325,34 @@ function drawing(how: Drawing): PreviewDrawer {
   }
 }
 
+/**
+ * Serves each Preview from the earlier run's saved images: the first try or the redraw of the Outfit
+ * there of the same Style Icon. One it has no image for is declined, as the image model declines,
+ * so nothing is drawn.
+ */
+function servedFrom({ name }: CheckCase, { caseFolder, numberOf }: { caseFolder: string; numberOf: Map<string, number> }): PreviewDrawer {
+  const say = (line: string) => served.set(name, [...(served.get(name) ?? []), line]);
+  return async ({ correction }, outfit) => {
+    const which = correction ? "redraw" : "first";
+    const savedNumber = outfit && numberOf.get(outfit.styleIconName);
+    const saved = savedNumber ? (await readdir(caseFolder)).find((entry) => entry.startsWith(`outfit-${savedNumber}-${which}.`)) : undefined;
+    const whose = outfit ? `Outfit ${outfit.position}'s ${correction ? "redraw" : "Preview"} (${outfit.styleIconName})` : `A ${correction ? "redraw" : "Preview"} of an Outfit it couldn't tell`;
+    if (!saved) {
+      say(`${whose}: no saved image, so it was declined.`);
+      return { refused: true, reason: "no_image" };
+    }
+    say(`${whose}: served the earlier run's ${saved}.`);
+    return { refused: false, image: new Uint8Array(await readFile(path.join(caseFolder, saved))) };
+  };
+}
+
 /** What the check will do and roughly what it costs, before anything is spent. */
 function planText(): string {
   const stylings = CASES.length;
   const stylistUsd = ROUGH_STYLIST_TURNS * (claudeCostUsd(CLAUDE_STYLIST_MODEL, usage(ROUGH_STYLIST_TURN_TOKENS)) ?? 0);
   const claudeUsd = stylings * (stylistUsd + (claudeCostUsd(CLAUDE_PHOTO_CHECK_MODEL, usage(ROUGH_PHOTO_CHECK_TOKENS)) ?? 0));
-  const previewUsd = (how: Drawing) => ("model" in how ? GEMINI_PREVIEW_PRICES_USD[how.model] : 0);
-  const onGemini = (how: Drawing) => ("model" in how ? 1 : 0);
+  const previewUsd = (how: Drawing) => ("model" in how && !previewsFrom ? GEMINI_PREVIEW_PRICES_USD[how.model] : 0);
+  const onGemini = (how: Drawing) => ("model" in how && !previewsFrom ? 1 : 0);
   // Previews drawn as in production aren't expected to be redrawn; every bad one is.
   const redraws = ({ first, redraw }: CheckCase) => (first === AS_IN_PRODUCTION && redraw === AS_IN_PRODUCTION ? 0 : OUTFITS_PER_STYLING);
   const previews = sum(CASES.map((checkCase) => OUTFITS_PER_STYLING * onGemini(checkCase.first) + redraws(checkCase) * onGemini(checkCase.redraw)));
@@ -306,7 +363,9 @@ function planText(): string {
   const searchesAtMost = bodyStylings * EVERYONES_STYLING_LIMITS.productSearches;
   return [
     `The Haiku check runs ${stylings} Stylings on ${CLAUDE_STYLIST_MODEL} at ${CLAUDE_STYLIST_EFFORT} effort, with live Qloo and Channel3, each a new user's first, in the United States, at No Budget.`,
-    `Previews production would draw on ${GEMINI_PREVIEW_MODEL} are drawn on ${imageModel}${onProductionsModel ? ", as in production" : ", which is cheaper, so the report leaves them to the eye"}.`,
+    previewsFrom
+      ? `Previews production would draw on ${GEMINI_PREVIEW_MODEL} are served from ${previewsFrom}, which an earlier run drew on ${imageModel}: no image model is asked for any.`
+      : `Previews production would draw on ${GEMINI_PREVIEW_MODEL} are drawn on ${imageModel}${onProductionsModel ? ", as in production" : ", which is cheaper, so the report leaves them to the eye"}.`,
     `Its photos, all AI-generated, are ${photos.fullBody.name}, and ${photos.face.name} and ${photos.bodyOnly.name}:`,
     ...CASES.map(({ name, first, redraw }, index) => `  ${index + 1}. ${name}: ${previewsText(first, redraw)}.`),
     "",
@@ -319,7 +378,9 @@ function planText(): string {
 function previewsText(first: Drawing, redraw: Drawing): string {
   const drawn = (how: Drawing) =>
     "model" in how
-      ? `on ${how.model}`
+      ? previewsFrom
+        ? `as the earlier run's, which it drew on ${how.model}`
+        : `on ${how.model}`
       : { unchanged: "as the photo unchanged", "face-pixelated": "as the photo with its face pixelated", "face-added": "as the photo zoomed out to show the head" }[how.fault];
   if (isDeepStrictEqual(first, redraw)) return `each Preview and redraw drawn ${drawn(first)}`;
   return `each Preview first drawn ${drawn(first)}, and redrawn ${drawn(redraw)}`;
@@ -376,7 +437,12 @@ function reportText(): string {
   const date = new Date().toISOString().slice(0, 10);
   return [
     `- ${date}: **The Haiku check** (\`npm run check:stylist\`) on ${CLAUDE_STYLIST_MODEL} at ${CLAUDE_STYLIST_EFFORT} effort, with live Qloo and Channel3. Each Styling was a new user's first, in the United States, at No Budget, with everyone's limits.`,
-    `  - Previews production would draw on ${GEMINI_PREVIEW_MODEL} were drawn on ${imageModel}${onProductionsModel ? ", as in production." : `, which is cheaper. So the "good" Previews here are ${imageModel}'s, which may have faults of their own, and only the eye can judge what the Stylist did with them.`}`,
+    `  - Previews production would draw on ${GEMINI_PREVIEW_MODEL} were ${previewsFrom ? `served from an earlier run's, saved in ${previewsFrom}, which it drew on` : "drawn on"} ${imageModel}${onProductionsModel ? ", as in production." : `, which is cheaper. So the "good" Previews here are ${imageModel}'s, which may have faults of their own, and only the eye can judge what the Stylist did with them.`}`,
+    ...(previewsFrom
+      ? [
+          "  - No image model was asked for any Preview. Each was the earlier run's image for the Outfit of the same Style Icon, so its garments are that Outfit's, which may not be this one's. A Preview with no saved image was declined, as the image model can decline.",
+        ]
+      : []),
     ...checked.flatMap(({ checkCase, result }) => caseLines(checkCase, result)),
     [
       `  - **Totals:** valid Outfits in ${valid.length} of ${checked.length} Stylings.`,
@@ -414,6 +480,7 @@ function caseLines({ name, photo, expected, note }: CheckCase, result: StylistCh
   return [
     `${heading} ${validityText(result)} ${turnsText(result)}${note ? ` ${note}` : ""}`,
     ...result.outfits.map((outfit) => `    - ${outfitText(outfit)}: ${handlingText(outfit.preview, outfit.correction)}${expectationText(outfit.preview, expected)}.`),
+    ...(served.has(name) ? [`    - Previews served: ${served.get(name)!.join(" ")}`] : []),
   ];
 }
 
@@ -430,11 +497,12 @@ function validityText(result: Extract<StylistCheckResult, { styled: true }>): st
 function turnsText(result: Extract<StylistCheckResult, { styled: true }>): string {
   const refused = result.toolCallsRefused === 1 ? "1 tool call refused" : `${result.toolCallsRefused} tool calls refused`;
   const capped = result.turns.filter(({ finishReason }) => finishReason === "length").length;
+  const written = result.notes.filter(({ kind }) => kind === "note").length;
   const cost = result.costUsd === null ? "cost unknown" : `${dollars(result.costUsd)}, against ${result.uncachedCostUsd === null ? "an unknown cost" : dollars(result.uncachedCostUsd)} with nothing cached`;
   return [
     `${result.turns.length} of ${result.turnCap} turns, ${duration(result.durationMs)}, ${cost}.`,
     `Largest prompt ${tokens(result.largestPromptTokens)}; each turn after the first read at least ${tokens(result.leastCacheReadAfterFirstTurn)} from the cache.`,
-    `${result.productSearches} product searches, ${refused}.${capped > 0 ? ` ${capped} turns stopped at their output cap.` : ""}`,
+    `${result.productSearches} product searches, ${refused}, ${written === 1 ? "1 note" : `${written} notes`} written to the user.${capped > 0 ? ` ${capped} turns stopped at their output cap.` : ""}`,
   ].join(" ");
 }
 

@@ -66,3 +66,8 @@ It costs money, so it runs only with the team's go-ahead and never in CI. Runnin
     - Cost: $0.056 of Claude, against $0.18 with nothing cached; 12 Lite Previews, about $0.41; 36 searches, about $0.25.
     - The largest prompt was 61,489 tokens, well under 100,000. Nothing errored.
   - **What it found.** The report and what the eye saw are in ticket 12's Comments. The finding that matters: the Stylist missed a head added to the Body-Only Photo in both its Previews, and kept them.
+- 2026-10-24: **Rerunning on saved Previews.** The Stylist moved to Claude Sonnet 5.5 at medium effort, and the check ran again with no new images.
+  - **The new option.** `--previews-from <folder>`, given an earlier run's folder and its `--image-model`, serves each Preview from that folder instead of drawing it. It serves the image saved for the Outfit of the same Style Icon there, which the folder's notes name. A Preview with no saved image is declined, as the image model can decline. No image model is asked, and a guard throws if one ever is.
+  - **How the drawer knows the Outfit.** `checkStylist` now tells the check's drawer which Outfit each Preview is for, by its number and Style Icon. It tells by the Pieces a Preview is drawn from, or gives null when two Outfits' Pieces are alike.
+  - **Notes count.** The report now counts the notes the Stylist wrote to the user.
+  - **Results.** Sonnet's run and what it changes are in ticket 12's Comments.

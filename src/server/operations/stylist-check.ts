@@ -5,13 +5,13 @@ import { randomBytes } from "node:crypto";
 
 import { STYLIST_CHECK_BIRTH_DATE, STYLIST_CHECK_COUNTRY_CODE, type StylePreference } from "@/config/accounts";
 import { CLAUDE_PRICES, type ClaudeModel } from "@/config/ai";
-import type { PhotoType, PieceCategory } from "@/config/consultations";
+import { byCategoryOrder, type PhotoType, type PieceCategory } from "@/config/consultations";
 import { KEPT_PREVIEWS, stylingLimitsFor } from "@/config/stylings";
 import type { AiProvider, PhotoCheckInput, PhotoCheckResult, PreviewInput, PreviewResult } from "@/server/ai/provider";
 import type { BlobStore, StoredBlob } from "@/server/blob/store";
 import { previewPathnameFor, previewRedrawPathnameFor } from "@/server/consultations/blob-pathnames";
 import type { PhotoRejection } from "@/server/consultations/photo-check";
-import { styling } from "@/server/db/schema";
+import { outfit, piece, styleIcon, styling } from "@/server/db/schema";
 import { type OutfitView, type PreviewView, readConsultation, startConsultation } from "@/server/operations/consultations";
 import type { OperationContext } from "@/server/operations/context";
 import { signUp } from "@/server/operations/sign-up";
@@ -26,8 +26,17 @@ import { type StylistNoteEntry, STEPS } from "@/server/stylings/stylist-notes";
 // some of them deliberately wrong. It runs on a fresh app of its own, which lives only while the
 // script runs, on an AI and a Blob store the check watches.
 
-/** Draws one Preview in place of the image model, as a check may, first tries and redraws alike. */
-export type PreviewDrawer = (input: PreviewInput) => Promise<PreviewResult>;
+/** The Outfit a Preview is drawn for: its number, as the user sees it, and its Style Icon. */
+export interface OutfitDrawn {
+  position: number;
+  styleIconName: string;
+}
+
+/**
+ * Draws one Preview in place of the image model, as a check may, first tries and redraws alike,
+ * told the Outfit it's for, or null when that can't be told, as when two Outfits' Pieces are alike.
+ */
+export type PreviewDrawer = (input: PreviewInput, outfit: OutfitDrawn | null) => Promise<PreviewResult>;
 
 /** One tool call the Stylist made: its tool, by name, and what it asked for. */
 export interface StylistCall {
@@ -56,14 +65,14 @@ export interface StylistTurn {
 export class StylistCheckAi implements AiProvider {
   /** Every turn of the Stylist's, oldest first, across every Styling the check runs on it. */
   readonly turns: StylistTurn[] = [];
-  private drawer: PreviewDrawer;
+  private drawer: (input: PreviewInput) => Promise<PreviewResult>;
 
   constructor(private readonly ai: AiProvider) {
     this.drawer = (input) => ai.renderPreview(input);
   }
 
   /** Does `work`, drawing every Preview meanwhile with `drawer`, then goes back to the one before. */
-  async drawingWith<T>(drawer: PreviewDrawer | undefined, work: () => Promise<T>): Promise<T> {
+  async drawingWith<T>(drawer: ((input: PreviewInput) => Promise<PreviewResult>) | undefined, work: () => Promise<T>): Promise<T> {
     const before = this.drawer;
     this.drawer = drawer ?? before;
     try {
@@ -241,7 +250,8 @@ export async function checkStylist(
     }
   }
   const turnsBefore = app.ai.turns.length;
-  await app.ai.drawingWith(drawPreview, () => app.stylings.runPending());
+  const consultationId = started.consultationId;
+  await app.ai.drawingWith(drawPreview && (async (input) => drawPreview(input, await outfitDrawn(app, consultationId, input))), () => app.stylings.runPending());
   const turns = app.ai.turns.slice(turnsBefore);
 
   const view = await readConsultation(request(), started.consultationId);
@@ -312,6 +322,33 @@ function checkedOutfit(shown: OutfitView, notes: readonly StylistNoteEntry[], co
     correction,
     images,
   };
+}
+
+/**
+ * The Outfit of the Consultation's a Preview is being drawn for. A Preview is drawn from its Outfit's
+ * Pieces alone, each Product by its title and the Hairstyle by its details, so the Pieces it's drawn
+ * with say whose it is, unless two Outfits' are alike.
+ */
+async function outfitDrawn(app: StylistCheckApp, consultationId: string, { pieces }: PreviewInput): Promise<OutfitDrawn | null> {
+  const rows = await app.db
+    .select({ outfitId: outfit.id, position: outfit.position, styleIconName: styleIcon.name, category: piece.category, item: piece.item, details: piece.details })
+    .from(outfit)
+    .innerJoin(styleIcon, eq(styleIcon.id, outfit.styleIconId))
+    .innerJoin(piece, eq(piece.outfitId, outfit.id))
+    .where(eq(outfit.consultationId, consultationId));
+  const drawnFrom = piecesKey(pieces.map((drawnPiece) => [drawnPiece.category, drawnPiece.category === "hairstyle" ? drawnPiece.details : drawnPiece.title]));
+  const matching = [...new Set(rows.map(({ outfitId }) => outfitId))].filter((id) =>
+    piecesKey(rows.filter(({ outfitId }) => outfitId === id).map(({ category, item, details }) => [category, category === "hairstyle" ? (details ?? item) : item])) === drawnFrom,
+  );
+  const [only] = matching;
+  if (matching.length !== 1) return null;
+  const { position, styleIconName } = rows.find(({ outfitId }) => outfitId === only)!;
+  return { position, styleIconName };
+}
+
+/** Pieces as a Preview draws them, each by its Category and what it's drawn from, as one key, whatever their order. */
+function piecesKey(pieces: readonly [PieceCategory, string][]): string {
+  return JSON.stringify(pieces.map(([category, drawnFrom]) => ({ category, drawnFrom })).toSorted(byCategoryOrder));
 }
 
 /**

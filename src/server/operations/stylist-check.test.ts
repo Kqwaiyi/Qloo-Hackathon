@@ -228,6 +228,30 @@ describe("the Stylist check's Previews", () => {
     expect(harness.ai.previewRequests).toEqual([]);
   });
 
+  it("tells the check's drawer which Outfit each Preview is for, by its number and Style Icon", async () => {
+    harness.ai.styleIconScenarios = { "Ava Stone": "preview-redrawn" };
+    const drawn: { outfit: unknown; redraw: boolean }[] = [];
+
+    await checkStylist(checkApp(), {
+      photoType: "full_body",
+      photo: await jpegPhoto(),
+      stylePreference: "menswear",
+      drawPreview: async ({ correction }, outfit) => {
+        drawn.push({ outfit, redraw: Boolean(correction) });
+        return { refused: false, image: await png(GREEN) };
+      },
+    });
+
+    expect(drawn).toHaveLength(3);
+    expect(drawn).toEqual(
+      expect.arrayContaining([
+        { outfit: { position: 1, styleIconName: "Ava Stone" }, redraw: false },
+        { outfit: { position: 1, styleIconName: "Ava Stone" }, redraw: true },
+        { outfit: { position: 2, styleIconName: "Bea Marsh" }, redraw: false },
+      ]),
+    );
+  });
+
   it("gives each Outfit the images drawn for it, even when two Outfits' Pieces are alike", async () => {
     // The fake's Face Photo Outfits have the same Hairstyle. Each first try is drawn in a colour of its own.
     harness.ai.styleIconScenarios = { "Ava Stone": "preview-redrawn" };
