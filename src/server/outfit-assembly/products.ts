@@ -31,7 +31,7 @@ export interface CandidateOffer {
   currency: string;
 }
 
-/** A Product that qualified for a Piece, with what tailoring and the Piece need. */
+/** A Product that qualified for a Piece, with what the Stylist and the Piece need. */
 export interface Candidate {
   id: string;
   /** The Product's name, as its seller gives it. */

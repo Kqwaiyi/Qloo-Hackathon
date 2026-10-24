@@ -12,6 +12,7 @@ import { getUsageSummary } from "@/server/data/usage";
 import type { ConsultationView, FailedStyling, PreviewView } from "@/server/operations/consultations";
 
 import { Stepper } from "../stepper";
+import { FailedStylingNotes, StylistNotesByStyling } from "../stylist-notes";
 import { AllowanceLine } from "./allowance-line";
 import { BudgetTierDropdown } from "./budget-tier-dropdown";
 import { MoreOutfits } from "./more-outfits";
@@ -97,6 +98,8 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           {consultation.failedStyling.reason === "something_broke" && (
             <TryAgain consultationId={consultation.id} stylingStart={usage.stylingStart} outfitsLeft={usage.outfitsLeft} />
           )}
+          {/* None for a Styling made before the Stylist's Notes. */}
+          {consultation.failedStyling.notes.length > 0 && <FailedStylingNotes notes={consultation.failedStyling.notes} className="mt-3" />}
         </div>
       )}
       {consultation.outfits.length > 0 ? (
@@ -113,6 +116,8 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               </li>
             ))}
           </ol>
+          {/* None on a Consultation made before the Stylist's Notes. */}
+          {consultation.stylistNotes.length > 0 && <StylistNotesByStyling entries={consultation.stylistNotes} className="mt-8" />}
           <MoreOutfits
             consultationId={consultation.id}
             running={progress}
@@ -153,7 +158,7 @@ function OutfitPreview({ preview, styleIconName }: { preview: PreviewView; style
   if (preview.state !== "ready") {
     return (
       <p className="flex min-h-32 items-center justify-center bg-stone-100 p-6 text-center text-sm text-stone-600 @2xl:aspect-[3/4] @2xl:w-64 @2xl:shrink-0 @2xl:self-start">
-        {preview.state === "refused" ? COPY.previewRefused : COPY.previewFailed}
+        {preview.state === "failed" ? COPY.previewFailed : preview.by === "stylist" ? COPY.previewNotKept : COPY.previewRefused}
       </p>
     );
   }

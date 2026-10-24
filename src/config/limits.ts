@@ -45,6 +45,7 @@ export const QLOO_BACKSTOP_CALLS = 1000;
 
 /**
  * The product-search backstop: no new Styling starts while this UTC calendar month's product searches
- * leave less than one Styling's MAX_PRODUCT_SEARCHES_PER_STYLING below this. Each search costs a credit.
+ * leave less than one Styling's searches (EVERYONES_STYLING_LIMITS' productSearches) below this.
+ * Each search costs a credit.
  */
 export const PRODUCT_SEARCH_BACKSTOP_SEARCHES = 5000;

@@ -36,18 +36,46 @@ export const PREVIEW_STATES = ["pending", "ready", "refused", "failed"] as const
 export type PreviewState = (typeof PREVIEW_STATES)[number];
 
 /**
- * Why the image model refused a Preview: it blocked the request, stopped for image safety, or
- * answered in text with no image.
+ * Why a Preview was refused: the image model blocked the request, stopped for image safety, or
+ * answered in text with no image; or neither of its images was kept (`not_kept`), as both broke a
+ * hard rule.
  */
-export const PREVIEW_REFUSAL_REASONS = ["blocked", "image_safety", "no_image"] as const;
+export const PREVIEW_REFUSAL_REASONS = ["blocked", "image_safety", "no_image", "not_kept"] as const;
 export type PreviewRefusalReason = (typeof PREVIEW_REFUSAL_REASONS)[number];
 
-/** A Styling renders this many Previews at once, each its own step. */
+/** Why the image model refused a Preview, as it says: never `not_kept`, which is the Preview phase's. */
+export type ImageModelRefusalReason = Exclude<PreviewRefusalReason, "not_kept">;
+
+/**
+ * Where an Outfit's one redraw of its Preview is: drawing, drawn, refused by the image model, or
+ * failed; then kept, once the Preview phase keeps the first image, the redraw or neither. An Outfit
+ * never redrawn has none. A redraw not kept by the time its Styling finishes leaves the Outfit with
+ * no Preview, as nothing chose which of its images shows the user as they are.
+ */
+export const PREVIEW_REDRAW_STATES = ["pending", "ready", "refused", "failed", "kept"] as const;
+export type PreviewRedrawState = (typeof PREVIEW_REDRAW_STATES)[number];
+
+/** How a redraw came out, as the step that drew it saves it. */
+export type PreviewRedrawOutcome = Extract<PreviewRedrawState, "ready" | "refused" | "failed">;
+
+/** Which of a redrawn Preview's images the Preview phase keeps, by the hard rules: the first, the redraw, or neither. */
+export const KEPT_PREVIEWS = ["first", "redraw", "none"] as const;
+export type KeptPreview = (typeof KEPT_PREVIEWS)[number];
+
+/**
+ * Where a Piece's search in the product search is: under way, answered (with the Products that
+ * qualified, if any), or never answered, still erroring after its retries.
+ */
+export const PIECE_SEARCH_STATES = ["searching", "answered", "unanswered"] as const;
+export type PieceSearchState = (typeof PIECE_SEARCH_STATES)[number];
+
+/** A Styling's Preview phase works on this many Outfits' Previews at once, each call its own step. */
 export const PREVIEWS_AT_ONCE = 2;
 
 /**
- * A Preview step that throws is tried again this many times, as the Workflow's default retries it.
- * A Product photo that still can't be fetched on its last try is drawn from its title instead.
+ * A Preview step, a redraw's or a verdict's, that throws is tried again this many times, as the
+ * Workflow's default retries it. A Product photo that still can't be fetched on its last try goes by
+ * its title instead.
  */
 export const PREVIEW_STEP_MAX_RETRIES = 3;
 
@@ -55,14 +83,50 @@ export const PREVIEW_STEP_MAX_RETRIES = 3;
 export const OUTFITS_PER_STYLING = 2;
 
 /**
- * A body photo's first Styling fetches the Brands of this many Style Icons at once before its
- * first Outfits, one spare in case a Style Icon can't complete an Outfit. Later fetches, and other
- * kinds of Styling, fetch as needed.
+ * On a Face Photo, the Stylist may pass over this many Style Icons in a Styling for hair length, as
+ * their signature cut needs much more length than the user's hair has. After that it adapts the
+ * cut, so a user with short hair isn't told again and again, and their Outfits stay near the top
+ * of Qloo's picks. Each Styling counts its own, so "Show 2 more Outfits" and Try again may each
+ * pass over this many more. The Demo Account's Stylings have the same.
  */
-export const BRAND_FETCHES_UP_FRONT = 3;
+export const HAIR_LENGTH_PASS_OVERS_PER_STYLING = 2;
 
-/** A Styling fetches Brands for at most this many Style Icons, so Style Icons whose Brands don't fit can't use up Qloo's calls. */
-export const MAX_BRAND_FETCHES_PER_STYLING = 6;
+/**
+ * How much room the Stylist has on one Styling, so one Styling's cost is bounded. Each is the
+ * Styling's own, enforced by the Stylist's tools and its loop, never by its judgement. Redraws
+ * aren't among them: each Outfit's Preview may be redrawn once, whoever's Styling it is.
+ */
+export interface StylingLimits {
+  /**
+   * Turns, each one call to the Stylist's model. A Styling that reaches them finishes with the
+   * Outfits it saved, so a Stylist that keeps getting an Outfit wrong is bounded by its turns.
+   */
+  readonly turns: number;
+  /** Style Icons whose Brands it fetches, so Style Icons whose Brands don't fit can't use up Qloo's calls. */
+  readonly brandFetches: number;
+  /**
+   * Product searches, each counted once however many tries it takes, so one Styling can't run away
+   * with the product-search budget. Brand lookups are free, and don't count.
+   */
+  readonly productSearches: number;
+}
+
+/** Everyone's Stylings' limits: every Styling's but the Demo Account's. */
+export const EVERYONES_STYLING_LIMITS: StylingLimits = { turns: 30, brandFetches: 6, productSearches: 24 };
+
+/** A Demo Account Styling's limits: more room, so the judges' Stylings complete. */
+export const DEMO_ACCOUNT_STYLING_LIMITS: StylingLimits = { turns: 60, brandFetches: 10, productSearches: 40 };
+
+/** The limits of a Styling on the Demo Account, or of anyone else's. */
+export function stylingLimitsFor(onDemoAccount: boolean): StylingLimits {
+  return onDemoAccount ? DEMO_ACCOUNT_STYLING_LIMITS : EVERYONES_STYLING_LIMITS;
+}
+
+/**
+ * For each Category, the Stylist chooses among this many of a Style Icon's Brands still in play,
+ * best first (ADR-0010): one that drops out of play makes way for the next.
+ */
+export const TOP_BRANDS_PER_CATEGORY = 3;
 
 /** A Styling never has more Qloo calls than this waiting at once. There's no shared rate limiter. */
 export const QLOO_CALLS_AT_ONCE = 3;
@@ -70,18 +134,27 @@ export const QLOO_CALLS_AT_ONCE = 3;
 /** A Styling never has more product-search calls than this waiting at once, Brand lookups included. */
 export const PRODUCT_CALLS_AT_ONCE = 3;
 
-/**
- * A Styling makes at most this many product searches, each counted once however many tries it
- * takes, so one Styling can't run away with the product-search budget. Brand lookups are free, and
- * don't count. Like the cap on Brand fetches, it's the Styling's own, the Demo Account's included.
- */
-export const MAX_PRODUCT_SEARCHES_PER_STYLING = 24;
-
 /** How often a page waiting on a Styling asks for its status. */
 export const STYLING_STATUS_POLL_INTERVAL_MS = 1000;
 
 /** A step of the Styling checklist that has run longer than this says it's taking longer than usual. */
 export const SLOW_STEP_MS = 60_000;
+
+/** The stages the checklist shows as Building Outfits: fetching Brands is part of building the Outfits. */
+export const BUILDING_OUTFITS_STAGES: readonly StylingStage[] = ["brands", "building_outfits"];
+
+/** Building Outfits is the Stylist's longest step, so it says it's taking longer than usual only after this long. */
+export const SLOW_BUILDING_OUTFITS_MS = 3 * 60_000;
+
+/**
+ * What an entry of the Stylist's Notes is: a note to the user the Stylist wrote, or a Preview's
+ * verdict did, or a step our code wrote for one of its tool calls or Preview steps and what came of it.
+ */
+export const STYLIST_NOTE_KINDS = ["note", "step"] as const;
+export type StylistNoteKind = (typeof STYLIST_NOTE_KINDS)[number];
+
+/** A note the Stylist writes longer than this many characters is dropped, as one that's empty or states a price is. */
+export const STYLIST_NOTE_MAX_LENGTH = 300;
 
 /**
  * A running Styling whose stage hasn't moved for this long is stuck: whatever next reads its status
@@ -93,12 +166,3 @@ export const STUCK_STYLING_MS = 10 * 60_000;
 export function isStuck(stageMovedAt: Date, now: Date): boolean {
   return now.getTime() - stageMovedAt.getTime() >= STUCK_STYLING_MS;
 }
-
-/** The AI gets this many tries at an Outfit's Pieces: bad output is retried once, then tailoring has failed. */
-export const TAILORING_ATTEMPTS = 2;
-
-/**
- * A Style Icon whose tailoring failed is skipped for the next unused one, at most this many times
- * per Styling, so a broken model can't burn through the Style Icons.
- */
-export const MAX_TAILORING_SUBSTITUTES = 2;

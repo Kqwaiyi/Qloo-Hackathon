@@ -260,6 +260,19 @@ export function findCountry(code: string): Country | undefined {
   return COUNTRIES_BY_CODE.get(code.toUpperCase());
 }
 
+/** The Countries whose names take "the" in a sentence, by code: the Bahamas, the United States… */
+const TAKES_THE = new Set([
+  "AE", "AX", "BQ", "BS", "CC", "CD", "CF", "CG", "CK", "CZ", "DO", "FK", "FO", "GB", "GM", "IM",
+  "IO", "KM", "KY", "MH", "MP", "MV", "NL", "PH", "PN", "SB", "SC", "TC", "UM", "US", "VG", "VI",
+]);
+
+/** A Country's name as a sentence says it, such as "the United States" or "Indonesia", or the code itself for one not on the list. */
+export function countryInSentence(code: string): string {
+  const country = findCountry(code);
+  if (!country) return code;
+  return TAKES_THE.has(country.code) ? `the ${country.name}` : country.name;
+}
+
 /** A Country as a form's dropdown offers it. */
 export interface CountryOption {
   code: string;

@@ -1,15 +1,5 @@
 import type { Line } from "@/config/accounts";
-import {
-  type AgeGroup,
-  BRAND_CATEGORIES,
-  type BrandCategory,
-  type BudgetTier,
-  type Category,
-  isBrandCategory,
-  type PieceCategory,
-  type PriceRangeUsd,
-  type ProductCategory,
-} from "@/config/consultations";
+import { type AgeGroup, type BrandCategory, type BudgetTier, type Category, isBrandCategory, type PriceRangeUsd, type ProductCategory } from "@/config/consultations";
 import { OFF_CATEGORY_DENYLIST, RETAILER_DENYLIST } from "@/config/denylists";
 import {
   BOTTOM_DENIM_RANK,
@@ -33,7 +23,8 @@ import type { QlooBrand, QlooBrandQuery, QlooTagId } from "@/server/qloo/client"
 import { consultationCountry, lineGender, qlooAge } from "./signals";
 
 // Building Outfits on Brands (spec: "Outfit assembly", Brands): the Brand query for each Style Icon,
-// and the Top, Bottom and Shoes picked from what Qloo sends back. Pure: the caller fetches and saves.
+// the Brands usable for each Category from what Qloo sends back, and the Top, Bottom and Shoes
+// they make. Pure: the caller fetches and saves.
 
 /** What a Styling's Brand queries are built from. Never the Photo Style (ADR-0002). */
 export interface BrandSearch {
@@ -145,7 +136,7 @@ export function usableBrands(brands: readonly QlooBrand[], line: Line, budgetTie
 
 const DENYLISTED = new Set([...RETAILER_DENYLIST, ...OFF_CATEGORY_DENYLIST].map((entry) => entry.entityId));
 
-/** A Brand a Piece is built on: what its Piece keeps, and what tailoring is told about it. */
+/** A Brand a Piece is built on, as its Piece keeps it. */
 export interface PickedBrand {
   entityId: string;
   name: string;
@@ -157,14 +148,14 @@ export interface PickedBrand {
 }
 
 /**
- * An Outfit's Brand picks: one per Brand Category, fixed before tailoring. A One-Piece's Outfit
- * keeps its Bottom Brand here too, left out of the Outfit but reserved (ADR-0003).
+ * An Outfit's Brand picks: one per Brand Category, fixed as the Outfit is saved. A One-Piece's
+ * Outfit keeps its Bottom Brand here too, left out of the Outfit but reserved (ADR-0003).
  */
 export type BrandPicks = Record<BrandCategory, PickedBrand>;
 
-/** The Brand a Product Piece is built on: its Category's pick, or for a One-Piece, the Top's (ADR-0003). */
-export function productPieceBrand(picks: BrandPicks, category: ProductCategory): PickedBrand {
-  return picks[category === "one_piece" ? "top" : category];
+/** The Category whose Brand a Product Piece is built on: its own, or for a One-Piece, the Top's (ADR-0003). */
+export function brandCategoryOf(category: ProductCategory): BrandCategory {
+  return category === "one_piece" ? "top" : category;
 }
 
 /**
@@ -205,150 +196,85 @@ export function pickBrands(
   used: UsedBrands,
   matches: BrandMatches,
 ): BrandPicks | null {
+  const picks = firstBrandsInPlay(brandLists(brands, line, budgetTier, matches), (category, candidate) => !used[category].has(candidate.entityId));
+  return picks && { shoes: pickedBrand(picks.shoes), top: pickedBrand(picks.top), bottom: pickedBrand(picks.bottom) };
+}
+
+/**
+ * A Style Icon's usable Brands for each Brand Category, highest affinity first, as the Stylist is
+ * told them: the footwear Brands for the Shoes, and the apparel Brands for the Top and the Bottom.
+ * `denimFirst` holds the apparel Brands that make denim and that Qloo ranks in its top 10, which a
+ * Bottom takes before any other. Each holds the Brands themselves, or their names.
+ */
+export interface BrandLists<B> {
+  shoes: readonly B[];
+  top: readonly B[];
+  bottom: readonly B[];
+  denimFirst: readonly B[];
+}
+
+/**
+ * The lists of the Brands from a Style Icon's Brand call that the Outfit's line can use at the
+ * Budget Tier, leaving out each Brand a lookup found the product search doesn't know. One not looked
+ * up yet stays, as if the product search knew it, so the caller looks it up before using it.
+ */
+export function brandLists(brands: readonly QlooBrand[], line: Line, budgetTier: BudgetTier, matches: BrandMatches): BrandLists<QlooBrand> {
   const usable = byAffinity(usableBrands(brands, line, budgetTier)).filter((candidate) => !unknownToProductSearch(candidate, matches));
-  const shoes = usable.find((candidate) => makesFootwear(candidate) && !used.shoes.has(candidate.entityId));
-  if (!shoes) return null;
-  const clothes = usable.filter((candidate) => makesApparel(candidate) && candidate.entityId !== shoes.entityId);
-  const top = clothes.find((candidate) => !used.top.has(candidate.entityId));
-  if (!top) return null;
-  const bottoms = clothes.filter((candidate) => !used.bottom.has(candidate.entityId));
+  const clothes = usable.filter(makesApparel);
   // "Raw" is Qloo's own ranking, before the filters drop anything.
   const qlooHighestRanked = new Set(brands.slice(0, BOTTOM_DENIM_RANK).map((candidate) => candidate.entityId));
-  const bottom =
-    bottoms.find((candidate) => makesDenim(candidate) && qlooHighestRanked.has(candidate.entityId)) ??
-    bottoms.find((candidate) => candidate.entityId !== top.entityId) ??
-    bottoms[0];
-  if (!bottom) return null;
-  return { shoes: pickedBrand(shoes), top: pickedBrand(top), bottom: pickedBrand(bottom) };
-}
-
-/** A Style Icon whose Brand call has come back, in its Outfit's line. */
-export interface StyleIconBrands {
-  styleIconId: string;
-  line: Line;
-  brands: readonly QlooBrand[];
-}
-
-/**
- * One Piece's search in the product search: the Brand its Outfit's Style Icon picked for its
- * Category, or for a One-Piece, the Top Brand (ADR-0003).
- */
-export interface PieceSearch {
-  styleIconId: string;
-  category: ProductCategory;
-  brand: PickedBrand;
-}
-
-/** A Piece's search the Styling has made: its Style Icon, Category and Brand, and whether it found a Product that qualified. */
-export interface PieceSearchMade {
-  styleIconId: string;
-  category: ProductCategory;
-  brandEntityId: string;
-  /** False when it found none that qualified, or still errored after its retries. */
-  found: boolean;
-}
-
-/** Every Piece's search the Styling has made so far. One missing here hasn't been made. */
-export type PieceSearches = readonly PieceSearchMade[];
-
-/** Which Style Icons' Outfits get which Brands, which Style Icons can't complete one, and what to look up or search first. */
-export interface OutfitBrandPlan {
-  picked: { styleIconId: string; brands: BrandPicks }[];
-  skipped: string[];
-  /**
-   * The picks' Brands not looked up in the product search yet, each once, in the order the picks
-   * use them: each Outfit's Shoes, Top and Bottom in turn. Until they're looked up, the picks may
-   * change, so they're not to be used.
-   */
-  lookUpBrands: BrandToLookUp[];
-  /**
-   * The picks' Pieces not searched yet, in the order of the picks and then the Categories, once every
-   * pick's Brand is looked up: none before. Until they're searched, the picks may still change, so
-   * their Outfits are not to be tailored. Then, once every pick's Top, Bottom and Shoes have been
-   * found, which fixes its Brands, each pick's One-Piece search on its Top Brand.
-   */
-  searches: PieceSearch[];
-}
-
-/**
- * The Brands of up to `wanted` Outfits, one per Style Icon, best Style Icon first. Each Outfit's
- * picks are fixed before the next, and no Brand repeats within a Category across them or the
- * Outfits already built, which use `used`. A Style Icon that can't complete an Outfit beside the
- * Outfits already built is skipped. One held back only by this plan's own picks is neither: those
- * picks are freed if their tailoring fails, so it waits for a later plan. Only Brands the product
- * search knows, by `matches`, are picked; the picks' Brands not looked up yet are to be looked up
- * before the picks are used, and a later plan picks again with what the lookups found. Then each
- * pick's Pieces are searched, by `searched`. A Brand whose search for a Category found no Product
- * that qualified is out of that Category for the rest of the Styling, for every Style Icon, as if
- * already used in it (ADR-0008): the Category takes the Style Icon's next usable Brand under the same
- * pick rules, which may move its other Categories too, and a Style Icon left with none can't
- * complete an Outfit, so it's skipped. A Brand is never searched twice for one Style Icon's Category.
- * Once every pick's Top, Bottom and Shoes have been found, fixing their Brands, each pick's
- * One-Piece is searched for on its Top Brand (ADR-0003). Whatever that search finds, it moves no
- * pick and passes no Brand over: an Outfit whose Top Brand has no One-Piece is separates only.
- */
-export function planOutfitBrands(
-  styleIcons: readonly StyleIconBrands[],
-  budgetTier: BudgetTier,
-  wanted: number,
-  used: UsedBrands,
-  matches: BrandMatches,
-  searched: PieceSearches,
-): OutfitBrandPlan {
-  const plan: OutfitBrandPlan = { picked: [], skipped: [], lookUpBrands: [], searches: [] };
-  // The Brands each Category can't take: those the Outfits already built use, and those its searches found nothing for.
-  const takenOrPassedOver = () => {
-    const passedOver = (category: BrandCategory) => searched.flatMap((search) => (search.category === category && !search.found ? [search.brandEntityId] : []));
-    return {
-      top: new Set([...used.top, ...passedOver("top")]),
-      bottom: new Set([...used.bottom, ...passedOver("bottom")]),
-      shoes: new Set([...used.shoes, ...passedOver("shoes")]),
-    };
+  return {
+    shoes: usable.filter(makesFootwear),
+    top: clothes,
+    bottom: clothes,
+    denimFirst: clothes.filter((candidate) => makesDenim(candidate) && qlooHighestRanked.has(candidate.entityId)),
   };
-  const usedOrFoundNothing: UsedBrands = takenOrPassedOver();
-  // Then those this plan's own picks take too.
-  const usedSoFar = takenOrPassedOver();
-  for (const { styleIconId, line, brands } of styleIcons) {
-    if (plan.picked.length >= wanted) break;
-    const picks = pickBrands(brands, line, budgetTier, usedSoFar, matches);
-    if (!picks) {
-      // Brands not looked up yet count as known, so it can't complete one whatever the lookups find.
-      if (!pickBrands(brands, line, budgetTier, usedOrFoundNothing, matches)) plan.skipped.push(styleIconId);
-      continue;
-    }
-    plan.picked.push({ styleIconId, brands: picks });
-    for (const category of BRAND_CATEGORIES) usedSoFar[category].add(picks[category].entityId);
-    for (const { entityId, name, officialSite } of [picks.shoes, picks.top, picks.bottom]) {
-      if (!matches.has(entityId) && !plan.lookUpBrands.some((brand) => brand.entityId === entityId)) plan.lookUpBrands.push({ entityId, name, officialSite });
-    }
-  }
-  if (plan.lookUpBrands.length > 0) return plan;
-  const notSearched = ({ styleIconId, category, brand }: PieceSearch) => !searchMade(searched, styleIconId, category, brand.entityId);
-  const separates = plan.picked
-    .flatMap(({ styleIconId, brands }) => BRAND_CATEGORIES.map((category) => ({ styleIconId, category, brand: brands[category] })))
-    .filter(notSearched);
-  // A One-Piece's search moves no pick, so it waits until none can move: no search is spent on a
-  // Top Brand that a later search moves.
-  plan.searches =
-    separates.length > 0
-      ? separates
-      : plan.picked.map(({ styleIconId, brands }): PieceSearch => ({ styleIconId, category: "one_piece", brand: productPieceBrand(brands, "one_piece") })).filter(notSearched);
-  return plan;
 }
 
 /**
- * The picks whose Top, Bottom and Shoes have each been found by a search on its Brand, which fixes
- * them, so their Outfits can be tailored, whether or not their One-Pieces have been searched for.
+ * An Outfit's Brands from a Style Icon's lists, each Category's first Brand still in play, or null
+ * when it can't complete an Outfit. `inPlay` says whether a Brand is still in play for a Category,
+ * such as one not yet used in it. In this order: the Shoes are the first footwear Brand in play, the
+ * Top the first apparel Brand in play that isn't the Shoes', and the Bottom the first of `denimFirst`
+ * in play that isn't the Shoes' (it may be the Top's), or else the first apparel Brand in play that's
+ * neither the Shoes' nor the Top's, or else the Top's. Brands are the same by `sameBrand`.
  */
-export function foundPicks(picked: OutfitBrandPlan["picked"], searched: PieceSearches): OutfitBrandPlan["picked"] {
-  return picked.filter(({ styleIconId, brands }) =>
-    BRAND_CATEGORIES.every((category) => searchMade(searched, styleIconId, category, brands[category].entityId)?.found),
-  );
+export function firstBrandsInPlay<B>(
+  lists: BrandLists<B>,
+  inPlay: (category: BrandCategory, brand: B) => boolean,
+  sameBrand: (a: B, b: B) => boolean = (a, b) => a === b,
+): Record<BrandCategory, B> | null {
+  const shoes = lists.shoes.find((candidate) => inPlay("shoes", candidate));
+  if (shoes === undefined) return null;
+  const top = lists.top.find((candidate) => inPlay("top", candidate) && !sameBrand(candidate, shoes));
+  if (top === undefined) return null;
+  const bottoms = lists.bottom.filter((candidate) => inPlay("bottom", candidate) && !sameBrand(candidate, shoes));
+  const bottom =
+    lists.denimFirst.find((denim) => bottoms.some((candidate) => sameBrand(candidate, denim))) ??
+    bottoms.find((candidate) => !sameBrand(candidate, top)) ??
+    bottoms[0];
+  if (bottom === undefined) return null;
+  return { top, bottom, shoes };
 }
 
-/** The search the Styling made for a Style Icon's Piece in one Category on one Brand, if it has. */
-function searchMade(searched: PieceSearches, styleIconId: string, category: ProductCategory, brandEntityId: string): PieceSearchMade | undefined {
-  return searched.find((search) => search.styleIconId === styleIconId && search.category === category && search.brandEntityId === brandEntityId);
+/**
+ * The Brands a Style Icon's Outfit may take for each Category (ADR-0010): the first `count` of its
+ * list still in play, best first, by `inPlay` as `firstBrandsInPlay` reads it. The Bottom's list puts
+ * `denimFirst` first, as a Bottom takes a denim Brand before any other, and its `denimFirst` is the
+ * denim Brands among them. One that drops out of play makes way for the next on its list. The
+ * Brands `firstBrandsInPlay` would pick, the fixed pipeline's, are always among them. Brands are
+ * the same by `sameBrand`.
+ */
+export function topBrandsInPlay<B>(
+  lists: BrandLists<B>,
+  inPlay: (category: BrandCategory, brand: B) => boolean,
+  count: number,
+  sameBrand: (a: B, b: B) => boolean,
+): BrandLists<B> {
+  const firstInPlay = (category: BrandCategory, brands: readonly B[]) => brands.filter((brand) => inPlay(category, brand)).slice(0, count);
+  const isDenim = (brand: B) => lists.denimFirst.some((denim) => sameBrand(denim, brand));
+  const bottom = firstInPlay("bottom", [...lists.bottom.filter(isDenim), ...lists.bottom.filter((brand) => !isDenim(brand))]);
+  return { shoes: firstInPlay("shoes", lists.shoes), top: firstInPlay("top", lists.top), bottom, denimFirst: bottom.filter(isDenim) };
 }
 
 /** A Brand Piece's price range: its Brand's `price_range_usd_min`–`max`, or null without both. */

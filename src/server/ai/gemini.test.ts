@@ -1,76 +1,16 @@
 import { inspect } from "node:util";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import { aiFromEnvironment } from "./environment";
-import { FakeAiProvider } from "./fake";
+import { FakeGemini, type GeminiPart, geminiError, geminiImage, geminiText, type RecordedGeminiRequest } from "./fake-gemini";
 import { GeminiAiProvider } from "./gemini";
-import {
-  type Photo,
-  type PhotoCheckInput,
-  type PhotoCheckReport,
-  type PreviewInput,
-  type PreviewPiece,
-  type TailoredPieces,
-  type TailoringInput,
-  UnretryableAiError,
-} from "./provider";
-import { checkTailoredPieces } from "./tailoring";
+import { type Photo, type PreviewInput, type PreviewPiece, UnretryableAiError } from "./provider";
 
 // The Gemini adapter against a fake Gemini API: no test calls Gemini. The fake answers each
 // request with a small hand-written response shaped like Gemini's, and records what was sent.
 
-/** A request as it left for Gemini. */
-interface RecordedGeminiRequest {
-  url: URL;
-  headers: Headers;
-  body: GeminiRequestBody;
-}
-
-interface GeminiRequestBody {
-  contents: { role: string; parts: GeminiPart[] }[];
-  systemInstruction?: { parts: GeminiPart[] };
-  generationConfig?: Record<string, unknown>;
-}
-
-type GeminiPart = { text?: string; inlineData?: { mimeType: string; data: string }; fileData?: unknown; thought?: boolean };
-
-/** Gemini in tests: it answers every request with `respond`, and records each one. */
-class FakeGemini {
-  readonly requests: RecordedGeminiRequest[] = [];
-  respond: (request: RecordedGeminiRequest) => Response = () => geminiError(500);
-
-  readonly fetch: typeof globalThis.fetch = async (input, init) => {
-    const url = new URL(input instanceof Request ? input.url : input);
-    const body = JSON.parse(String(init?.body)) as GeminiRequestBody;
-    const recorded = { url, headers: new Headers(init?.headers), body };
-    this.requests.push(recorded);
-    return this.respond(recorded);
-  };
-}
-
-/** Gemini's reply carrying `text`, as a model that finished normally sends it. */
-function geminiText(text: string): Response {
-  return Response.json({ candidates: [{ content: { role: "model", parts: [{ text }] }, finishReason: "STOP" }] });
-}
-
-/** Gemini's reply carrying `value` as JSON, as structured output sends it. */
-function geminiJson(value: unknown): Response {
-  return geminiText(JSON.stringify(value));
-}
-
 /** Google blocking the request itself, photo included: no candidates, only the block reason. */
 function geminiPromptBlocked(blockReason: string): Response {
   return Response.json({ promptFeedback: { blockReason } });
-}
-
-/** Google stopping the reply part-way for safety. Whatever was written comes back with it. */
-function geminiReplyBlocked(finishReason: string, writtenSoFar: string): Response {
-  return Response.json({ candidates: [{ content: { role: "model", parts: [{ text: writtenSoFar }] }, finishReason }] });
-}
-
-/** Gemini's reply carrying the image it drew. */
-function geminiImage(image: Uint8Array): Response {
-  return geminiImageParts([{ inlineData: { mimeType: "image/png", data: base64(image) } }]);
 }
 
 /** Gemini's reply carrying an image it drew while thinking, then the one it finished with. */
@@ -88,11 +28,6 @@ function geminiImageParts(parts: GeminiPart[]): Response {
 /** Google stopping an image it drew, which isn't returned: only the finish reason and its message. */
 function geminiImageStopped(finishReason: string): Response {
   return Response.json({ candidates: [{ content: {}, finishReason, finishMessage: "The image was stopped." }] });
-}
-
-/** One of Gemini's errors, with no wait before the AI SDK retries it. */
-function geminiError(status: number): Response {
-  return Response.json({ error: { code: status, message: `Gemini error ${status}` } }, { status, headers: { "retry-after-ms": "0" } });
 }
 
 /** Every part of the request that isn't text: the photo, inline or as a file reference. */
@@ -113,102 +48,14 @@ function base64(bytes: Uint8Array): string {
 /** The photo's bytes stand in for a real photo: the adapter sends them as they are. */
 const PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a photo of someone standing in a park"), mediaType: "image/jpeg" };
 
-const PHOTO_CHECK: PhotoCheckInput = { photo: PHOTO, photoType: "full_body" };
-
-const REPORT: PhotoCheckReport = {
-  peopleCount: 1,
-  clearMainPerson: true,
-  visible: { face: true, hair: true, upperBody: true, legs: true, feet: true },
-  hairCovered: false,
-  clearEnough: true,
-  explicit: false,
-  photoStyle: ["edgy", "chic"],
-};
-
-/** A Full-Body Photo's Outfit. The Style Icon, Brands and Products are made up. */
-const TAILORING: TailoringInput = {
-  photo: PHOTO,
-  photoType: "full_body",
-  ageGroup: "25_29",
-  photoStyle: ["edgy", "chic"],
-  line: "womenswear",
-  styleIconName: "Mira Vale",
-  pieces: [
-    { category: "hairstyle" },
-    {
-      category: "top",
-      brand: { name: "Northbound", categoryTags: ["apparel", "footwear"] },
-      candidates: [
-        {
-          id: "nb-biker",
-          title: "Cropped Leather Biker Jacket",
-          description: "A black leather biker jacket,\ncropped at the waist, with silver zips.",
-          colours: ["#111111", "#c0c0c0"],
-        },
-        { id: "nb-tee", title: "Boxy Organic Tee", description: null, colours: [] },
-      ],
-    },
-    {
-      category: "bottom",
-      brand: { name: "Field Denim", categoryTags: ["apparel", "denim"] },
-      candidates: [{ id: "fd-straight", title: "High-Rise Straight Jean, Washed Black", description: "Straight-leg jeans in washed-black denim.", colours: ["#2b2b2b"] }],
-    },
-    {
-      category: "shoes",
-      brand: { name: "Stride Works", categoryTags: ["footwear"] },
-      candidates: [{ id: "sw-boot", title: "Lace-Up Ankle Boot", description: "Black leather boots on a chunky sole.", colours: ["#000000"] }],
-    },
-  ],
-};
-
-const TAILORED: TailoredPieces = {
-  pieces: [
-    {
-      category: "hairstyle",
-      item: "Choppy chin-length bob",
-      details: "A choppy chin-length bob with a soft side part, in your own hair colour.",
-      why: "Mira Vale's signature bob, cut from the length you have now to sharpen your edgy, chic style.",
-      unknownCut: false,
-    },
-    { category: "top", productId: "nb-biker", why: "This cropped biker jacket gives your edgy Photo Style its edge, worn the way Mira Vale layers hers." },
-    { category: "bottom", productId: "fd-straight", why: "Straight black jeans keep the Outfit sleek and easy, and go with what you're already wearing." },
-    { category: "shoes", productId: "sw-boot", why: "Chunky boots finish the Outfit with the attitude Mira Vale is known for." },
-  ],
-};
-
-/** The same Outfit, its Top Brand also having One-Pieces, which come beside the Top's candidates. */
-const TAILORING_WITH_ONE_PIECES: TailoringInput = {
-  ...TAILORING,
-  pieces: TAILORING.pieces.map((piece) =>
-    piece.category === "top"
-      ? {
-          ...piece,
-          onePieceCandidates: [
-            { id: "nb-slip", title: "Satin Slip Midi Dress", description: "A bias-cut midi slip dress\nin black satin.", colours: ["#0d0d0d"] },
-            { id: "nb-boiler", title: "Utility Boiler Suit", description: null, colours: [] },
-          ],
-        }
-      : piece,
-  ),
-};
-
-/** That Outfit tailored as a One-Piece, in place of its Top and Bottom. */
-const TAILORED_AS_ONE_PIECE: TailoredPieces = {
-  pieces: [
-    TAILORED.pieces[0]!,
-    { category: "one_piece", productId: "nb-slip", why: "A black slip dress carries your edgy, chic style in one easy piece, as Mira Vale would wear it." },
-    TAILORED.pieces[3]!,
-  ],
-};
-
 /** Each Product photo's bytes stand in for its seller's photo of the Product. */
 const TOP_PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a seller's photo of a cropped biker jacket"), mediaType: "image/png" };
 const BOTTOM_PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a seller's photo of straight black jeans"), mediaType: "image/webp" };
 const SHOES_PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a seller's photo of ankle boots"), mediaType: "image/jpeg" };
 
 /**
- * The Full-Body Photo's Outfit above, as its Preview is asked for: the Hairstyle by its details,
- * each Product by its title and its seller's photo.
+ * A Full-Body Photo's Outfit, as its Preview is asked for: the Hairstyle by its details, each
+ * Product by its title and its seller's photo. The Products are made up.
  */
 const PREVIEW: PreviewInput = {
   photo: PHOTO,
@@ -244,260 +91,6 @@ beforeEach(() => {
   ai = new GeminiAiProvider({ apiKey: "test-api-key", fetch: gemini.fetch });
 });
 
-describe("the photo check", () => {
-  it("reports what Gemini saw", async () => {
-    gemini.respond = () => geminiJson(REPORT);
-
-    const result = await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: false, report: REPORT });
-  });
-
-  it("asks Gemini whether one person is clearly the Main Person, reporting the rest about them, and carries its answer", async () => {
-    gemini.respond = () => geminiJson({ ...REPORT, peopleCount: 2, clearMainPerson: false });
-
-    const result = await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: false, report: { ...REPORT, peopleCount: 2, clearMainPerson: false } });
-    const text = textOf(gemini.requests[0]!);
-    expect(text).toMatch(/clearMainPerson: whether one person is clearly the photo's subject/i);
-    expect(text).toMatch(/noticeably closer or larger than everyone else, and in focus/i);
-    expect(text).toMatch(/a couple's selfie, friends side by side, a group photo/i);
-    expect(text).toMatch(/when in doubt, clearMainPerson is false/i);
-    expect(text).toMatch(/everything else you report, except explicit, is about the main person/i);
-    expect(text).not.toMatch(/report on the most prominent one/i);
-  });
-
-  it("sends the photo inline to gemini-3.5-flash-lite, never through the Files API", async () => {
-    gemini.respond = () => geminiJson(REPORT);
-
-    await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(gemini.requests.map(({ url }) => url.pathname)).toEqual(["/v1beta/models/gemini-3.5-flash-lite:generateContent"]);
-    expect(photoPartsOf(gemini.requests[0]!)).toEqual([{ inlineData: { mimeType: "image/jpeg", data: base64(PHOTO.bytes) } }]);
-  });
-
-  it.each([
-    ["the request", () => geminiPromptBlocked("PROHIBITED_CONTENT")],
-    ["the reply", () => geminiReplyBlocked("SAFETY", '{"peopleCount": 1, ')],
-  ])("comes back blocked when Google blocks %s", async (_blocked, blockedResponse) => {
-    gemini.respond = blockedResponse;
-
-    const result = await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: true });
-  });
-
-  it("gets past an error that the AI SDK's own retries clear", async () => {
-    gemini.respond = () => (gemini.requests.length === 1 ? geminiError(503) : geminiJson(REPORT));
-
-    const result = await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: false, report: REPORT });
-  });
-
-  it("throws an error that outlasts the AI SDK's own retries, carrying nothing of the photo", async () => {
-    gemini.respond = () => geminiError(503);
-
-    const error = await ai.checkPhoto(PHOTO_CHECK).catch((thrown: unknown) => thrown);
-
-    expect(error).toBeInstanceOf(Error);
-    expect(inspect(error, { depth: Infinity })).not.toContain(base64(PHOTO.bytes));
-  });
-
-  it("throws when Gemini's reply isn't a report", async () => {
-    gemini.respond = () => geminiJson({ ...REPORT, peopleCount: "one", photoStyle: ["cottagecore"] });
-
-    await expect(ai.checkPhoto(PHOTO_CHECK)).rejects.toThrow();
-  });
-
-  it("keeps one word of a Photo Style Gemini read twice", async () => {
-    gemini.respond = () => geminiJson({ ...REPORT, photoStyle: ["casual", "casual"] });
-
-    const result = await ai.checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: false, report: { ...REPORT, photoStyle: ["casual"] } });
-  });
-});
-
-describe("tailoring", () => {
-  it("returns Gemini's reply as it came", async () => {
-    gemini.respond = () => geminiJson(TAILORED);
-
-    const reply = await ai.tailorPieces(TAILORING);
-
-    expect(reply).toEqual(TAILORED);
-  });
-
-  it("returns a reply that doesn't match the schema as it came, for our code to check", async () => {
-    gemini.respond = () => geminiJson({ pieces: [{ category: "top", item: "Black cropped leather biker jacket" }] });
-
-    const reply = await ai.tailorPieces(TAILORING);
-
-    expect(reply).toEqual({ pieces: [{ category: "top", item: "Black cropped leather biker jacket" }] });
-  });
-
-  it("returns a reply that isn't JSON as its text, for our code to check", async () => {
-    gemini.respond = () => geminiText("Here is your Outfit: a black biker jacket.");
-
-    const reply = await ai.tailorPieces(TAILORING);
-
-    expect(reply).toBe("Here is your Outfit: a black biker jacket.");
-  });
-
-  it("returns no reply when Google blocks the request, so it's asked again rather than retried", async () => {
-    gemini.respond = () => geminiPromptBlocked("OTHER");
-
-    const reply = await ai.tailorPieces(TAILORING);
-
-    expect(reply).toBeNull();
-  });
-
-  it("returns what Gemini wrote before Google stopped the reply, for our code to check", async () => {
-    gemini.respond = () => geminiReplyBlocked("SAFETY", '{"pieces": [{"category": "top", ');
-
-    const reply = await ai.tailorPieces(TAILORING);
-
-    expect(reply).toBe('{"pieces": [{"category": "top", ');
-  });
-
-  it("throws an error that outlasts the AI SDK's own retries, carrying nothing of the photo", async () => {
-    gemini.respond = () => geminiError(503);
-
-    const error = await ai.tailorPieces(TAILORING).catch((thrown: unknown) => thrown);
-
-    expect(error).toBeInstanceOf(Error);
-    expect(inspect(error, { depth: Infinity })).not.toContain(base64(PHOTO.bytes));
-  });
-
-  it("throws an error Gemini refuses the request with as one not worth retrying", async () => {
-    gemini.respond = () => geminiError(400);
-
-    const error = await ai.tailorPieces(TAILORING).catch((thrown: unknown) => thrown);
-
-    expect(error).toBeInstanceOf(UnretryableAiError);
-    expect(gemini.requests).toHaveLength(1);
-  });
-
-  it("throws an error that outlasts the AI SDK's own retries as one still worth retrying", async () => {
-    gemini.respond = () => geminiError(503);
-
-    const error = await ai.tailorPieces(TAILORING).catch((thrown: unknown) => thrown);
-
-    expect(error).toBeInstanceOf(Error);
-    expect(error).not.toBeInstanceOf(UnretryableAiError);
-  });
-
-  it("sends gemini-3.5-flash-lite the photo inline, with the Outfit's line, Style Icon and Brands", async () => {
-    gemini.respond = () => geminiJson(TAILORED);
-
-    await ai.tailorPieces(TAILORING);
-
-    expect(gemini.requests.map(({ url }) => url.pathname)).toEqual(["/v1beta/models/gemini-3.5-flash-lite:generateContent"]);
-    const [request] = gemini.requests;
-    expect(photoPartsOf(request!)).toEqual([{ inlineData: { mimeType: "image/jpeg", data: base64(PHOTO.bytes) } }]);
-    const text = textOf(request!);
-    for (const sent of ["womenswear", "Mira Vale", "edgy and chic", "Northbound", "Field Denim", "Stride Works"]) {
-      expect(text).toContain(sent);
-    }
-  });
-
-  it("sends each Brand Piece's candidates as text, by their IDs, titles, descriptions and colours, with no image but the user's photo", async () => {
-    gemini.respond = () => geminiJson(TAILORED);
-
-    await ai.tailorPieces(TAILORING);
-
-    const [request] = gemini.requests;
-    expect(photoPartsOf(request!)).toEqual([{ inlineData: { mimeType: "image/jpeg", data: base64(PHOTO.bytes) } }]);
-    const text = textOf(request!);
-    for (const sent of [
-      "id: nb-biker | title: Cropped Leather Biker Jacket | description: A black leather biker jacket, cropped at the waist, with silver zips. | colours: #111111, #c0c0c0",
-      "id: nb-tee | title: Boxy Organic Tee",
-      "id: fd-straight | title: High-Rise Straight Jean, Washed Black | description: Straight-leg jeans in washed-black denim. | colours: #2b2b2b",
-      "id: sw-boot | title: Lace-Up Ankle Boot",
-    ]) {
-      expect(text).toContain(sent);
-    }
-    // Nothing tells it to invent items, and it's told no price.
-    expect(text).not.toMatch(/generic|US dollars/);
-  });
-
-  it("tells the model to tailor the Outfit to the Main Person, as the most prominent person in the photo, matching colours to what they're wearing, not anyone else's", async () => {
-    gemini.respond = () => geminiJson(TAILORED);
-
-    await ai.tailorPieces(TAILORING);
-
-    const text = textOf(gemini.requests[0]!);
-    expect(text).toMatch(/for the most prominent person in the photo/i);
-    expect(text).toMatch(/match colours to what they're wearing, not to anyone else/i);
-  });
-
-  it("gets a reply our check accepts only when each Brand Piece is one of its own Category's listed candidates", async () => {
-    gemini.respond = () => geminiJson(TAILORED);
-    expect(checkTailoredPieces(await ai.tailorPieces(TAILORING), TAILORING.pieces)).toEqual([
-      expect.objectContaining({ category: "hairstyle", item: "Choppy chin-length bob" }),
-      expect.objectContaining({ category: "top", productId: "nb-biker" }),
-      expect.objectContaining({ category: "bottom", productId: "fd-straight" }),
-      expect.objectContaining({ category: "shoes", productId: "sw-boot" }),
-    ]);
-
-    for (const productId of ["nb-not-listed", "fd-straight", undefined]) {
-      gemini.respond = () => geminiJson({ pieces: TAILORED.pieces.map((piece) => (piece.category === "top" ? { ...piece, productId } : piece)) });
-
-      expect(checkTailoredPieces(await ai.tailorPieces(TAILORING), TAILORING.pieces)).toBeNull();
-    }
-  });
-
-  it("sends the Top Brand's One-Piece candidates as text beside the Top's, telling it a One-Piece may take the place of the Top and Bottom though separates come first", async () => {
-    gemini.respond = () => geminiJson(TAILORED);
-
-    await ai.tailorPieces(TAILORING_WITH_ONE_PIECES);
-
-    const [request] = gemini.requests;
-    expect(photoPartsOf(request!)).toEqual([{ inlineData: { mimeType: "image/jpeg", data: base64(PHOTO.bytes) } }]);
-    const lines = textOf(request!).split("\n");
-    const topLine = lines.findIndex((line) => line.startsWith("- top (Top): from Northbound"));
-    const bottomLine = lines.findIndex((line) => line.startsWith("- bottom (Bottom)"));
-    // After the Top's own candidates, before the Bottom.
-    expect(lines.slice(topLine + 3, bottomLine)).toEqual([
-      expect.stringMatching(/one_piece.*in place of both the top and the bottom/i),
-      "  - id: nb-slip | title: Satin Slip Midi Dress | description: A bias-cut midi slip dress in black satin. | colours: #0d0d0d",
-      "  - id: nb-boiler | title: Utility Boiler Suit",
-    ]);
-    expect(textOf(request!)).toMatch(/prefer separates/i);
-  });
-
-  it("gets a reply our check accepts with a One-Piece only in place of the Top and Bottom, as one of the Top Brand's One-Piece candidates", async () => {
-    gemini.respond = () => geminiJson(TAILORED_AS_ONE_PIECE);
-    expect(checkTailoredPieces(await ai.tailorPieces(TAILORING_WITH_ONE_PIECES), TAILORING_WITH_ONE_PIECES.pieces)).toEqual([
-      expect.objectContaining({ category: "hairstyle" }),
-      { category: "one_piece", productId: "nb-slip", why: expect.stringContaining("slip dress") },
-      expect.objectContaining({ category: "shoes", productId: "sw-boot" }),
-    ]);
-    // Separates still pass.
-    gemini.respond = () => geminiJson(TAILORED);
-    expect(checkTailoredPieces(await ai.tailorPieces(TAILORING_WITH_ONE_PIECES), TAILORING_WITH_ONE_PIECES.pieces)).toHaveLength(4);
-
-    const [hairstyle, top, bottom, shoes] = TAILORED.pieces;
-    const onePiece = TAILORED_AS_ONE_PIECE.pieces[1]!;
-    for (const [pieces, asked] of [
-      // Without One-Piece candidates.
-      [[hairstyle, onePiece, shoes], TAILORING.pieces],
-      // A Top candidate, or none listed.
-      [[hairstyle, { ...onePiece, productId: "nb-biker" }, shoes], TAILORING_WITH_ONE_PIECES.pieces],
-      [[hairstyle, { ...onePiece, productId: "nb-not-listed" }, shoes], TAILORING_WITH_ONE_PIECES.pieces],
-      // Beside the Top or the Bottom, rather than in place of both.
-      [[hairstyle, onePiece, bottom, shoes], TAILORING_WITH_ONE_PIECES.pieces],
-      [[hairstyle, top, onePiece, shoes], TAILORING_WITH_ONE_PIECES.pieces],
-      [[hairstyle, top, bottom, onePiece, shoes], TAILORING_WITH_ONE_PIECES.pieces],
-    ] as const) {
-      gemini.respond = () => geminiJson({ pieces });
-
-      expect(checkTailoredPieces(await ai.tailorPieces(TAILORING_WITH_ONE_PIECES), asked)).toBeNull();
-    }
-  });
-});
-
 describe("Previews", () => {
   it("returns the image Gemini drew", async () => {
     gemini.respond = () => geminiImage(DRAWN);
@@ -514,6 +107,15 @@ describe("Previews", () => {
 
     expect(gemini.requests.map(({ url }) => url.pathname)).toEqual(["/v1beta/models/gemini-nano-banana-2.1:generateContent"]);
     expect(gemini.requests[0]!.body.generationConfig).toEqual({ responseModalities: ["IMAGE"], thinkingConfig: { thinkingLevel: "minimal" } });
+  });
+
+  it("asks another of the Preview image models when it's given one, as the Haiku check does for Nano Banana 2 Lite", async () => {
+    gemini.respond = () => geminiImage(DRAWN);
+    const lite = new GeminiAiProvider({ apiKey: "test-api-key", fetch: gemini.fetch, model: "gemini-3.1-flash-lite-image" });
+
+    expect(await lite.renderPreview(PREVIEW)).toEqual({ refused: false, image: DRAWN });
+
+    expect(gemini.requests.map(({ url }) => url.pathname)).toEqual(["/v1beta/models/gemini-3.1-flash-lite-image:generateContent"]);
   });
 
   it("sends the user's photo first, then each Product's photo, all inline in one request, in Piece order", async () => {
@@ -587,6 +189,18 @@ describe("Previews", () => {
     const text = textOf(gemini.requests[0]!);
     expect(text).toContain("Never add a face or a head that isn't in the photo.");
     expect(text).toContain("- their hair, and anything covering it");
+  });
+
+  it("adds a redraw's correction after the whole of the Preview's own instruction, which it never replaces", async () => {
+    gemini.respond = () => geminiImage(DRAWN);
+    await ai.renderPreview(PREVIEW);
+    const instruction = textOf(gemini.requests[0]!);
+
+    await ai.renderPreview({ ...PREVIEW, correction: "  Keep the face exactly\nas it is in the photo.  " });
+
+    const redraw = gemini.requests[1]!;
+    expect(textOf(redraw)).toBe(`${instruction}\n\nAn earlier try at this edit got something wrong. Put it right, keeping every rule above:\nKeep the face exactly as it is in the photo.`);
+    expect(photoPartsOf(redraw)).toEqual(photoPartsOf(gemini.requests[0]!));
   });
 
   it("comes back refused as blocked when Google blocks the request, without asking again", async () => {
@@ -666,44 +280,5 @@ describe("Previews", () => {
     const result = await ai.renderPreview(PREVIEW);
 
     expect(result).toEqual({ refused: false, image: DRAWN });
-  });
-});
-
-describe("switching Gemini on", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.unstubAllGlobals();
-  });
-
-  it("runs the fake adapter unless AI_PROVIDER says gemini, even with GEMINI_API_KEY set", () => {
-    vi.stubEnv("AI_PROVIDER", "");
-    vi.stubEnv("GEMINI_API_KEY", "key-from-the-environment");
-
-    expect(aiFromEnvironment()).toBeInstanceOf(FakeAiProvider);
-  });
-
-  it("runs Gemini when AI_PROVIDER says gemini, with GEMINI_API_KEY as its key", async () => {
-    vi.stubEnv("AI_PROVIDER", "gemini");
-    vi.stubEnv("GEMINI_API_KEY", "key-from-the-environment");
-    vi.stubGlobal("fetch", gemini.fetch);
-    gemini.respond = () => geminiJson(REPORT);
-
-    const result = await aiFromEnvironment().checkPhoto(PHOTO_CHECK);
-
-    expect(result).toEqual({ blocked: false, report: REPORT });
-    expect(gemini.requests.map(({ headers }) => headers.get("x-goog-api-key"))).toEqual(["key-from-the-environment"]);
-  });
-
-  it("can't run Gemini without GEMINI_API_KEY", () => {
-    vi.stubEnv("AI_PROVIDER", "gemini");
-    vi.stubEnv("GEMINI_API_KEY", "");
-
-    expect(() => aiFromEnvironment()).toThrow("GEMINI_API_KEY must be set when AI_PROVIDER is gemini.");
-  });
-
-  it("refuses an AI_PROVIDER it doesn't know", () => {
-    vi.stubEnv("AI_PROVIDER", "openai");
-
-    expect(() => aiFromEnvironment()).toThrow("AI_PROVIDER must be one of: fake, gemini.");
   });
 });

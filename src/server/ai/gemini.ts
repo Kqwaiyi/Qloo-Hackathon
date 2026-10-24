@@ -1,110 +1,35 @@
 import { createGoogleGenerativeAI, type GoogleLanguageModelOptions, type GoogleProviderMetadata } from "@ai-sdk/google";
-import {
-  APICallError,
-  type FilePart,
-  generateText,
-  type LanguageModel,
-  NoObjectGeneratedError,
-  NoOutputGeneratedError,
-  Output,
-  RetryError,
-} from "ai";
-import * as z from "zod";
+import { generateText, type LanguageModel } from "ai";
 
-import { GEMINI_PHOTO_CHECK_MODEL, GEMINI_PREVIEW_MODEL, GEMINI_TAILORING_MODEL } from "@/config/ai";
-import {
-  AGE_GROUP_LABELS,
-  CATEGORY_LABELS,
-  PHOTO_STYLES,
-  PHOTO_TYPE_LABELS,
-  type PieceCategory,
-  type PhotoStyle,
-  type PhotoStyleWords,
-  photoStyleText,
-} from "@/config/consultations";
+import { GEMINI_PREVIEW_MODEL, type GeminiPreviewModel } from "@/config/ai";
+import { CATEGORY_LABELS, type PieceCategory } from "@/config/consultations";
 
-import {
-  type AiProvider,
-  type Photo,
-  type PhotoCheckInput,
-  type PhotoCheckResult,
-  type PreviewInput,
-  type PreviewPiece,
-  type PreviewResult,
-  tailoredPiecesSchema,
-  type TailoringBrand,
-  type TailoringCandidate,
-  type TailoringInput,
-  type TailoringPiece,
-  UnretryableAiError,
-} from "./provider";
+import { oneLine, photoPart, withoutRequest } from "./ai-sdk";
+import type { AiProvider, Photo, PreviewInput, PreviewPiece, PreviewResult } from "./provider";
 
-// The Gemini adapter (spec: "AI provider interface", Gemini adapter): our interface on the Vercel
-// AI SDK, which appears nowhere else in the code. It owns its prompts. Photos are always sent
-// inline, as the request's own bytes, never through the Files API.
+// The Gemini adapter (spec: "AI provider interface", Gemini adapter): Previews on Gemini, through
+// the Vercel AI SDK, which appears nowhere but the adapters. The photo check and the Stylist run on
+// Claude (ADR-0011). It owns the Preview's instruction. Photos are always sent inline, as the
+// request's own bytes, never through the Files API.
 
 export interface GeminiAiOptions {
   apiKey: string;
   /** Tests send Gemini's requests to a fake. */
   fetch?: typeof globalThis.fetch;
+  /** The image model to draw with: GEMINI_PREVIEW_MODEL unless the Haiku check asks for another. */
+  model?: GeminiPreviewModel;
 }
 
 /**
- * The AI provider on real Gemini, which costs money: it runs only when AI_PROVIDER switches it on.
- * The photo check and tailoring rely on the AI SDK's own retries, 2 by default. A Preview has none:
- * its Workflow step retries it.
+ * Previews on real Gemini, which costs money: it runs only when AI_PROVIDER switches real AI on. A
+ * Preview has no retries of the AI SDK's own: its Workflow step retries it.
  */
-export class GeminiAiProvider implements AiProvider {
-  private readonly photoCheckModel: LanguageModel;
-  private readonly tailoringModel: LanguageModel;
+export class GeminiAiProvider implements Pick<AiProvider, "renderPreview"> {
   private readonly previewModel: LanguageModel;
 
-  constructor({ apiKey, fetch }: GeminiAiOptions) {
+  constructor({ apiKey, fetch, model = GEMINI_PREVIEW_MODEL }: GeminiAiOptions) {
     const google = createGoogleGenerativeAI({ apiKey, fetch });
-    this.photoCheckModel = google(GEMINI_PHOTO_CHECK_MODEL);
-    this.tailoringModel = google(GEMINI_TAILORING_MODEL);
-    this.previewModel = google(GEMINI_PREVIEW_MODEL);
-  }
-
-  // The model isn't told which Photo Type was chosen, so it can't lean towards it: it reports what
-  // it sees, and our code judges the photo against the Photo Type.
-  async checkPhoto({ photo }: PhotoCheckInput): Promise<PhotoCheckResult> {
-    try {
-      const reply = await generateText({
-        model: this.photoCheckModel,
-        system: PHOTO_CHECK_PROMPT,
-        messages: [{ role: "user", content: [photoPart(photo)] }],
-        output: Output.object({ schema: photoCheckReplySchema }),
-      });
-      // Google blocked the request, and with it the photo, so the model wrote nothing.
-      if (reply.finishReason === "content-filter") return { blocked: true };
-      const { output } = reply;
-      return { blocked: false, report: { ...output, photoStyle: photoStyleWords(output.photoStyle) } };
-    } catch (error) {
-      // Google can stop the reply part-way, leaving what was written so far, which isn't the report.
-      if (NoObjectGeneratedError.isInstance(error) && error.finishReason === "content-filter") return { blocked: true };
-      throw withoutRequest("The photo check", error);
-    }
-  }
-
-  // A reply that breaks the schema comes back as it came, since our code checks every reply and
-  // asks again. Asking the model in structured output only makes a good reply likelier.
-  async tailorPieces(input: TailoringInput): Promise<unknown> {
-    try {
-      const { output } = await generateText({
-        model: this.tailoringModel,
-        system: TAILORING_PROMPT,
-        messages: [{ role: "user", content: [{ type: "text", text: tailoringRequest(input) }, photoPart(input.photo)] }],
-        output: Output.object({ schema: tailoredPiecesSchema }),
-      });
-      return output;
-    } catch (error) {
-      if (NoObjectGeneratedError.isInstance(error)) return replyAsItCame(error.text);
-      // Google blocked the request, so the model wrote nothing. The same request would be blocked
-      // again, so it isn't an error worth retrying: no reply, which our code asks again for.
-      if (NoOutputGeneratedError.isInstance(error)) return null;
-      throw withoutRequest("Tailoring", error);
-    }
+    this.previewModel = google(model);
   }
 
   // A refusal is final: asking again is billed, and would likely be refused again. Anything else
@@ -140,24 +65,6 @@ export class GeminiAiProvider implements AiProvider {
   }
 }
 
-/** The Gemini adapter on GEMINI_API_KEY. */
-export function geminiAiFromEnvironment(): GeminiAiProvider {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY must be set when AI_PROVIDER is gemini.");
-  return new GeminiAiProvider({ apiKey });
-}
-
-/**
- * A failed Gemini call as an error with only its message. The AI SDK's own errors carry the
- * request, and with it the photo, which must never reach a log or a Workflow run's stored error.
- * One that Gemini will refuse again, such as a bad request or key, is an UnretryableAiError.
- */
-function withoutRequest(call: string, error: unknown): Error {
-  const message = `${call} failed: ${error instanceof Error ? error.message : "unknown error"}`;
-  const last = RetryError.isInstance(error) ? error.lastError : error;
-  return APICallError.isInstance(last) && !last.isRetryable ? new UnretryableAiError(message) : new Error(message);
-}
-
 /**
  * How each Preview is asked for, as the Preview bake-off asked: an image alone, with thinking
  * minimal, set explicitly. No imageConfig, so the image keeps the photo's aspect ratio, at about 1K.
@@ -185,134 +92,8 @@ const FILTERED_FINISH_REASONS: ReadonlySet<string> = new Set([
 /** The model drew no image, or stopped it for another reason: a refusal with no image. */
 const NO_IMAGE_FINISH_REASONS: ReadonlySet<string> = new Set(["NO_IMAGE", "IMAGE_OTHER"]);
 
-/** The photo as the request's own bytes, which the AI SDK sends inline. */
-function photoPart({ bytes, mediaType }: Photo): FilePart {
-  return { type: "file", mediaType, data: bytes };
-}
-
-/** The model's reply: its JSON when it wrote JSON, otherwise its text. */
-function replyAsItCame(text: string | undefined): unknown {
-  if (text === undefined) return null;
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return text;
-  }
-}
-
-/**
- * What the photo check asks Gemini for: just what the interface's report holds. The Photo Style
- * is a plain list here, which structured output handles better than a choice of two tuples.
- */
-const photoCheckReplySchema = z.object({
-  peopleCount: z.number().int().min(0),
-  clearMainPerson: z.boolean(),
-  visible: z.object({ face: z.boolean(), hair: z.boolean(), upperBody: z.boolean(), legs: z.boolean(), feet: z.boolean() }),
-  hairCovered: z.boolean(),
-  clearEnough: z.boolean(),
-  explicit: z.boolean(),
-  photoStyle: z.array(z.enum(PHOTO_STYLES)).min(1).max(2),
-});
-
-/** One or two words, strongest first, each once. */
-function photoStyleWords([strongest, second]: PhotoStyle[]): PhotoStyleWords {
-  return second && second !== strongest ? [strongest!, second] : [strongest!];
-}
-
-// The prompts. Each asks only for what the interface returns, and never for age, ethnicity, skin
+// The instruction asks only for what the interface returns, and never for age, ethnicity, skin
 // tone, body measurements or health (ADR-0005).
-
-const PHOTO_CHECK_PROMPT = `You check one photo for a styling app, which suggests clothes and a haircut to the main person in it. Report only what you can see in the photo. Never guess anything you can't see.
-
-Reply with:
-- peopleCount: how many people are in the photo. Count only real people, not people in pictures, posters or screens.
-- clearMainPerson: whether one person is clearly the photo's subject, its main person: noticeably closer or larger than everyone else, and in focus, while anyone else is in the background, much smaller, blurred or partly cut off. Two or more people of similar prominence mean there is no clear main person: a couple's selfie, friends side by side, a group photo, or two people of the same size where one faces away. When in doubt, clearMainPerson is false. With one person in the photo, it is true; with nobody, it is false. As for peopleCount, people in pictures, posters or screens don't count.
-- visible: whether each of these shows in the photo, for the main person:
-  - face: their face, seen from the front or the side, not turned away or cut off.
-  - hair: their hair. False when it is hidden, cut off by the frame or covered.
-  - upperBody: their shoulders, chest and waist.
-  - legs: their legs, from the hips to the ankles.
-  - feet: both feet, with whatever they're wearing on them.
-- hairCovered: true or false only: whether something covers most of their hair, such as a hijab, a turban or a cap. Never say what covers it.
-- clearEnough: whether the photo is sharp, well lit and unfiltered enough to see the main person and what they're wearing.
-- explicit: whether the photo shows nudity or sexual content, on anyone in it.
-- photoStyle: one or two words for the style of what they're wearing, strongest first, from this list only: ${PHOTO_STYLES.join(", ")}. A plain photo with no clear style is casual.
-
-Everything else you report, except explicit, is about the main person alone, never anyone else in the photo. When there is nobody in the photo, every part of visible is false and photoStyle is casual.
-
-Never guess the person's age. Never infer their ethnicity, skin tone, body measurements or health, and never mention them.`;
-
-const TAILORING_PROMPT = `You are the stylist in a styling app. For the most prominent person in the photo, you make one Outfit concrete. Anyone else in the photo isn't styled: ignore them, and "the person" always means the most prominent one. The Outfit's picks are already made: the Style Icon who inspires it, and the Brand each clothing Piece comes from. Each clothing Piece comes with its Brand's real products, as candidates: you pick one of them. For the Hairstyle, you choose one haircut. Choose so that the Outfit goes together and suits the person, their Photo Style and the Style Icon. You may use the photo to match colours to what they're wearing, not to anyone else.
-
-Reply with one Piece per category you're given, in the order given, or with a one_piece in place of the top and the bottom (see below), each with:
-- category: the Piece's category, as given.
-- productId: for a clothing Piece only, the id of the candidate you pick, exactly as given. Only ever one of that Piece's own candidates: for a one_piece, one of its one_piece candidates.
-- item: for the Hairstyle only, the cut, as a label of about 6 words.
-- details: for the Hairstyle only, one sentence on the cut, used to picture the person with it. It describes the cut alone: it never names the Style Icon or anyone else.
-- why: one line of about 20 words, in English, speaking to the person as "you", on why it suits them.
-- unknownCut: for the Hairstyle only. See below.
-
-Nothing you write states a price, currency or cost.
-
-For the Top, pick one garment that works as the main visible upper layer.
-
-One-Piece: when the top comes with one_piece candidates as well, its Brand's dresses, jumpsuits or overalls, you may pick one of those instead: a Piece with category "one_piece", in place of both the top and the bottom, so you give no top and no bottom. The bottom's Brand is then left out. Only do it when that garment suits the person, the Style Icon and the Photo Style better than separates would. Prefer separates.
-
-Each why may describe the product you picked, and mention the Style Icon, the Photo Style, the person's hair and what they're already wearing. It never mentions their body size or shape, weight, skin colour, ethnicity, gender or age.
-
-Hairstyle: work from the Style Icon's name alone.
-- If you know the Style Icon's signature haircut, base the cut on it, and set unknownCut to false.
-- If you don't, set unknownCut to true and base the cut on the Outfit and the Photo Style instead. The why must then not claim it's the Style Icon's cut.
-- The cut must be achievable from the person's current hair: shorter, or restyled, without adding much length or changing its texture. Keep their own hair colour.
-
-Never guess the person's age or gender from the photo: you're given their age group, and the line is the Outfit's. Never infer their ethnicity, skin tone, body measurements or health.`;
-
-/** What one Outfit is tailored from, as the request's text. The photo goes with it. */
-function tailoringRequest({ photoType, ageGroup, photoStyle, line, styleIconName, pieces }: TailoringInput): string {
-  return [
-    `The photo: a ${PHOTO_TYPE_LABELS[photoType]}.`,
-    `The Outfit's line: ${line}.`,
-    `The person's age group: ${AGE_GROUP_LABELS[ageGroup]}.`,
-    `Their Photo Style: ${photoStyleText(photoStyle)}.`,
-    `The Style Icon: ${styleIconName}.`,
-    "",
-    "The Pieces, in order:",
-    ...pieces.flatMap(pieceRequest),
-  ].join("\n");
-}
-
-/**
- * One Piece's lines: a clothing Piece's Brand and its candidates, by their words alone, and for a
- * Top whose Brand has One-Pieces, those candidates after its own.
- */
-function pieceRequest(piece: TailoringPiece): string[] {
-  if (piece.category === "hairstyle") return [`- hairstyle (${CATEGORY_LABELS.hairstyle}): a haircut.`];
-  const onePieces = piece.onePieceCandidates ?? [];
-  return [
-    `- ${piece.category} (${CATEGORY_LABELS[piece.category]}): from ${brandRequest(piece.brand)}. Its candidates:`,
-    ...piece.candidates.map(candidateRequest),
-    ...(onePieces.length > 0
-      ? [`  Or a one_piece (${CATEGORY_LABELS.one_piece}) from ${piece.brand.name}, in place of both the top and the bottom. Its candidates:`, ...onePieces.map(candidateRequest)]
-      : []),
-  ];
-}
-
-function brandRequest({ name, categoryTags }: TailoringBrand): string {
-  return categoryTags.length > 0 ? `${name}, which makes ${categoryTags.map((tag) => tag.replaceAll("_", " ")).join(", ")}` : name;
-}
-
-/** A candidate on one line: its id, title, description and colours, as the product search gave them. */
-function candidateRequest({ id, title, description, colours }: TailoringCandidate): string {
-  const about = [`id: ${id}`, `title: ${oneLine(title)}`];
-  if (description) about.push(`description: ${oneLine(description)}`);
-  if (colours.length > 0) about.push(`colours: ${colours.join(", ")}`);
-  return `  - ${about.join(" | ")}`;
-}
-
-/** Text from a seller, its line breaks and runs of spaces made single spaces. */
-function oneLine(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
 
 /** What the Preview instruction calls each Piece. */
 const PREVIEW_PIECE_LABELS: Record<PieceCategory, string> = {
@@ -330,8 +111,9 @@ function productPhotos(pieces: readonly PreviewPiece[]): Photo[] {
  * Product by its seller's photo, named by its image, or by its title when it has none, on the
  * Main Person alone, named only as the most prominent person (ADR-0009). Keep everything else,
  * everyone else in the photo included. It never names the Style Icon, which the Preview isn't told.
+ * A redraw's correction follows it all, so every rule still holds.
  */
-function previewInstruction({ photoType, pieces }: PreviewInput): string {
+function previewInstruction({ photoType, pieces, correction }: PreviewInput): string {
   const changesHair = pieces.some(({ category }) => category === "hairstyle");
   // The user's photo is image 1; the Product photos follow it, as the request sends them.
   const photos = productPhotos(pieces);
@@ -376,5 +158,6 @@ function previewInstruction({ photoType, pieces }: PreviewInput): string {
     ...(photoType === "body_only"
       ? ["", "If any part of their face is visible, leave it exactly as it is. Never add a face or a head that isn't in the photo."]
       : []),
+    ...(correction ? ["", "An earlier try at this edit got something wrong. Put it right, keeping every rule above:", oneLine(correction)] : []),
   ].join("\n");
 }

@@ -336,6 +336,7 @@ describe("opening a Consultation", () => {
       // No Outfits yet for "Show 2 more Outfits" to add to.
       everyOutfitBuilt: true,
       failedStyling: null,
+      stylistNotes: [],
       productsToCheck: false,
     });
   });
@@ -500,7 +501,7 @@ describe("deleting a Consultation", () => {
 
   it.each([
     ["Finding Style Icons, as Qloo answers", "style-icons"],
-    ["Building Outfits, as the AI tailors them", "tailoring"],
+    ["Building Outfits, as the Stylist works on them", "building-outfits"],
     ["Generating Previews", "previews"],
   ] as const)("mid-Styling, while %s, leaves the step nothing to save into, and nothing more is stored", async (_name, moment) => {
     const browser = await signedInUser();
@@ -516,7 +517,10 @@ describe("deleting a Consultation", () => {
     };
     if (moment === "style-icons") harness.qloo.duringRequest = deleteOnce;
     else harness.ai.duringCall = async (call) => {
-      if (call === (moment === "tailoring" ? "tailorPieces" : "renderPreview")) await deleteOnce();
+      // The Stylist's second turn is its first at Building Outfits, once it has found the Style Icons.
+      if (moment === "building-outfits" ? call === "stylistModel" && harness.ai.stylistRequests.at(-1)?.turn === 2 : call === "renderPreview") {
+        await deleteOnce();
+      }
     };
 
     await harness.stylings.runPending();

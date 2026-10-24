@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { FatalError, getStepMetadata, RetryableError } from "workflow";
 
 import { UnretryableAiError } from "@/server/ai/provider";
@@ -8,16 +9,17 @@ import { NoExchangeRateError } from "@/server/outfit-assembly/products";
 import { ProductSearchRateLimitedError, UnretryableProductSearchError } from "@/server/product-search/provider";
 import { QlooError, QlooRateLimitedError } from "@/server/qloo/client";
 
-import type { BuildOutfitsSteps } from "./build-outfits";
-import { ProductSearchDownError, StylingNotRunningError, stylingSteps } from "./steps";
+import { ProductSearchDownError, StylingNotRunningError } from "./steps";
+import type { StylistSteps } from "./stylist";
+import { allStylingSteps } from "./stylist-steps";
 
 /**
- * Runs one "build Outfits" step for the Workflow: on the app's services, telling the Workflow which
+ * Runs one Styling step for the Workflow: on the app's services, telling the Workflow which
  * failures to retry. A step given its `maxRetries` learns whether this try is its last.
  */
-export async function runWorkflowStep<T>(step: (steps: BuildOutfitsSteps) => Promise<T>, { maxRetries }: { maxRetries?: number } = {}): Promise<T> {
+export async function runWorkflowStep<T>(step: (steps: StylistSteps) => Promise<T>, { maxRetries }: { maxRetries?: number } = {}): Promise<T> {
   const lastTry = maxRetries === undefined ? undefined : getStepMetadata().attempt > maxRetries;
-  const steps = stylingSteps(await getServices(), { lastTry });
+  const steps = allStylingSteps(await getServices(), { lastTry });
   try {
     return await step(steps);
   } catch (error) {
@@ -44,4 +46,9 @@ function asWorkflowError(error: unknown): unknown {
   // until the next daily sweep.
   if (error instanceof UnretryableProductSearchError || error instanceof NoExchangeRateError) return new FatalError(error.message);
   return error;
+}
+
+/** The Stylist's model, as the app's AI supplies it, for one of the Workflow agent's model steps. */
+export async function appStylistModel(): Promise<LanguageModelV4> {
+  return (await getServices()).ai.stylistModel();
 }

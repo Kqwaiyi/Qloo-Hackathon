@@ -1,5 +1,5 @@
-// A one-off team script, which costs money: runs the real pipeline once on one of the landing page's
-// sample photos, with live Qloo, Channel3 and Gemini and the United States as the Country, and
+// A one-off team script, which costs money: runs a real Styling once on one of the landing page's
+// sample photos, with live Qloo, Channel3 and real AI and the United States as the Country, and
 // freezes what it makes (its Products with their offers, prices and dates, and its Preview) as that
 // Photo Type's sample, as `team:export-landing-sample` does. The sample keeps the Style Preference
 // and Budget Tier it has in src/server/landing-samples.ts, and is never refreshed after.
@@ -10,30 +10,20 @@
 //
 //   npm run team:make-landing-sample -- <photo-type> [outfit-number]
 //
-// It needs QLOO_API_URL, QLOO_API_KEY, CHANNEL3_API_KEY and GEMINI_API_KEY in .env.local, whatever
-// AI_PROVIDER and PRODUCT_SEARCH say.
+// It needs QLOO_API_URL, QLOO_API_KEY, CHANNEL3_API_KEY, ANTHROPIC_API_KEY and GEMINI_API_KEY in
+// .env.local, whatever AI_PROVIDER and PRODUCT_SEARCH say.
 
-import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import { CATEGORY_LABELS, PHOTO_TYPE_LABELS, PHOTO_TYPES, type PhotoType } from "@/config/consultations";
-import { PRODUCT_SEARCH_STEP_MAX_RETRIES } from "@/config/product-search";
-import { PREVIEW_STEP_MAX_RETRIES } from "@/config/stylings";
-import { geminiAiFromEnvironment } from "@/server/ai/gemini";
-import { createAuth } from "@/server/auth/create-auth";
+import { aiFromEnvironment } from "@/server/ai/environment";
 import { MemoryBlobStore } from "@/server/blob/memory";
-import { systemClock } from "@/server/clock";
 import { closeDatabase } from "@/server/db/connect";
-import { openPgliteDatabase } from "@/server/db/pglite";
-import { CapturingEmailTransport } from "@/server/email/capturing";
-import { createEmailSender } from "@/server/email/send-email";
 import { LANDING_SAMPLES } from "@/server/landing-samples";
 import type { StoredPiece } from "@/server/operations/consultations";
-import { type LandingSampleApp, makeLandingSample, type MakeLandingSampleRefusal } from "@/server/operations/team";
-import { productPhotosFromEnvironment, productSearchFromEnvironment } from "@/server/product-search/environment";
-import { qlooClientFromEnvironment } from "@/server/qloo/client";
-import { InlineStylingRunner } from "@/server/stylings/inline-runner";
+import { makeLandingSample, type MakeLandingSampleRefusal } from "@/server/operations/team";
 
+import { createFreshApp } from "./fresh-app";
 import { publicFile, writeLandingSample } from "./landing-sample-files";
 import { exitWithUsage } from "./team-script";
 
@@ -53,8 +43,9 @@ const photoPath = shipped.images.photoPath;
 // Read before the sample's folder is replaced.
 const photo = new Blob([await readFile(publicFile(photoPath))]);
 
-console.log(`Running the pipeline on public${photoPath}, with live Qloo, Channel3 and Gemini. This costs money.`);
-const app = await createLandingSampleApp();
+console.log(`Running a Styling on public${photoPath}, with live Qloo, Channel3, Claude and Gemini. This costs money.`);
+// The app the Styling runs on: a fresh one, on real AI.
+const app = await createFreshApp({ ai: aiFromEnvironment("real"), blob: new MemoryBlobStore() });
 try {
   const result = await makeLandingSample(app, {
     photoType,
@@ -79,43 +70,6 @@ try {
   }
 } finally {
   await closeDatabase(app.db);
-}
-
-/**
- * The app the pipeline runs on: a fresh database and Blob store in memory, the live Qloo, Channel3
- * and Gemini, and Stylings run in this process, their steps tried again as often as the Workflow
- * tries them. Its email goes nowhere.
- */
-async function createLandingSampleApp(): Promise<LandingSampleApp> {
-  const db = await openPgliteDatabase();
-  const clock = systemClock;
-  const blob = new MemoryBlobStore();
-  const ai = geminiAiFromEnvironment();
-  const productSearch = productSearchFromEnvironment("channel3");
-  const stylings = new InlineStylingRunner({
-    db,
-    clock,
-    qloo: qlooClientFromEnvironment({ db, clock }),
-    ai,
-    blob,
-    productSearch,
-    productPhotos: productPhotosFromEnvironment("channel3"),
-  });
-  stylings.previewRetries = PREVIEW_STEP_MAX_RETRIES;
-  stylings.searchRetries = PRODUCT_SEARCH_STEP_MAX_RETRIES;
-  const emailSender = createEmailSender({ db, clock, transport: new CapturingEmailTransport() });
-  const auth = createAuth({
-    db,
-    clock,
-    baseURL: "http://localhost:3000",
-    secret: randomBytes(32).toString("base64"),
-    emailSender,
-    teamEmail: "team@example.invalid",
-    blob,
-    stylings,
-    rateLimit: false,
-  });
-  return { db, auth, clock, ai, blob, stylings, productSearch };
 }
 
 /** A frozen Piece, as the team checks it: a Product by its title and Brand, with its price, date and shop. */

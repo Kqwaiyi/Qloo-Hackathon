@@ -19,7 +19,7 @@ export async function getConsultation(consultationId: string): Promise<Consultat
   return readConsultation(await getReadContext(), consultationId);
 }
 
-/** The Styling status of one of the signed-in user's own Consultations. */
-export async function getStylingStatus(consultationId: string): Promise<StylingStatusView | null> {
-  return readStylingStatus(await getReadContext(), consultationId);
+/** The Styling status of one of the signed-in user's own Consultations, with the Stylist's Notes after its first `notesAfter`. */
+export async function getStylingStatus(consultationId: string, notesAfter = 0): Promise<StylingStatusView | null> {
+  return readStylingStatus(await getReadContext(), consultationId, { notesAfter });
 }

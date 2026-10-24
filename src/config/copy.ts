@@ -40,12 +40,12 @@ export const COPY = {
    * and in the Privacy Policy's Photos section.
    */
   deletionPromise:
-    "Your photos and Previews are deleted immediately. Leftover records in our providers' systems are gone within a day, and Google's abuse-monitoring copy within 55 days.",
+    "Your photos and Previews are deleted immediately. Leftover records in our providers' systems are gone within 36 days, Anthropic's copy within 30 days (up to 2 years for anything its trust and safety team flags), and Google's abuse-monitoring copy within 55 days.",
   withdrawPhotoConsent: "Withdraw photo consent",
   deleteAccount: "Delete account",
   /** The account-deletion modal, which then asks for the password. */
   accountDeletionWarning:
-    "This deletes your account and every Consultation, with its photos and Previews, right away. Copies in our providers' systems are gone within a day, and Google's abuse-monitoring copy within 55 days. This can't be undone.",
+    "This deletes your account and every Consultation, with its photos and Previews, right away. Copies in our providers' systems are gone within 36 days, Anthropic's within 30 days (up to 2 years for anything its trust and safety team flags), and Google's abuse-monitoring copy within 55 days. This can't be undone.",
   /** On the landing page, once the account is deleted. */
   accountDeleted: "Your account has been deleted.",
   /** The allowance line beside every action that uses Outfits. */
@@ -58,6 +58,20 @@ export const COPY = {
   appWideCapForMonth: (date: string) => `Qurator has made all the Outfits it can for this month. Back on ${date}.`,
   faceGuide: "keep your face above this line",
   takingLonger: "This is taking longer than usual.",
+  /** The control under a running Styling's checklist that opens the Stylist's Notes. */
+  seeWhatYourStylistIsDoing: "See what your AI Stylist is doing",
+  /** In the Stylist's Notes before the Stylist has written any. */
+  stylistGettingStarted: "Your AI Stylist is getting started.",
+  /** The collapsed section of the Stylist's Notes below the Outfits, and the control under a failed Styling's line that opens its notes. */
+  yourStylistsNotes: "Your AI Stylist's notes",
+  /** The entry of "Your AI Stylist's notes" for a new Consultation's first Styling. */
+  firstStyling: "First Styling",
+  /** The button below the Outfits, and the entry of "Your AI Stylist's notes" for a Styling it started. */
+  showMoreOutfits: "Show 2 more Outfits",
+  /** The entry of "Your AI Stylist's notes" for a Budget Tier change, given the Budget Tier it changed to. */
+  budgetTierChangedTo: (budgetTier: string) => `Budget Tier changed to ${budgetTier}`,
+  /** The entry of "Your AI Stylist's notes" for a Photo Style change, given the Photo Style it changed to. */
+  photoStyleChangedTo: (photoStyle: string) => `Photo Style changed to ${photoStyle}`,
   aiGenerated: "AI-generated",
   /** On every Outfit card with Product Pieces, whose Preview is drawn from their sellers' photos. */
   productPhotoCredit: "Product photos © their sellers",
@@ -70,6 +84,8 @@ export const COPY = {
   aiGeneratedPersonAlt: "AI-generated photo of a fictional person",
   previewRefused: "No Preview for this Outfit: the image model declined to make one",
   previewFailed: "No Preview for this Outfit: the image model couldn't make one",
+  /** When the AI Stylist kept neither of an Outfit's Preview and its redraw, as both broke a hard rule. */
+  previewNotKept: "No Preview for this Outfit: your AI Stylist couldn't get one that showed you as you are",
   everyPreviewRefused: "The image model declined this photo. A different photo may work better.",
   /** In place of "Show 2 more Outfits" once its Style Icons run out, or it failed. */
   everyOutfitBuilt: (suggestBudgetTier: boolean) => `That's every Outfit we can build for this photo. ${tryAnother(suggestBudgetTier)} for more.`,

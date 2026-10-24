@@ -29,6 +29,8 @@ import type { EmailKind } from "../../config/email";
 import { USAGE_KINDS } from "../../config/limits";
 import type { ProductSearchMarket } from "../../config/product-search";
 import {
+  PIECE_SEARCH_STATES,
+  PREVIEW_REDRAW_STATES,
   PREVIEW_REFUSAL_REASONS,
   PREVIEW_STATES,
   STYLE_ICON_STATUSES,
@@ -36,8 +38,10 @@ import {
   STYLING_KINDS,
   STYLING_STAGES,
   STYLING_STATUSES,
+  STYLIST_NOTE_KINDS,
 } from "../../config/stylings";
 import type { Candidate } from "../outfit-assembly/products";
+import type { QlooBrand } from "../qloo/client";
 
 // Better Auth's own tables (user, session, account, verification, rate limit), plus the Qurator
 // fields on the user. Better Auth looks these up by the export names below.
@@ -261,6 +265,7 @@ export const outfitLineEnum = pgEnum("outfit_line", LINES);
 export const styleIconStatusEnum = pgEnum("style_icon_status", STYLE_ICON_STATUSES);
 export const previewStateEnum = pgEnum("preview_state", PREVIEW_STATES);
 export const previewRefusalReasonEnum = pgEnum("preview_refusal_reason", PREVIEW_REFUSAL_REASONS);
+export const previewRedrawStateEnum = pgEnum("preview_redraw_state", PREVIEW_REDRAW_STATES);
 
 export const styling = pgTable(
   "styling",
@@ -273,7 +278,7 @@ export const styling = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     // Whether it's the Demo Account's, whose Outfits no limit counts, so it writes no usage records,
-    // and which holds no user's Styling lock.
+    // which holds no user's Styling lock, and whose Stylist has more room (`stylingLimitsFor`).
     onDemoAccount: boolean("on_demo_account").notNull().default(false),
     kind: stylingKindEnum("kind").notNull(),
     // What it builds for. They become the Consultation's own once it succeeds.
@@ -286,12 +291,12 @@ export const styling = pgTable(
     stageMovedAt: timestamp("stage_moved_at", { withTimezone: true }).notNull(),
     outfitsWanted: integer("outfits_wanted").notNull(),
     outfitsMade: integer("outfits_made").notNull(),
-    // Style Icons it skipped because their tailoring failed. Each is replaced by the next unused
-    // Style Icon, up to MAX_TAILORING_SUBSTITUTES times.
-    tailoringFailures: integer("tailoring_failures").notNull(),
-    // The searches it has set going in the product search, up to MAX_PRODUCT_SEARCHES_PER_STYLING,
+    // The searches it has set going in the product search, up to its `StylingLimits`' productSearches,
     // each counted once however many tries it takes.
     productSearches: integer("product_searches").notNull().default(0),
+    // The Style Icons its Stylist has passed over for hair length, up to
+    // HAIR_LENGTH_PASS_OVERS_PER_STYLING: only ever on a Face Photo.
+    hairLengthPassOvers: integer("hair_length_pass_overs").notNull().default(0),
     failureReason: stylingFailureReasonEnum("failure_reason"),
     workflowRunId: text("workflow_run_id"),
     // The market its Products come from, chosen from the user's Country as it started. Null only for
@@ -361,14 +366,26 @@ export const outfit = pgTable(
     previewState: previewStateEnum("preview_state").notNull(),
     // The WebP in the private Blob store, once it's ready.
     previewPathname: text("preview_pathname"),
-    // Why the image model refused it, when it did.
+    // Why it was refused, when it was: by the image model, or by the Preview phase, which kept neither image.
     previewRefusalReason: previewRefusalReasonEnum("preview_refusal_reason"),
-    // Body photos only: the Qloo entity ID of the Brand picked for each Brand Category, fixed before
-    // tailoring and kept apart from the Pieces, so a Brand stays reserved even if no Piece shows it:
-    // a One-Piece leaves out the Bottom Brand.
+    // Where the one redraw of the Preview is, once its verdict calls for one. The redraw is kept in
+    // the private Blob store beside the Preview until the Preview phase keeps one of them.
+    previewRedraw: previewRedrawStateEnum("preview_redraw"),
+    // Whether the Preview phase has checked the Preview: its first draw judged right, or the image it
+    // kept of a redrawn one. One drawn but never checked by the time its Styling finishes is left
+    // failed, so no user sees a Preview that wasn't checked.
+    previewChecked: boolean("preview_checked").notNull().default(false),
+    // Body photos only: the Qloo entity ID of the Brand picked for each Brand Category, fixed as the
+    // Outfit is saved and kept apart from the Pieces, so a Brand stays reserved even if no Piece shows
+    // it: a One-Piece leaves out the Bottom Brand.
     topBrandEntityId: text("top_brand_entity_id"),
     bottomBrandEntityId: text("bottom_brand_entity_id"),
     shoesBrandEntityId: text("shoes_brand_entity_id"),
+    // Their names, as Qloo had them, which the Stylist is told. Null for Outfits saved before the
+    // Stylist built body photos' Outfits.
+    topBrandName: text("top_brand_name"),
+    bottomBrandName: text("bottom_brand_name"),
+    shoesBrandName: text("shoes_brand_name"),
   },
   (table) => [
     index("outfit_consultation_id_idx").on(table.consultationId),
@@ -388,7 +405,7 @@ export const outfit = pgTable(
 export const categoryEnum = pgEnum("category", PIECE_CATEGORIES);
 
 /**
- * One per Category an Outfit fills, or a One-Piece filling its Top and Bottom, tailored by the AI.
+ * One per Category an Outfit fills, or a One-Piece filling its Top and Bottom, as the Stylist saved it.
  * Every Top, Bottom and Shoes Piece is a Product (ADR-0008); those made before Products existed keep
  * the item the AI described instead.
  */
@@ -448,13 +465,15 @@ export const piece = pgTable(
   ],
 );
 
+export const pieceSearchStateEnum = pgEnum("piece_search_state", PIECE_SEARCH_STATES);
+
 /**
  * The candidates of each Piece's search in a running Styling: up to CANDIDATES_PER_PIECE Products of
- * the Piece's Brand that qualified, kept for its Outfit's tailoring, or none when none did. One row
- * per search, by the Outfit's Style Icon, the Category and the Brand searched. Deleted when the
- * Styling finishes, however it finishes: nothing is reused by a later Styling. A search that still
- * errored after its retries has a row too, with no candidates at all (null), so its Brand is passed
- * over like one whose search found none.
+ * the Piece's Brand that qualified, which the Stylist picks the Piece from, or none when none did.
+ * One row per search, by the Outfit's Style Icon, the Category and the Brand searched, from when it's
+ * set going. Deleted when the Styling finishes, however it finishes: nothing is reused by a later
+ * Styling. A search that still errored after its retries has a row too, with no candidates at all
+ * (null), so its Brand is out of play like one whose search found none.
  */
 export const pieceCandidates = pgTable(
   "piece_candidates",
@@ -467,12 +486,66 @@ export const pieceCandidates = pgTable(
       .references(() => styleIcon.id, { onDelete: "cascade" }),
     category: categoryEnum("category").notNull(),
     brandEntityId: text("brand_entity_id").notNull(),
-    // Null when the search never answered: it still errored after its retries.
+    // Searching until it answers, or until it still errors after its retries: unanswered.
+    state: pieceSearchStateEnum("state").notNull(),
+    // Null until it answers, and for good when it never does.
     candidates: jsonb("candidates").$type<Candidate[]>(),
-    // When the search was made: the date each Product Piece's price is found.
+    // When the search was set going, then when it answered: the date each Product Piece's price is found.
     searchedAt: timestamp("searched_at", { withTimezone: true }).notNull(),
   },
-  (table) => [primaryKey({ name: "piece_candidates_pk", columns: [table.stylingId, table.styleIconId, table.category, table.brandEntityId] })],
+  (table) => [
+    primaryKey({ name: "piece_candidates_pk", columns: [table.stylingId, table.styleIconId, table.category, table.brandEntityId] }),
+    check("piece_candidates_when_answered", sql`(${table.state} = 'answered') = (${table.candidates} is not null)`),
+  ],
+);
+
+/**
+ * The Brands a running Styling fetched for each of its Style Icons: the Brand call's fullest pool,
+ * as Qloo's client keeps it, or none yet (null) while the call is under way. One row per Style Icon,
+ * from when its fetch is set going, so a Styling fetches at most its `StylingLimits`' brandFetches.
+ * Deleted when the Styling finishes, however it finishes, as its searches' candidates are.
+ */
+export const styleIconBrands = pgTable(
+  "style_icon_brands",
+  {
+    stylingId: text("styling_id")
+      .notNull()
+      .references(() => styling.id, { onDelete: "cascade" }),
+    styleIconId: text("style_icon_id")
+      .notNull()
+      .references(() => styleIcon.id, { onDelete: "cascade" }),
+    brands: jsonb("brands").$type<QlooBrand[]>(),
+  },
+  (table) => [primaryKey({ name: "style_icon_brands_pk", columns: [table.stylingId, table.styleIconId] })],
+);
+
+export const stylistNoteKindEnum = pgEnum("stylist_note_kind", STYLIST_NOTE_KINDS);
+
+/**
+ * A Styling's Stylist's Notes, in order: each a note the Stylist wrote to the user, or a step our
+ * code wrote for one of its tool calls and what came of it, from the data, so no name in a step
+ * comes from the model. Each is added after the last, while the Styling's row is held, so a page
+ * that has seen one has seen every one before it. They go with the Styling's Consultation, and
+ * with the account.
+ */
+export const stylistNote = pgTable(
+  "stylist_note",
+  {
+    stylingId: text("styling_id")
+      .notNull()
+      .references(() => styling.id, { onDelete: "cascade" }),
+    // From 1, in the order they were written.
+    position: integer("position").notNull(),
+    kind: stylistNoteKindEnum("kind").notNull(),
+    text: text("text").notNull(),
+    // A note only: the Stylist's turn it was written in, from 1, so a retried save adds it once. A
+    // note of a Preview's verdict, written once the Stylist's turns are done, has none.
+    turn: integer("turn"),
+  },
+  (table) => [
+    primaryKey({ name: "stylist_note_pk", columns: [table.stylingId, table.position] }),
+    check("stylist_note_turn_only_for_notes", sql`${table.kind} = 'note' or ${table.turn} is null`),
+  ],
 );
 
 // The Qloo cache: every Qloo response, trimmed to the fields the app uses, for QLOO_CACHE_LIFETIME_DAYS.

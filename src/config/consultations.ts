@@ -86,6 +86,11 @@ export type PhotoStyle = (typeof PHOTO_STYLES)[number];
 /** A Photo Style: one or two words from the list, strongest first. */
 export type PhotoStyleWords = readonly [PhotoStyle] | readonly [PhotoStyle, PhotoStyle];
 
+/** Words in a sentence, such as "Top, Bottom and Shoes". */
+export function inASentence(words: readonly string[]): string {
+  return words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+}
+
 /** A Photo Style in a sentence, such as "edgy and chic". */
 export function photoStyleText(words: readonly PhotoStyle[]): string {
   return words.join(" and ");

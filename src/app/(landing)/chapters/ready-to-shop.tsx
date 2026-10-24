@@ -12,8 +12,9 @@ import { Headline, Label } from "../ui";
 // The sample's Outfit, ready to shop: its Pieces as the app's Outfit card shows them, each Product
 // by its seller's name with its Brand, its dated price and a link to its shop, and the credit for
 // the Product photos its Preview was drawn from; the photo and Preview to compare by hand; how many
-// Outfits come at a time; and the Budget Tier control that makes Qloo pick again. The app's own
-// Outfit card is left as it is: this is the landing page's monochrome telling of it, in its words.
+// Outfits come at a time; and the Budget Tier control that has Qloo find new candidates for the
+// Stylist. The app's own Outfit card is left as it is: this is the landing page's monochrome
+// telling of it, in its words.
 
 export function ReadyToShop({ sample }: { sample: LandingSampleView }) {
   const { outfit } = sample;
@@ -86,7 +87,8 @@ export function ReadyToShop({ sample }: { sample: LandingSampleView }) {
             </div>
           )}
           <p data-reveal="blur" className="mt-6 max-w-[44ch] text-body text-mute">
-            Each Piece names its Product, its shop and its price. Change the Budget Tier or Photo Style and Qloo picks again.
+            Each Piece names its Product, its shop and its price. Change the Budget Tier or Photo Style, and Qloo finds new candidates for your
+            AI Stylist to choose from.
           </p>
         </div>
       </div>

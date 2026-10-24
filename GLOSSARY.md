@@ -54,7 +54,7 @@ One submitted photo together with every Outfit and Preview generated from it; ke
 _Avoid_: session, analysis, scan
 
 **Outfit**:
-The unit the app recommends: one coordinated set of Pieces, one per Category the Photo Type unlocks (a One-Piece covers Top and Bottom together), inspired by a single Style Icon and shown with a single Preview, or none when the image model declines to make one.
+The unit the app recommends: one coordinated set of Pieces, one per Category the Photo Type unlocks (a One-Piece covers Top and Bottom together), inspired by a single Style Icon and shown with a single Preview, or none when the image model declines to make one or the Stylist finds both its tries break a hard rule.
 _Avoid_: look, recommendation (ambiguous between an Outfit and one of its Pieces)
 
 **Category**:
@@ -92,10 +92,18 @@ _Avoid_: price range, price level
 One pass that builds Outfits for a Consultation: its first, a "see more", or a change of Budget Tier or Photo Style. It fails only when it makes no Outfit; otherwise it keeps whatever Outfits it made.
 _Avoid_: run, job, generation
 
+**Stylist**:
+The AI that carries out each Styling: it chooses among the Style Icons and Brands Qloo picked, picks each Piece's Product, checks each Preview, and tells the user what it is doing as it goes.
+_Avoid_: agent, assistant, bot, the AI
+
+**Stylist's Notes**:
+What the Stylist tells the user about a Styling as it carries it out: a short note at each step, and each search it makes and Preview it draws. Shown while the Styling runs, then kept under the Outfits it made, or its failure line, until those are replaced.
+_Avoid_: log, trace, thinking, reasoning
+
 **Outfit Allowance**:
 How many Outfits a user may have made in any 24 hours. An Outfit counts once it is shown to the user, with or without its Preview, whichever Styling made it, and even if it is later replaced or deleted. The Demo Account has none.
 _Avoid_: credits, quota, tokens
 
 **Demo Account**:
-The single shared account the team gives the judges privately and also tests with. No usage limit applies to it, it skips the Bot Check at sign-in, anyone with its login sees every Consultation made on it, and it asks for photo consent before every Consultation instead of once.
+The single shared account the team gives the judges privately and also tests with. No usage limit applies to it, its Stylist may work longer and search more on each Styling, it skips the Bot Check at sign-in, anyone with its login sees every Consultation made on it, and it asks for photo consent before every Consultation instead of once.
 _Avoid_: test account, admin account, judge account

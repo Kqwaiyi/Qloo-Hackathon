@@ -24,4 +24,5 @@ Product photos are their sellers' copyright, and Google's API terms ask us to be
 - The product provider is a new recipient: it gets the Brand, Category, line and Country, never the photo or anything about the account. Product images now go to Google with the photo.
 - A Product image that can't be fetched is drawn from the Product's title instead; the Product stays real.
 - Outfits made before this keep their AI-described items.
+- Refined by [ADR-0010](0010-the-stylist-chooses-among-qloos-picks.md): the Stylist may now choose among a Style Icon's top few Brands, not only among one Brand's Products. And by [ADR-0011](0011-claude-runs-every-model-but-the-image-model.md): Product images also go to Anthropic when the Stylist checks a Preview, as their public URLs, so they're still never stored.
 - The fallback Preview model, Nano Banana 2 Lite, isn't built for several reference images, so falling back to it now costs more quality than the bake-off measured.

@@ -15,8 +15,9 @@ import { LandingMotion } from "./motion/landing-motion";
 // The public landing page, where the demo link opens: one frozen sample Consultation told chapter
 // by chapter, from the photo to the Outfit; then how photos are looked after, and the way to sign
 // up, which is the last screen. It's rendered for each visit, with fresh 1-hour links to the
-// sample's images, and never calls Qloo or the AI. The AI chapters say only "AI": Gemini is named
-// once, by the final button.
+// sample's images, and never calls Qloo or the AI. The AI chapters say only "AI", or "AI Stylist"
+// for the Stylist: Gemini is named once, by the final button. The Stylist's Notes never show here:
+// the frozen sample has none.
 //
 // Every chapter is plain, readable markup on its own. The motion layer, the one client component
 // that runs the page, adds the smooth scroll, the reveals, the pins and the rendered 3D on top,

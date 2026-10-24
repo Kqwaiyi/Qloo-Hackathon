@@ -71,7 +71,7 @@ export interface ProductOffer {
   condition: "new" | "used" | null;
 }
 
-/** A Product a search found, with what tailoring and its Piece may need. */
+/** A Product a search found, with what the Stylist and its Piece may need. */
 export interface CandidateProduct {
   id: string;
   /** The Product's name, as its seller gives it. */

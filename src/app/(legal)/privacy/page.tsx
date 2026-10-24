@@ -131,6 +131,10 @@ export default function Page() {
           <li>your Style Preference and Country;</li>
           <li>your photos and the Previews made from them, with each Consultation&apos;s Outfits;</li>
           <li>
+            your AI Stylist&apos;s notes on each Styling: the short notes it writes to you as it styles you, and a line for each
+            search it makes and Preview it draws;
+          </li>
+          <li>
             what the photo check found: the Photo Style, which parts of you the photo shows (face, hair, upper body, legs and
             feet), and whether your hair is covered, as a yes or no, never what covers it;
           </li>
@@ -170,7 +174,7 @@ export default function Page() {
           </li>
           <li>
             <strong>To keep the app for adults only,</strong> from your birth year and month. Legal basis: our contract with
-            you, and our legitimate interest (Article 6(1)(f)) in following our AI provider&apos;s terms, which don&apos;t
+            you, and our legitimate interest (Article 6(1)(f)) in following Google&apos;s terms for Gemini, which don&apos;t
             allow anyone under {MINIMUM_AGE}.
           </li>
           <li>
@@ -213,10 +217,23 @@ export default function Page() {
       <LegalSection {...section("recipients")}>
         <ul className={bulletList}>
           <li>
-            <strong>Google&apos;s Gemini</strong>, our AI provider, gets your photos as our processor. With each one it gets
-            only what it needs to check the photo, tailor each Outfit and draw its Preview: the Photo Type, your age group, the
-            Photo Style, whether the Outfit is menswear or womenswear, the Style Icon&apos;s name, the Brands, the names,
-            descriptions and colours of the Brands&apos; Products to pick from, and the sellers&apos; photos of the Products picked (see{" "}
+            <strong>Anthropic&apos;s Claude</strong>, one of our two AI providers, gets your photos as our processor, to check
+            each one and read its Photo Style, and runs your AI Stylist. As your AI Stylist, it gets with your photo only what
+            it needs to make your Outfits: the Photo Type, your age group, the Photo Style, the Style Icons&apos; names,
+            whether each Outfit is menswear or womenswear, the Brands, and the names, descriptions and colours of the
+            Brands&apos; Products to pick from. To check each Preview, it also gets the Preview, any redraw of it, and the
+            seller&apos;s own photo of each of its Products, fetched by the photo&apos;s link (see{" "}
+            <a href="#previews" className={textLink}>
+              Previews are AI-generated
+            </a>
+            ). It never gets your username, email or Country, and gets your Budget Tier only when you change it.
+            Anthropic deletes what it gets within 30 days, but keeps anything its trust and safety team flags as breaking its
+            usage policy for up to 2 years. It doesn&apos;t use any of it to train its models.
+          </li>
+          <li>
+            <strong>Google&apos;s Gemini</strong>, our other AI provider, gets your photos as our processor. With each one it
+            gets only what it needs to draw an Outfit&apos;s Preview: the Photo Type, the Hairstyle&apos;s cut, the names and
+            sellers&apos; photos of the Products picked, and for a redraw, your AI Stylist&apos;s note on what to put right (see{" "}
             <a href="#previews" className={textLink}>
               Previews are AI-generated
             </a>
@@ -257,10 +274,10 @@ export default function Page() {
 
       <LegalSection {...section("transfers")}>
         <p className={paragraph}>
-          The app, its database and its photo storage run in the eastern United States. Google may handle what Gemini
-          receives in any country where it has facilities, and Cloudflare may handle what it receives for the Bot Check
-          outside your country. So if you&apos;re in the European Economic Area, the UK or another country with rules on
-          sending personal data abroad, your data leaves that country.
+          The app, its database and its photo storage run in the eastern United States. Anthropic and Google may handle what
+          Claude and Gemini receive in any country where they have facilities, and Cloudflare may handle what it receives
+          for the Bot Check outside your country. So if you&apos;re in the European Economic Area, the UK or another country
+          with rules on sending personal data abroad, your data leaves that country.
         </p>
         <p className={paragraph}>
           Those transfers are protected by each provider&apos;s data processing terms, which use safeguards such as the
@@ -276,6 +293,12 @@ export default function Page() {
           <li>
             <strong>Consultations</strong>, with their photos, Outfits and Previews: until you delete them, withdraw photo
             consent, or your account is deleted.
+          </li>
+          <li>
+            <strong>Your AI Stylist&apos;s notes</strong> on a Styling: as long as the Outfits they explain are shown, so
+            they&apos;re deleted once a new Styling&apos;s Outfits replace those. If a Styling makes no Outfits, its notes
+            stay under the line saying so until a later Styling finishes, or go at once for &ldquo;Show 2 more
+            Outfits&rdquo;, which has no such line. Either way, they&apos;re deleted with their Consultation.
           </li>
           <li>
             <strong>Your account</strong>: until you delete it. An account with no activity for{" "}
@@ -303,12 +326,17 @@ export default function Page() {
             {count(SIGN_UP_RATE_LIMIT.window / SECONDS_PER_HOUR, "hour")}.
           </li>
           <li>
+            <strong>Anthropic&apos;s copy</strong> of what Claude receives: deleted within 30 days, or kept for up to 2 years if
+            its trust and safety team flags it.
+          </li>
+          <li>
             <strong>Google&apos;s abuse-monitoring copy</strong> of what Gemini receives and makes: 55 days.
           </li>
           <li>
-            <strong>Workflow run data</strong>, Vercel&apos;s record of each Styling&apos;s steps: deleted as soon as the
-            Styling ends. It holds where photos and Previews are stored, the Style Icons and the Pieces&apos; text, never
-            the images themselves, Product photos included.
+            <strong>Workflow run data</strong>, Vercel&apos;s record of each Styling&apos;s steps: while a Styling runs, it
+            holds your photo, its Previews and the AI Stylist&apos;s conversation, with the Style Icons and the Pieces&apos;
+            text, all encrypted. None of it can be read once the Styling ends, and every copy is gone within 36 days. It
+            holds the Product photos only by their links, never the photos themselves.
           </li>
           <li>
             <strong>Database backups</strong>: Neon&apos;s restore window keeps earlier states of the database for 6 hours.
@@ -344,14 +372,16 @@ export default function Page() {
           Before your first Consultation, and again whenever this notice changes, the consent sheet asks you to tick two boxes,
           both unticked to start with. Ticking the first is your written release: you agree to us storing your photos and
           Previews and having AI process your face and body, for the purpose and the time described here. Ticking the second
-          agrees to your photos being sent to Google&apos;s Gemini. We record which version you agreed to, and when.
+          agrees to your photos being sent to Anthropic&apos;s Claude and Google&apos;s Gemini. We record which version you
+          agreed to, and when.
         </p>
         <h3 className={subheading}>Other people in your photo</h3>
         <p className={paragraph}>
-          If anyone else is in your photo, they&apos;re stored and sent to Google&apos;s Gemini with it, because your
-          Previews edit the photo as it is. Only its Main Person, the one the photo is clearly of, is styled. Nobody else in it is ever styled, read or
-          identified, nothing about them is kept from the check, and they&apos;re deleted with the Consultation. Your release
-          covers only you, so please make sure you have the consent of everyone else in a photo before you send it.
+          If anyone else is in your photo, they&apos;re stored and sent to Anthropic&apos;s Claude and Google&apos;s Gemini
+          with it, because the check looks at the whole photo and your Previews edit it as it is. Only its Main Person, the
+          one the photo is clearly of, is styled. Nobody else in it is ever styled, read or identified, nothing about them
+          is kept from the check, and they&apos;re deleted with the Consultation. Your release covers only you, so please
+          make sure you have the consent of everyone else in a photo before you send it.
         </p>
         <h3 className={subheading}>Before a photo leaves your device</h3>
         <p className={paragraph}>
@@ -384,14 +414,18 @@ export default function Page() {
             <tbody className="text-stone-700">
               <PhotoScheduleRow where="Our photo storage (Vercel Blob): the photo and its Previews" gone="Immediately" />
               <PhotoScheduleRow
-                where="Our database: the Consultation, its Outfits and what the check found"
+                where="Our database: the Consultation, its Outfits, the AI Stylist's notes and what the check found"
                 gone="Immediately, and from backups within 6 hours"
               />
               <PhotoScheduleRow
-                where="Workflow run data: where the photo and Previews were stored, never the images"
-                gone="Already gone once its Styling finished, or as soon as a running Styling is stopped"
+                where="Workflow run data: the photo, its Previews and the AI Stylist's conversation, encrypted, while a Styling runs"
+                gone="Unreadable once its Styling ends or is stopped, and every copy gone within 36 days"
               />
               <PhotoScheduleRow where="Runtime logs, which never hold the images" gone="Within a day" />
+              <PhotoScheduleRow
+                where="Anthropic's copy of the photo and Previews"
+                gone="Within 30 days of being sent, or up to 2 years if its trust and safety team flags it"
+              />
               <PhotoScheduleRow
                 where="Google's abuse-monitoring copy of the photo and Previews"
                 gone="Within 55 days of being sent or made"
@@ -408,10 +442,17 @@ export default function Page() {
           not a photo of you in the real clothes.
         </p>
         <p className={paragraph}>
+          Your AI Stylist checks each Preview against your photo and its Products&apos; photos. When one is wrong, it has it
+          drawn once more, with a note on what to put right, and keeps the better of the two. When neither shows you as you
+          are, it leaves that Outfit without a Preview.
+        </p>
+        <p className={paragraph}>
           Each Product in a Preview is drawn from its seller&apos;s own photo of it, or from its name when that photo
           can&apos;t be fetched. To draw a Preview, the app fetches those photos and sends them to Google&apos;s Gemini with
-          your photo. It fetches them only while it draws the Preview, and never keeps them: no Product photo is stored with
-          your photos, in our database or in our logs.
+          your photo. Once your AI Stylist has the Preview to check, the app fetches them again, by their links, each time
+          it sends Anthropic&apos;s Claude the Styling&apos;s conversation with the Preview in it, until the Styling ends. It
+          fetches them only to send them, and never keeps them: no Product photo is stored with your photos, in our
+          database, in our logs or in a Styling&apos;s run data, which holds only their links.
         </p>
       </LegalSection>
 

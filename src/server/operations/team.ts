@@ -189,7 +189,7 @@ export async function exportLandingSample(
   };
 }
 
-/** One of the landing page's sample photos, to run the pipeline on once and freeze as its Photo Type's sample. */
+/** One of the landing page's sample photos, to run a Styling on once and freeze as its Photo Type's sample. */
 export interface LandingSampleMaking {
   photoType: PhotoType;
   photo: Blob;
@@ -218,7 +218,7 @@ export type MakeLandingSampleRefusal =
   | { refusal: "no-outfit" | "no-preview" };
 
 /**
- * Runs the real pipeline once on one of the landing page's sample photos, and freezes what it makes
+ * Runs a real Styling once on one of the landing page's sample photos, and freezes what it makes
  * (spec: "Landing sample"). On its own fresh app it does what the team would do by hand: it creates
  * the Demo Account and signs in to it, sets its Style Preference to the sample's and its Country to
  * the United States, presses "Get my Outfits" with the photo, runs that first Styling to its end, and
@@ -234,7 +234,7 @@ export async function makeLandingSample(
   const created = await createDemoAccount(app, { password });
   if (!created.ok) throw new Error(`The landing sample's app isn't fresh: its Demo Account couldn't be created (${created.refusal}).`);
   const email = app.auth.demoAccountEmail;
-  const judgesRequest = await judgesRequests(app);
+  const judgesRequest = await browserRequests(app);
   const signedIn = await signIn(judgesRequest(), { identifier: email, password });
   if (!signedIn.ok) throw new Error(`Couldn't sign in to the landing sample's Demo Account (${signedIn.refusal}).`);
   const profile = { username: DEMO_ACCOUNT_PROFILE.username, stylePreference, countryCode: LANDING_SAMPLE_COUNTRY_CODE };
@@ -242,7 +242,7 @@ export async function makeLandingSample(
   if (!profileSet.ok) throw new Error(`Couldn't set the landing sample's profile (${profileSet.refusal}).`);
 
   // The team agrees to the photo notice for the AI-generated sample person, as a judge does each time.
-  const started = await startConsultation(judgesRequest(), { photo, photoType, budgetTier, consent: { storeAndProcess: true, sendToGemini: true } });
+  const started = await startConsultation(judgesRequest(), { photo, photoType, budgetTier, consent: { storeAndProcess: true, sendToAiProviders: true } });
   if (!started.ok) {
     switch (started.refusal) {
       case "unusable-file":
@@ -263,10 +263,11 @@ export async function makeLandingSample(
 }
 
 /**
- * The requests the Demo Account's judge's browser makes on the landing sample's app: a context for
- * each next one, from the app's own origin, carrying the cookies Better Auth has set so far.
+ * The requests one browser makes on a fresh app of a team script's, such as the Demo Account's
+ * judge's on the landing sample's: a context for each next one, from the app's own origin, carrying
+ * the cookies Better Auth has set so far.
  */
-async function judgesRequests(app: LandingSampleApp): Promise<() => OperationContext> {
+export async function browserRequests(app: Omit<OperationContext, "requestHeaders" | "responseCookies">): Promise<() => OperationContext> {
   const origin = new URL((await app.auth.$context).baseURL).origin;
   const cookies = new Map<string, string>();
   const responseCookies: ResponseCookies = {

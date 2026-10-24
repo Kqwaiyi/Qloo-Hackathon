@@ -21,7 +21,8 @@ export function Brands({ sample }: { sample: LandingSampleView }) {
             …and the Brands their fans favour
           </h2>
           <p data-reveal="blur" className="max-w-[36ch] text-body text-mute-dark">
-            For {outfit.styleIconName}, Qloo picks the Brands that people who love them also love, {budgetTierPhrase(sample.budgetTier)}.
+            For {outfit.styleIconName}, Qloo finds the Brands that people who love them also love, {budgetTierPhrase(sample.budgetTier)}. Your AI
+            Stylist chooses among them to suit the photo and the rest of the Outfit.
           </p>
           <div data-reveal="blur">
             <Chip tone="ink">{budgetTierChip(sample.budgetTier)}</Chip>

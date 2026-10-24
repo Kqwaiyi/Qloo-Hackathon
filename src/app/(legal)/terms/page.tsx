@@ -61,6 +61,7 @@ export default function Page() {
         <ul className={bulletList}>
           <li>Outfits are suggestions, made automatically by Qloo and AI. Take them as ideas, not advice.</li>
           <li>Previews are AI-generated, and may not show exactly how the real clothes would look on you.</li>
+          <li>Your AI Stylist&apos;s notes are written by AI, and may not always be right.</li>
           <li>
             Each account can make up to {OUTFIT_ALLOWANCE} Outfits a day, and the whole app has daily and monthly limits.
             Don&apos;t try to get around them, or to disrupt the app or anyone else&apos;s account.

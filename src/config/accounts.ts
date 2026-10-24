@@ -74,7 +74,7 @@ export type EmailChangeStep = (typeof EMAIL_CHANGE_STEPS)[number];
  * COPY lines it shows. Raise it whenever that wording changes, so every user sees the sheet again
  * before their next Consultation.
  */
-export const PHOTO_NOTICE_VERSION = 3;
+export const PHOTO_NOTICE_VERSION = 4;
 
 /**
  * The Demo Account, the single shared account the judges use, is named by its email: the team
@@ -97,6 +97,15 @@ export const DEMO_ACCOUNT_PROFILE = { username: "demo", stylePreference: "no_pre
 
 /** In the 25–29 age group, as sign-up takes it. Only the year and month are kept. */
 export const DEMO_ACCOUNT_BIRTH_DATE = "2000-01-01";
+
+/**
+ * The date of birth each account the Haiku check (`npm run check:stylist`) signs up with gives, as
+ * sign-up's fields take it: in the 25–29 age group, as the Demo Account's is.
+ */
+export const STYLIST_CHECK_BIRTH_DATE = { day: "15", month: "1", year: "2000" } as const;
+
+/** The Country of each account the Haiku check signs up: the United States, where the landing samples are made too. */
+export const STYLIST_CHECK_COUNTRY_CODE = "US";
 
 /** A password reset link works for this long. */
 export const PASSWORD_RESET_LINK_LIFETIME_SECONDS = 60 * 60;

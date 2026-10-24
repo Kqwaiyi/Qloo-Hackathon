@@ -4,10 +4,11 @@ import { useEffect, useRef } from "react";
 
 import { PHOTO_TYPE_LABELS, type PhotoType } from "@/config/consultations";
 import { COPY } from "@/config/copy";
-import type { StylingStage } from "@/config/stylings";
-import type { PreviewsProgress } from "@/server/operations/stylings";
+import { BUILDING_OUTFITS_STAGES, type StylingStage } from "@/config/stylings";
+import type { PreviewsProgress, StylistNoteView } from "@/server/operations/stylings";
 
 import { Stepper } from "./stepper";
+import { StylistNotes } from "./stylist-notes";
 import { stepHeading } from "./ui";
 
 /** Where things stand: the photo check, before there's a Styling, or the Styling's stage. */
@@ -18,14 +19,14 @@ const ITEMS: readonly { label: string; stages: readonly ChecklistStage[] }[] = [
   { label: "Checking your photo", stages: ["photo_check"] },
   { label: "Finding Style Icons", stages: ["style_icons"] },
   // Fetching Brands is part of building the Outfits, so a Budget Tier change ticks the Style Icons.
-  { label: "Building Outfits", stages: ["brands", "building_outfits"] },
+  { label: "Building Outfits", stages: BUILDING_OUTFITS_STAGES },
   { label: "Generating Previews", stages: ["previews"] },
 ];
 
 /**
- * The Styling step: the photo and a checklist ticking through the Styling. Every item before
- * `stage`'s is ticked, so a re-styling starts with the photo check, and maybe the Style Icons,
- * already done.
+ * The Styling step: the photo and a checklist ticking through the Styling, with the Stylist's Notes
+ * under it once a Styling runs. Every item before `stage`'s is ticked, so a re-styling starts with
+ * the photo check, and maybe the Style Icons, already done.
  */
 export function StylingStep({
   photoUrl,
@@ -33,6 +34,7 @@ export function StylingStep({
   stage,
   previews,
   slow,
+  notes,
 }: {
   photoUrl: string;
   photoType: PhotoType;
@@ -41,6 +43,8 @@ export function StylingStep({
   previews?: PreviewsProgress;
   /** The stage has run longer than usual. */
   slow: boolean;
+  /** The Stylist's Notes so far, under the checklist, once a Styling runs. */
+  notes?: readonly StylistNoteView[];
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const label = PHOTO_TYPE_LABELS[photoType];
@@ -67,7 +71,10 @@ export function StylingStep({
           </h2>
           <p className="mt-1 text-sm text-mute sm:hidden">{label}</p>
         </div>
-        <StylingChecklist stage={stage} previews={previews} slow={slow} className="col-span-2 sm:col-span-1" />
+        <div className="col-span-2 sm:col-span-1">
+          <StylingChecklist stage={stage} previews={previews} slow={slow} />
+          {notes && <StylistNotes notes={notes} className="mt-8 sm:short:mt-6" />}
+        </div>
       </section>
     </>
   );

@@ -23,6 +23,7 @@ import {
   DEFAULT_BUDGET_TIER,
   DEFAULT_PHOTO_TYPE,
   hasBudgetTier,
+  inASentence,
   PHOTO_TYPE_CATEGORIES,
   PHOTO_TYPE_LABELS,
   PHOTO_TYPES,
@@ -213,11 +214,6 @@ function CategorySlots({ photoType }: { photoType: PhotoType }) {
       })}
     </span>
   );
-}
-
-/** "Top, Bottom and Shoes". */
-function inASentence(words: readonly string[]): string {
-  return words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 }
 
 /** What the photo step shows when something is wrong with the photo, or stops it being checked. */
@@ -443,7 +439,7 @@ function PhotoStep({
       form.set("photo", new File([shown.blob], "photo.jpg", { type: "image/jpeg" }));
       if (consented) {
         form.set("consentStoreAndProcess", "on");
-        form.set("consentSendToGemini", "on");
+        form.set("consentSendToAiProviders", "on");
       }
       let result;
       try {

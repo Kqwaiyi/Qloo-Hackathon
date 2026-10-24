@@ -259,7 +259,7 @@ describe("the landing page", () => {
     await readLandingPage(harness.context(await signedInUser()), samples);
 
     expect(harness.qloo.requests).toEqual([]);
-    expect(harness.ai).toMatchObject({ photoCheckCount: 0, tailoringRequests: [], previewRequests: [] });
+    expect(harness.ai).toMatchObject({ photoCheckCount: 0, stylistRequests: [], previewRequests: [] });
     expect(harness.channel3.requests).toEqual([]);
   });
 
