@@ -4,7 +4,7 @@
 
 **Blocked by:** 01–11 (every other ticket)
 
-**Status:** ready-for-human
+**Status:** done
 
 **Spec:** [spec.md](../spec.md) sections "Implementation Decisions › Models and providers" and "Fakes and the check". Stories 61, 64 and 65.
 
@@ -125,3 +125,4 @@
   - **Finish refused:** in 3 Stylings Sonnet called finish in the same turn as its last keepPreview. finish refuses while a redrawn Preview waits for a keep, and the keep wasn't saved yet. Each cost 1 or 2 extra turns, and these are the report's 6 refused tool calls. This is older than the note tool: finish doesn't wait for a keep in the same turn.
   - **Cost:** $0.93 of Claude for 65 turns, against $0.66 for 50: about $0.014 a turn, against $0.013. 36 product searches, about $0.25. Gemini cost nothing, with no Previews drawn. About $1.18 in all, besides the photo checks.
   - Saved in C:\Users\steve\AppData\Local\Temp\stylist-check-2026-10-24T05-59-33, outside the repository.
+- 2026-10-24: **Done**, as the team says.
