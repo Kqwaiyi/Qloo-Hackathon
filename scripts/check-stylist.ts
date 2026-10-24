@@ -249,6 +249,7 @@ function neverDrawing(ai: AiProvider): AiProvider {
     renderPreview: async () => {
       throw new Error("The check serves its Previews from an earlier run's, so it asks the image model for none.");
     },
+    judgePreview: ai.judgePreview.bind(ai),
   };
 }
 

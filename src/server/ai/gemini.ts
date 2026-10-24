@@ -4,7 +4,7 @@ import { generateText, type LanguageModel } from "ai";
 import { GEMINI_PREVIEW_MODEL, type GeminiPreviewModel } from "@/config/ai";
 import { CATEGORY_LABELS, type PieceCategory } from "@/config/consultations";
 
-import { photoPart, withoutRequest } from "./ai-sdk";
+import { oneLine, photoPart, withoutRequest } from "./ai-sdk";
 import type { AiProvider, Photo, PreviewInput, PreviewPiece, PreviewResult } from "./provider";
 
 // The Gemini adapter (spec: "AI provider interface", Gemini adapter): Previews on Gemini, through
@@ -94,11 +94,6 @@ const NO_IMAGE_FINISH_REASONS: ReadonlySet<string> = new Set(["NO_IMAGE", "IMAGE
 
 // The instruction asks only for what the interface returns, and never for age, ethnicity, skin
 // tone, body measurements or health (ADR-0005).
-
-/** Text from a seller, its line breaks and runs of spaces made single spaces. */
-function oneLine(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
 
 /** What the Preview instruction calls each Piece. */
 const PREVIEW_PIECE_LABELS: Record<PieceCategory, string> = {

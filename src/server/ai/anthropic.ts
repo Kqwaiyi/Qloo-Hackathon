@@ -1,23 +1,42 @@
 import { type AnthropicLanguageModelOptions, createAnthropic } from "@ai-sdk/anthropic";
 import type { LanguageModelV4, LanguageModelV4GenerateResult, LanguageModelV4Prompt, SharedV4ProviderOptions } from "@ai-sdk/provider";
-import { generateText, type LanguageModel, type LanguageModelMiddleware, NoObjectGeneratedError, Output, wrapLanguageModel } from "ai";
+import { type FilePart, generateText, type LanguageModel, type LanguageModelMiddleware, NoObjectGeneratedError, Output, type TextPart, wrapLanguageModel } from "ai";
+import sharp from "sharp";
 import * as z from "zod";
 
 import {
   CLAUDE_PHOTO_CHECK_EFFORT,
   CLAUDE_PHOTO_CHECK_MODEL,
+  CLAUDE_PREVIEW_MAX_LONG_SIDE_PX,
+  CLAUDE_PREVIEW_VERDICT_EFFORT,
+  CLAUDE_PREVIEW_VERDICT_MODEL,
+  CLAUDE_SELLER_PHOTO_MAX_LONG_SIDE_PX,
   CLAUDE_STYLIST_EFFORT,
   CLAUDE_STYLIST_MAX_OUTPUT_TOKENS,
   CLAUDE_STYLIST_MODEL,
 } from "@/config/ai";
-import { PHOTO_STYLES, type PhotoStyle, type PhotoStyleWords } from "@/config/consultations";
+import { CATEGORY_LABELS, PHOTO_STYLES, PHOTO_TYPE_LABELS, type PhotoStyle, type PhotoStyleWords } from "@/config/consultations";
 
-import { photoPart, withoutRequest, withoutRequestStillRetryable } from "./ai-sdk";
-import { type AiProvider, type PhotoCheckInput, type PhotoCheckResult, UnretryableAiError } from "./provider";
+import { oneLine, photoPart, withoutRequest, withoutRequestStillRetryable } from "./ai-sdk";
+import {
+  type AiProvider,
+  type FirstDrawToJudge,
+  type FirstDrawVerdict,
+  type Photo,
+  type PhotoCheckInput,
+  type PhotoCheckResult,
+  type PreviewPiece,
+  type RedrawToJudge,
+  type RedrawVerdict,
+  UnretryableAiError,
+  type VerdictResult,
+  type WrongPreview,
+} from "./provider";
 
-// The Anthropic adapter (ADR-0011): the photo check and the Stylist's model on Claude, through the
-// AI SDK's Anthropic provider. It owns the photo check's prompt; the Stylist's comes from the
-// Stylist, with its tools and its brief. Photos are always sent inline, as the request's own bytes.
+// The Anthropic adapter (ADR-0011, ADR-0012): the photo check, the Stylist's model and each Preview's
+// verdict on Claude, through the AI SDK's Anthropic provider. It owns the photo check's prompt and the
+// verdict's; the Stylist's comes from the Stylist, with its tools and its brief. Images are always
+// sent inline, as the request's own bytes.
 
 export interface AnthropicAiOptions {
   apiKey: string;
@@ -26,18 +45,49 @@ export interface AnthropicAiOptions {
 }
 
 /**
- * The photo check and the Stylist on real Claude, which costs money: they run only when AI_PROVIDER
- * switches real AI on. Both rely on the AI SDK's own retries, 2 by default: the photo check's around
- * its whole call, and the Stylist's, the Workflow agent's around each turn.
+ * The photo check, the Stylist and each Preview's verdict on real Claude, which costs money: they run
+ * only when AI_PROVIDER switches real AI on. Each relies on the AI SDK's own retries, 2 by default:
+ * the photo check's and the verdict's around their whole call, and the Stylist's, the Workflow
+ * agent's around each turn.
  */
-export class AnthropicAiProvider implements Pick<AiProvider, "checkPhoto" | "stylistModel"> {
+export class AnthropicAiProvider implements Pick<AiProvider, "checkPhoto" | "stylistModel" | "judgePreview"> {
   private readonly photoCheckModel: LanguageModel;
   private readonly claudeStylistModel: LanguageModelV4;
+  private readonly previewVerdictModel: LanguageModel;
 
   constructor({ apiKey, fetch }: AnthropicAiOptions) {
     const anthropic = createAnthropic({ apiKey, fetch });
     this.photoCheckModel = anthropic(CLAUDE_PHOTO_CHECK_MODEL);
     this.claudeStylistModel = wrapLanguageModel({ model: anthropic(CLAUDE_STYLIST_MODEL), middleware: STYLIST_MIDDLEWARE });
+    this.previewVerdictModel = anthropic(CLAUDE_PREVIEW_VERDICT_MODEL);
+  }
+
+  judgePreview(input: FirstDrawToJudge): Promise<VerdictResult<FirstDrawVerdict>>;
+  judgePreview(input: RedrawToJudge): Promise<VerdictResult<RedrawVerdict>>;
+  async judgePreview(input: FirstDrawToJudge | RedrawToJudge): Promise<VerdictResult<FirstDrawVerdict | RedrawVerdict>> {
+    try {
+      const reply = await generateText({
+        model: this.previewVerdictModel,
+        system: PREVIEW_VERDICT_PROMPT,
+        messages: [{ role: "user", content: await verdictRequest(input) }],
+        output: Output.object({ schema: verdictReplySchema }),
+        providerOptions: { anthropic: PREVIEW_VERDICT_OPTIONS },
+      });
+      // Claude refused to judge the Preview, so it gave no verdict.
+      if (reply.finishReason === "content-filter") return { refused: true };
+      const { verdict } = reply.output;
+      if (verdict.judged !== JUDGED[input.draw]) throw new Error(`Claude gave a ${verdict.judged}'s verdict for a ${JUDGED[input.draw]}.`);
+      if (verdict.judged === JUDGED.redraw) return { refused: false, verdict: { breaksHardRule: verdict.breaksHardRule, better: verdict.better, note: oneLine(verdict.note) } };
+      if (verdict.right) return { refused: false, verdict: { right: true } };
+      const correction = oneLine(verdict.correction);
+      // A redraw is drawn with the correction, so a wrong Preview with none can't be put right.
+      if (!correction) throw new Error("Claude found the Preview wrong, with no correction for its redraw.");
+      return { refused: false, verdict: { right: false, breaksHardRule: verdict.breaksHardRule, correction, note: oneLine(verdict.note) } };
+    } catch (error) {
+      // Claude can refuse part-way, leaving what it wrote so far, which isn't the verdict.
+      if (NoObjectGeneratedError.isInstance(error) && error.finishReason === "content-filter") return { refused: true };
+      throw withoutRequest("The Preview's verdict", error);
+    }
   }
 
   stylistModel(): LanguageModelV4 {
@@ -73,6 +123,16 @@ export class AnthropicAiProvider implements Pick<AiProvider, "checkPhoto" | "sty
  */
 const PHOTO_CHECK_OPTIONS = {
   effort: CLAUDE_PHOTO_CHECK_EFFORT,
+  thinking: { type: "adaptive", display: "omitted" },
+} satisfies AnthropicLanguageModelOptions;
+
+/**
+ * How each Preview's verdict is asked for: at its effort, thinking as Claude sees fit, with no
+ * thinking text sent back, since nothing shows or stores it. No temperature and no prefill, which
+ * Claude rejects.
+ */
+const PREVIEW_VERDICT_OPTIONS = {
+  effort: CLAUDE_PREVIEW_VERDICT_EFFORT,
   thinking: { type: "adaptive", display: "omitted" },
 } satisfies AnthropicLanguageModelOptions;
 
@@ -157,6 +217,96 @@ const photoCheckReplySchema = z.object({
   photoStyle: z.array(z.enum(PHOTO_STYLES)).min(1).max(2),
 });
 
+/**
+ * What a Preview's verdict sends Claude, after its rules: the photo, with what Claude needs to judge
+ * it by, and a cache breakpoint, then the Outfit's Pieces, their seller's photos and the images to
+ * judge. Everything up to the breakpoint, the rules and the output format included, is the same for
+ * every verdict of a Styling, of a first draw or a redraw, so its later verdicts read it from cache.
+ */
+async function verdictRequest(input: FirstDrawToJudge | RedrawToJudge): Promise<RequestPart[]> {
+  const [sellerPhotos, toJudge] = await Promise.all([Promise.all(input.pieces.map(sellerPhotoOf)), imagesToJudge(input)]);
+  return [
+    text(`The photo, a ${PHOTO_TYPE_LABELS[input.photoType]}. ${input.hairCovered ? "The person's hair is covered." : "The person's hair isn't covered."}`),
+    { ...photoPart(input.photo), providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } },
+    text(["The Outfit's Pieces, in order:", ...input.pieces.map(pieceLine)].join("\n")),
+    ...sellerPhotos.flat(),
+    ...toJudge,
+  ];
+}
+
+/** One part of a request: a line of text, or an image. */
+type RequestPart = TextPart | FilePart;
+
+/** A line of text in a request. */
+function text(line: string): TextPart {
+  return { type: "text", text: line };
+}
+
+/** A Product's seller's photo, after a line saying what it is: none for the Hairstyle, or a Product whose photo couldn't be fetched. */
+async function sellerPhotoOf(piece: PreviewPiece): Promise<RequestPart[]> {
+  if (piece.category === "hairstyle" || !piece.photo) return [];
+  return [
+    text(`The seller's own photo of the ${CATEGORY_LABELS[piece.category]}, "${oneLine(piece.title)}":`),
+    await fitted(piece.photo, CLAUDE_SELLER_PHOTO_MAX_LONG_SIDE_PX),
+  ];
+}
+
+/** The image to judge, and the verdict asked for: a first draw's, or a redraw's, beside the first image and that image's verdict. */
+async function imagesToJudge(input: FirstDrawToJudge | RedrawToJudge): Promise<RequestPart[]> {
+  if (input.draw === "first") {
+    return [text("The Preview, as first drawn:"), await fitted(input.preview, CLAUDE_PREVIEW_MAX_LONG_SIDE_PX), text("Give a first draw's verdict on this Preview.")];
+  }
+  const [first, redraw] = await Promise.all([fitted(input.first, CLAUDE_PREVIEW_MAX_LONG_SIDE_PX), fitted(input.redraw, CLAUDE_PREVIEW_MAX_LONG_SIDE_PX)]);
+  return [
+    text("The Preview, as first drawn:"),
+    first,
+    text(firstVerdictText(input.firstVerdict)),
+    text("The redraw, drawn again with that correction:"),
+    redraw,
+    text("Give a redraw's verdict on the redraw, beside the first image."),
+  ];
+}
+
+/**
+ * An image as Claude is sent it: scaled down to fit `maxLongSide` pixels on its long side, keeping
+ * its proportions and format, or as it is when it already fits. Only Claude is sent the smaller one.
+ */
+async function fitted(image: Photo, maxLongSide: number): Promise<FilePart> {
+  const { width, height } = await sharp(image.bytes).metadata();
+  if (Math.max(width, height) <= maxLongSide) return photoPart(image);
+  // Turned upright first, since the scaled image keeps none of the image's metadata, its orientation included.
+  const scaled = await sharp(image.bytes).rotate().resize({ width: maxLongSide, height: maxLongSide, fit: "inside" }).toBuffer();
+  return photoPart({ bytes: new Uint8Array(scaled), mediaType: image.mediaType });
+}
+
+/** One of the Outfit's Pieces, as the verdict's request lists it. */
+function pieceLine(piece: PreviewPiece): string {
+  const label = CATEGORY_LABELS[piece.category];
+  if (piece.category === "hairstyle") return `- ${label}: ${oneLine(piece.details)}`;
+  return `- ${label}: "${oneLine(piece.title)}", ${piece.photo ? "in its seller's photo below" : "with no seller's photo: check it against its title"}`;
+}
+
+/** What the first image's verdict found, as a redraw's verdict is told it. */
+function firstVerdictText({ breaksHardRule, correction }: WrongPreview): string {
+  return `Its verdict: it was wrong${breaksHardRule ? ", breaking a hard rule" : ""}. Its correction for the redraw: "${oneLine(correction)}"`;
+}
+
+/** What Claude calls the verdict on each draw of a Preview. */
+const JUDGED = { first: "first draw", redraw: "redraw" } as const;
+
+/**
+ * What a Preview's verdict asks Claude for: a first draw's verdict, right or wrong, or a redraw's.
+ * Every verdict is asked for in this one format, since a different one would miss the prompt cache.
+ * Each form holds only its own fields, so a first draw judged right can't also break a hard rule.
+ */
+const verdictReplySchema = z.object({
+  verdict: z.union([
+    z.strictObject({ judged: z.literal(JUDGED.first), right: z.literal(true) }),
+    z.strictObject({ judged: z.literal(JUDGED.first), right: z.literal(false), breaksHardRule: z.boolean(), correction: z.string(), note: z.string() }),
+    z.strictObject({ judged: z.literal(JUDGED.redraw), breaksHardRule: z.boolean(), better: z.enum(["first", "redraw"]), note: z.string() }),
+  ]),
+});
+
 /** One or two words, strongest first, each once. */
 function photoStyleWords([strongest, second]: PhotoStyle[]): PhotoStyleWords {
   return second && second !== strongest ? [strongest!, second] : [strongest!];
@@ -184,3 +334,48 @@ Reply with:
 Everything else you report, except explicit, is about the main person alone, never anyone else in the photo. When there is nobody in the photo, every part of visible is false and photoStyle is casual.
 
 Never guess the person's age. Never infer their ethnicity, skin tone, body measurements or health, and never mention them.`;
+
+// The verdict's rules are the Stylist's "Checking each Preview" rules and hard rules (ADR-0012),
+// with today's rules for corrections and notes. They ask for nothing that describes the
+// person beyond whether a Preview changed their face, their head covering or anyone else
+// (ADR-0005), and name only the most prominent person as the one styled (ADR-0009). They never
+// change, so every verdict reads them from cache.
+
+const PREVIEW_VERDICT_PROMPT = `You check Previews for a styling app, which suggests Outfits to its user. A Preview is the user's photo, edited by an image model to show them wearing an Outfit. Your verdict decides which Preview the user is shown, if any.
+
+# What you're sent
+
+The user is the most prominent person in the photo: "the person" always means them. Anyone else in the photo isn't styled. You're sent:
+- the photo, with its Photo Type and whether the person's hair is covered;
+- the Outfit's Pieces, in order: each garment by its title and its seller's own photo, when it has one, and the Hairstyle by a description of its cut;
+- what to judge: a Preview as first drawn, or a redraw beside the first image and the first image's verdict.
+
+# Checking a Preview
+
+Check each Preview beside the photo and the seller's own photo of each of the Outfit's garments:
+- Each Piece is the Outfit's: the same garment as its seller's photo, in its shape, colour and details, and the Hairstyle's cut as described. A seller's photo may show the garment on someone: compare only the garment. A garment with no seller's photo is checked against its title.
+- On a Face Photo, only the hair changes.
+- The person is still themselves: the same face, unchanged. On a Body-Only Photo, no face or head is added where the photo shows none.
+- Any head covering is kept as it is, never removed or changed.
+- Everyone else in the photo is left exactly as they are.
+
+These are the hard rules: a changed or invented face, which on a Body-Only Photo means any face or head added; a removed or changed head covering; and anyone else in the photo changed. A Preview that breaks one must never reach the user. Anything else wrong, such as a wrong garment, a cut not as described or a changed pose, is a fault a redraw may put right.
+
+# Your verdict
+
+The request ends by asking for a first draw's verdict or a redraw's. Give that one.
+
+A first draw's verdict, judged "first draw":
+- right: whether the Preview is right. A Preview that's right needs nothing more.
+- breaksHardRule: for a Preview that's wrong, whether it breaks a hard rule.
+- correction: for a Preview that's wrong, one sentence for the image model on what to put right, which a redraw adds to its instruction, such as "Keep the face exactly as it is in the photo." or "The top should be the cropped denim jacket in its seller's photo." A Preview is redrawn only once, so put right what matters most: a hard rule first.
+- note: for a Preview that's wrong, one short line to the user, as "you", on what was wrong, in styling terms, such as "The shoes should be the low-tops in their seller's photo." When it breaks a hard rule, say only that it didn't show them as they are, such as "This Preview didn't show you as you are."
+
+A redraw's verdict, judged "redraw":
+- breaksHardRule: whether the redraw breaks a hard rule.
+- better: which of the two images, "first" or "redraw", shows the Outfit better. Judge the Outfit alone: the app weighs the hard rules itself.
+- note: one short line to the user, as "you", on how the redraw came out, in styling terms, such as "The redraw shows the low-tops from their seller's photo." When it breaks a hard rule, say only that it didn't show them as they are.
+
+# Corrections and notes
+
+Never comment on the person's body, skin or face beyond whether the Preview changed them: not in a note, and not in a correction. Never say what covers their hair: call it their head covering. Never guess the person's age or gender. Never infer their ethnicity, skin tone, body measurements or health. Nothing you write mentions their body size or shape, weight, skin colour, ethnicity, gender or age, or what covers their hair. Nothing you write states a price, currency or cost. The user knows an AI checks their Previews: never claim to be a person.`;

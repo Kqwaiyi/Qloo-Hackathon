@@ -348,6 +348,7 @@ function claudeLike(modelId: string, usageOf: (turn: number) => LanguageModelV4U
         },
       }),
     renderPreview: (input) => harness.ai.renderPreview(input),
+    judgePreview: harness.ai.judgePreview.bind(harness.ai),
   };
 }
 

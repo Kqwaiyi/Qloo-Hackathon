@@ -8,8 +8,9 @@ import { anthropicJson, anthropicText, FakeAnthropic } from "./fake-anthropic";
 import { FakeGemini, geminiImage } from "./fake-gemini";
 import type { Photo, PhotoCheckReport } from "./provider";
 
-// Which AI the environment switches on. Real AI is two adapters together: the photo check and the
-// Stylist on Claude, and Previews on Gemini (ADR-0011). Every request goes to a fake API.
+// Which AI the environment switches on. Real AI is two adapters together: the photo check, the
+// Stylist and each Preview's verdict on Claude, and Previews on Gemini (ADR-0011, ADR-0012). Every
+// request goes to a fake API.
 
 const PHOTO: Photo = { bytes: new TextEncoder().encode("the bytes of a photo of someone's face"), mediaType: "image/jpeg" };
 
@@ -81,6 +82,31 @@ describe("switching real AI on", () => {
     const { text } = await generateText({ model: ai.stylistModel(), prompt: "This Styling's brief." });
 
     expect(text).toBe("Finding your Style Icons first.");
+    expect(anthropic.requests.map(({ headers, body }) => [headers.get("x-api-key"), body.model])).toEqual([["anthropic-key-from-the-environment", "claude-sonnet-5-5"]]);
+    expect(gemini.requests).toEqual([]);
+  });
+
+  it("judges each Preview on Claude, with ANTHROPIC_API_KEY, when AI_PROVIDER says real", async () => {
+    vi.stubEnv("AI_PROVIDER", "real");
+    vi.stubEnv("ANTHROPIC_API_KEY", "anthropic-key-from-the-environment");
+    vi.stubEnv("GEMINI_API_KEY", "gemini-key-from-the-environment");
+    anthropic.respond = () => anthropicJson({ verdict: { judged: "first draw", right: true } });
+    const ai = aiFromEnvironment();
+    const preview: Photo = {
+      bytes: new Uint8Array(await sharp({ create: { width: 64, height: 64, channels: 3, background: "#888" } }).png().toBuffer()),
+      mediaType: "image/png",
+    };
+
+    const result = await ai.judgePreview({
+      draw: "first",
+      photo: PHOTO,
+      photoType: "face",
+      hairCovered: false,
+      pieces: [{ category: "hairstyle", details: "A short textured crop." }],
+      preview,
+    });
+
+    expect(result).toEqual({ refused: false, verdict: { right: true } });
     expect(anthropic.requests.map(({ headers, body }) => [headers.get("x-api-key"), body.model])).toEqual([["anthropic-key-from-the-environment", "claude-sonnet-5-5"]]);
     expect(gemini.requests).toEqual([]);
   });

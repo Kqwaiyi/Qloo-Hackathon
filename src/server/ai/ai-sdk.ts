@@ -2,11 +2,16 @@ import { APICallError, type FilePart, RetryError } from "ai";
 
 import { type Photo, UnretryableAiError } from "./provider";
 
-// What the adapters share on the Vercel AI SDK, which appears nowhere but the adapters.
+// What the adapters share, most of it on the Vercel AI SDK, which appears nowhere but the adapters.
 
 /** The photo as the request's own bytes, which the AI SDK sends inline. */
 export function photoPart({ bytes, mediaType }: Photo): FilePart {
   return { type: "file", mediaType, data: bytes };
+}
+
+/** Text from a seller or a model, its line breaks and runs of spaces made single spaces. */
+export function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 /**

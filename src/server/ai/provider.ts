@@ -1,7 +1,7 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 
 import type { PhotoStyleWords, PhotoType, ProductCategory } from "@/config/consultations";
-import type { ImageModelRefusalReason } from "@/config/stylings";
+import type { ImageModelRefusalReason, KeptPreview } from "@/config/stylings";
 
 // Our own AI provider interface (spec: "AI provider interface"). The domain depends only on this,
 // never on a provider: only the Stylist's model is one of the AI SDK's own, since the AI SDK's
@@ -81,6 +81,68 @@ export interface PreviewInput {
 /** The image the model drew, in whatever format it sent, or its refusal and why. */
 export type PreviewResult = { refused: false; image: Uint8Array } | { refused: true; reason: ImageModelRefusalReason };
 
+/** What every verdict on an Outfit's Preview is given: what its Preview was drawn from. */
+interface PreviewDrawnFrom {
+  photo: Photo;
+  /** A Face Photo's Preview changes only the hair; a Body-Only Preview never adds a face or a head. */
+  photoType: PhotoType;
+  /** Yes or no only: what covers the hair is never given (ADR-0005). */
+  hairCovered: boolean;
+  /**
+   * The Outfit's Pieces, in Category order, as its Preview was drawn from them: each Product by its
+   * title and its seller's photo, which may be missing, and the Hairstyle by its cut's details.
+   */
+  pieces: readonly PreviewPiece[];
+}
+
+/** A Preview as first drawn, to judge. */
+export interface FirstDrawToJudge extends PreviewDrawnFrom {
+  draw: "first";
+  preview: Photo;
+}
+
+/** A Preview's redraw, to judge beside its first image and that image's verdict, which found it wrong. */
+export interface RedrawToJudge extends PreviewDrawnFrom {
+  draw: "redraw";
+  first: Photo;
+  redraw: Photo;
+  firstVerdict: WrongPreview;
+}
+
+/**
+ * A first draw's verdict on a Preview that's wrong. Nothing in it describes the person beyond whether
+ * the Preview changed their face, their head covering or anyone else (ADR-0005).
+ */
+export interface WrongPreview {
+  right: false;
+  /**
+   * Whether it breaks a hard rule: a changed or invented face, which on a Body-Only Photo means any
+   * face or head added; a removed or changed head covering; or anyone else in the photo changed.
+   * Anything else wrong is a fault a redraw may put right.
+   */
+  breaksHardRule: boolean;
+  /** One sentence for the image model on what to put right, added to the Preview's own instruction. */
+  correction: string;
+  /** One line for the user on what was wrong, in styling terms. */
+  note: string;
+}
+
+/** A first draw's verdict: whether the Preview is right, and if it isn't, what's wrong. */
+export type FirstDrawVerdict = { right: true } | WrongPreview;
+
+/** A redraw's verdict, which our code keeps an image by. */
+export interface RedrawVerdict {
+  /** Whether the redraw breaks a hard rule, as `WrongPreview` names them. */
+  breaksHardRule: boolean;
+  /** Which of the two images shows the Outfit better. */
+  better: Exclude<KeptPreview, "none">;
+  /** One line for the user on how the redraw came out, in styling terms. */
+  note: string;
+}
+
+/** The model's verdict, or that it refused to judge the Preview, so it gave none. */
+export type VerdictResult<Verdict> = { refused: true } | { refused: false; verdict: Verdict };
+
 /**
  * An AI call that failed in a way asking again can't change, such as a request the provider
  * rejects or an API key it refuses. Every other error a provider throws is worth retrying.
@@ -118,4 +180,12 @@ export interface AiProvider {
    * that isn't. There's no quality check.
    */
   renderPreview(input: PreviewInput): Promise<PreviewResult>;
+  /**
+   * Judges one Preview against the photo and its Pieces (ADR-0012): a first draw, or a redraw
+   * beside its first image. Only the verdict comes back; our code keeps an image by it. A verdict
+   * the model refuses comes back refused. Throws only on errors worth retrying, with nothing of the
+   * request in them, or an `UnretryableAiError` for one that isn't.
+   */
+  judgePreview(input: FirstDrawToJudge): Promise<VerdictResult<FirstDrawVerdict>>;
+  judgePreview(input: RedrawToJudge): Promise<VerdictResult<RedrawVerdict>>;
 }

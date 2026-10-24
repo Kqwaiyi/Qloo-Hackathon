@@ -2,7 +2,8 @@
 
 /**
  * The Claude models the app can run on. Claude Haiku 5.5 runs the photo check. Claude Sonnet 5.5 runs
- * the Stylist, which the Haiku check (`npm run check:stylist`) found Haiku fell short at.
+ * the Stylist, which the Haiku check (`npm run check:stylist`) found Haiku fell short at, and judges
+ * each Preview.
  */
 export const CLAUDE_MODELS = {
   haiku55: "claude-haiku-5-5",
@@ -30,6 +31,27 @@ export const CLAUDE_STYLIST_EFFORT = "medium";
  * a few tool calls need, while each turn, one durable step, stays well inside a function's time.
  */
 export const CLAUDE_STYLIST_MAX_OUTPUT_TOKENS = 16_000;
+
+/**
+ * The Claude model that judges each Preview, in a call of its own (ADR-0012). Claude Haiku 5.5 missed
+ * a face added to a Body-Only Photo's Preview, a hard rule, which Claude Sonnet 5.5 caught.
+ */
+export const CLAUDE_PREVIEW_VERDICT_MODEL: ClaudeModel = CLAUDE_MODELS.sonnet55;
+
+/** How hard Claude works at each Preview's verdict: the effort that caught the added face. */
+export const CLAUDE_PREVIEW_VERDICT_EFFORT = "medium";
+
+/**
+ * The most pixels on its long side a seller's photo is sent to Claude at: one larger is scaled down
+ * to fit, keeping its proportions. The image model still gets each seller's photo as it was fetched.
+ */
+export const CLAUDE_SELLER_PHOTO_MAX_LONG_SIDE_PX = 768;
+
+/**
+ * The most pixels on its long side a Preview is sent to Claude at: one larger is scaled down to fit,
+ * keeping its proportions. Users still see each Preview as the image model drew it.
+ */
+export const CLAUDE_PREVIEW_MAX_LONG_SIDE_PX = 1024;
 
 /**
  * One of a Claude model's rate cards, in US dollars per million tokens: for a prompt of up to

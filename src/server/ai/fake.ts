@@ -14,6 +14,8 @@ import {
 } from "./fake-stylist";
 import type {
   AiProvider,
+  FirstDrawToJudge,
+  FirstDrawVerdict,
   Photo,
   PhotoCheckInput,
   PhotoCheckReport,
@@ -23,6 +25,9 @@ import type {
   PreviewInput,
   PreviewPiece,
   PreviewResult,
+  RedrawToJudge,
+  RedrawVerdict,
+  VerdictResult,
 } from "./provider";
 
 /**
@@ -66,6 +71,8 @@ import type {
  * redrawn" for a redraw. Its scenarios pass every photo and style as usual:
  * - `preview-refused`: the image model refuses every Preview, for image safety.
  * - `preview-fails`: every Preview throws, as a model that keeps erroring without refusing does.
+ *
+ * Every Preview's verdict judges it right, unless a test scripts the verdicts (`previewVerdicts`).
  */
 export const FAKE_AI_SCENARIOS = [
   "pass",
@@ -109,6 +116,20 @@ export type FakePreviewPiece =
 /** A Preview the fake was asked for, with every photo as its fingerprint. */
 export type FakePreviewRequest = Omit<PreviewInput, "photo" | "pieces"> & { photo: PhotoFingerprint; pieces: FakePreviewPiece[] };
 
+/** What a Preview the fake was asked to judge was drawn from, with every photo as its fingerprint. */
+interface FakeDrawnFrom {
+  photo: PhotoFingerprint;
+  pieces: FakePreviewPiece[];
+}
+
+/** A verdict the fake was asked for, with every image as its fingerprint. */
+export type FakeVerdictRequest =
+  | (Omit<FirstDrawToJudge, keyof FakeDrawnFrom | "preview"> & FakeDrawnFrom & { preview: PhotoFingerprint })
+  | (Omit<RedrawToJudge, keyof FakeDrawnFrom | "first" | "redraw"> & FakeDrawnFrom & { first: PhotoFingerprint; redraw: PhotoFingerprint });
+
+/** A verdict a test scripts: a first draw's, a redraw's, or the model refusing to judge the Preview. */
+export type FakeScriptedVerdict = FirstDrawVerdict | RedrawVerdict | { refused: true };
+
 export interface FakeAiOptions {
   scenario?: FakeAiScenario;
   /** How long each call waits. Tests use 0. */
@@ -139,6 +160,10 @@ export class FakeAiProvider implements AiProvider {
   previewScenarios: FakePreviewScenario[] = [];
   /** Every Preview it has been asked for, oldest first. */
   readonly previewRequests: FakePreviewRequest[] = [];
+  /** Verdicts for the next Previews judged, in the order they're asked for. Once they run out, every Preview is judged right. */
+  previewVerdicts: FakeScriptedVerdict[] = [];
+  /** Every verdict it has been asked for, oldest first, with what each was sent. */
+  readonly verdictRequests: FakeVerdictRequest[] = [];
   /** Every turn its Stylist has been asked for, oldest first, with what each was sent. */
   readonly stylistRequests: FakeStylistRequest[] = [];
   /**
@@ -187,6 +212,19 @@ export class FakeAiProvider implements AiProvider {
     return { refused: false, image: await withFakePreviewBanner(photo, input.correction ? "Fake Preview, redrawn" : "Fake Preview") };
   }
 
+  judgePreview(input: FirstDrawToJudge): Promise<VerdictResult<FirstDrawVerdict>>;
+  judgePreview(input: RedrawToJudge): Promise<VerdictResult<RedrawVerdict>>;
+  async judgePreview(input: FirstDrawToJudge | RedrawToJudge): Promise<VerdictResult<FirstDrawVerdict | RedrawVerdict>> {
+    this.verdictRequests.push(fingerprintedVerdict(input));
+    const scripted = this.previewVerdicts.shift();
+    await this.wait("judgePreview");
+    if (!scripted) return { refused: false, verdict: input.draw === "first" ? { right: true } : UNSCRIPTED_REDRAW_VERDICT };
+    if ("refused" in scripted) return scripted;
+    const scriptedFor = "better" in scripted ? "redraw" : "first";
+    if (scriptedFor !== input.draw) throw new Error(`The test scripted a ${scriptedFor} draw's verdict, but a ${input.draw} draw's was asked for.`);
+    return { refused: false, verdict: scripted };
+  }
+
   /** The scenario a Styling of the photo with this fingerprint plays: the one it was checked under, if kept, or `scenario`. */
   private scenarioOf(photoSha256: string | undefined): FakeAiScenario {
     return (photoSha256 && this.photoScenarios?.get(photoSha256)) || this.scenario;
@@ -206,6 +244,15 @@ function fingerprintedPiece(piece: PreviewPiece): FakePreviewPiece {
   if (piece.category === "hairstyle") return piece;
   return { ...piece, photo: piece.photo && fingerprint(piece.photo) };
 }
+
+function fingerprintedVerdict(input: FirstDrawToJudge | RedrawToJudge): FakeVerdictRequest {
+  const drawnFrom: FakeDrawnFrom = { photo: fingerprint(input.photo), pieces: input.pieces.map(fingerprintedPiece) };
+  if (input.draw === "first") return { ...input, ...drawnFrom, preview: fingerprint(input.preview) };
+  return { ...input, ...drawnFrom, first: fingerprint(input.first), redraw: fingerprint(input.redraw) };
+}
+
+/** The fake's verdict on a redraw nothing scripted: it breaks no hard rule, and shows the Outfit better than the first. */
+const UNSCRIPTED_REDRAW_VERDICT: RedrawVerdict = { breaksHardRule: false, better: "redraw", note: "The redraw shows your Outfit as it should." };
 
 /** The photo with a banner across its foot saying it's a fake Preview, as a PNG, as image models send. */
 async function withFakePreviewBanner(photo: Photo, label: string): Promise<Uint8Array> {

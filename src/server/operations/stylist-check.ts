@@ -65,10 +65,13 @@ export interface StylistTurn {
 export class StylistCheckAi implements AiProvider {
   /** Every turn of the Stylist's, oldest first, across every Styling the check runs on it. */
   readonly turns: StylistTurn[] = [];
+  /** Judges each Preview on the app's own AI, as it is. */
+  readonly judgePreview: AiProvider["judgePreview"];
   private drawer: (input: PreviewInput) => Promise<PreviewResult>;
 
   constructor(private readonly ai: AiProvider) {
     this.drawer = (input) => ai.renderPreview(input);
+    this.judgePreview = ai.judgePreview.bind(ai);
   }
 
   /** Does `work`, drawing every Preview meanwhile with `drawer`, then goes back to the one before. */
