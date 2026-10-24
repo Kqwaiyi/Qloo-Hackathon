@@ -104,7 +104,7 @@ describe("switching real AI on", () => {
 });
 
 describe("the fake AI's scenario", () => {
-  it.each(["style-icon-passed-over", "second-brand"])("may be the fake Stylist's %s, picked with FAKE_AI_SCENARIO", (scenario) => {
+  it.each(["style-icon-passed-over", "second-brand", "preview-redrawn", "preview-unfixable"])("may be the fake Stylist's %s, picked with FAKE_AI_SCENARIO", (scenario) => {
     vi.stubEnv("AI_PROVIDER", "");
     vi.stubEnv("FAKE_AI_SCENARIO", scenario);
 

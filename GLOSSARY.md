@@ -54,7 +54,7 @@ One submitted photo together with every Outfit and Preview generated from it; ke
 _Avoid_: session, analysis, scan
 
 **Outfit**:
-The unit the app recommends: one coordinated set of Pieces, one per Category the Photo Type unlocks (a One-Piece covers Top and Bottom together), inspired by a single Style Icon and shown with a single Preview, or none when the image model declines to make one.
+The unit the app recommends: one coordinated set of Pieces, one per Category the Photo Type unlocks (a One-Piece covers Top and Bottom together), inspired by a single Style Icon and shown with a single Preview, or none when the image model declines to make one or the Stylist finds both its tries break a hard rule.
 _Avoid_: look, recommendation (ambiguous between an Outfit and one of its Pieces)
 
 **Category**:

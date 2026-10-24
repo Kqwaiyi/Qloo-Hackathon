@@ -36,11 +36,34 @@ export const PREVIEW_STATES = ["pending", "ready", "refused", "failed"] as const
 export type PreviewState = (typeof PREVIEW_STATES)[number];
 
 /**
- * Why the image model refused a Preview: it blocked the request, stopped for image safety, or
- * answered in text with no image.
+ * Why a Preview was refused: the image model blocked the request, stopped for image safety, or
+ * answered in text with no image; or the Stylist kept neither of its images (`not_kept`), as both
+ * broke a hard rule.
  */
-export const PREVIEW_REFUSAL_REASONS = ["blocked", "image_safety", "no_image"] as const;
+export const PREVIEW_REFUSAL_REASONS = ["blocked", "image_safety", "no_image", "not_kept"] as const;
 export type PreviewRefusalReason = (typeof PREVIEW_REFUSAL_REASONS)[number];
+
+/** Why the image model refused a Preview, as it says: never `not_kept`, which is the Stylist's. */
+export type ImageModelRefusalReason = Exclude<PreviewRefusalReason, "not_kept">;
+
+/**
+ * Where an Outfit's one redraw of its Preview is: drawing, drawn, refused by the image model, or
+ * failed; then kept, once the Stylist keeps the first image, the redraw or neither. An Outfit never
+ * redrawn has none. A redraw not kept by the time its Styling finishes leaves the Outfit with no
+ * Preview, as nobody chose which of its images shows the user as they are.
+ */
+export const PREVIEW_REDRAW_STATES = ["pending", "ready", "refused", "failed", "kept"] as const;
+export type PreviewRedrawState = (typeof PREVIEW_REDRAW_STATES)[number];
+
+/** How a redraw came out, as the step that drew it saves it. */
+export type PreviewRedrawOutcome = Extract<PreviewRedrawState, "ready" | "refused" | "failed">;
+
+/** Which of a redrawn Preview's images the Stylist keeps: the first, the redraw, or neither. */
+export const KEPT_PREVIEWS = ["first", "redraw", "none"] as const;
+export type KeptPreview = (typeof KEPT_PREVIEWS)[number];
+
+/** A correction the Stylist sends with a redraw longer than this many characters is refused: it's one sentence. */
+export const PREVIEW_CORRECTION_MAX_LENGTH = 300;
 
 /**
  * Where a Piece's search in the product search is: under way, answered (with the Products that

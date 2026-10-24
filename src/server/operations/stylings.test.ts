@@ -353,9 +353,14 @@ describe("each Outfit's Pieces", () => {
     await harness.stylings.runPending();
 
     const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
-    for (const { brief, images } of harness.ai.stylistRequests) {
+    // Seller photos reach it only once a Preview is drawn, for it to check, after every Outfit is saved.
+    const picking = harness.ai.stylistRequests.filter(({ toolResults }) => !toolResults.some(({ toolName }) => toolName === "renderPreview"));
+    expect(picking.length).toBeGreaterThan(1);
+    expect(picking.at(-1)!.toolResults.filter(({ toolName }) => toolName === "saveOutfit")).toHaveLength(1);
+    for (const { brief, images, links } of picking) {
       expect(brief).toEqual({ styling: "First Styling", photo: "Full-Body Photo", pieces: ["Hairstyle", "Top", "Bottom", "Shoes"], photoStyle: ["casual"], ageGroup: "30–34", outfits: 2 });
       expect(images).toEqual([{ mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) }]);
+      expect(links).toEqual([]);
     }
     // Each Category's top 3 usable Brands, best first, with the Bottom's denim one first.
     expect(stylistToolResults("fetchBrands").map(({ output }) => output)).toEqual([

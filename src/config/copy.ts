@@ -84,6 +84,8 @@ export const COPY = {
   aiGeneratedPersonAlt: "AI-generated photo of a fictional person",
   previewRefused: "No Preview for this Outfit: the image model declined to make one",
   previewFailed: "No Preview for this Outfit: the image model couldn't make one",
+  /** When the AI Stylist kept neither of an Outfit's Preview and its redraw, as both broke a hard rule. */
+  previewNotKept: "No Preview for this Outfit: your AI Stylist couldn't get one that showed you as you are",
   everyPreviewRefused: "The image model declined this photo. A different photo may work better.",
   /** In place of "Show 2 more Outfits" once its Style Icons run out, or it failed. */
   everyOutfitBuilt: (suggestBudgetTier: boolean) => `That's every Outfit we can build for this photo. ${tryAnother(suggestBudgetTier)} for more.`,

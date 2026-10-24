@@ -30,6 +30,7 @@ import { USAGE_KINDS } from "../../config/limits";
 import type { ProductSearchMarket } from "../../config/product-search";
 import {
   PIECE_SEARCH_STATES,
+  PREVIEW_REDRAW_STATES,
   PREVIEW_REFUSAL_REASONS,
   PREVIEW_STATES,
   STYLE_ICON_STATUSES,
@@ -264,6 +265,7 @@ export const outfitLineEnum = pgEnum("outfit_line", LINES);
 export const styleIconStatusEnum = pgEnum("style_icon_status", STYLE_ICON_STATUSES);
 export const previewStateEnum = pgEnum("preview_state", PREVIEW_STATES);
 export const previewRefusalReasonEnum = pgEnum("preview_refusal_reason", PREVIEW_REFUSAL_REASONS);
+export const previewRedrawStateEnum = pgEnum("preview_redraw_state", PREVIEW_REDRAW_STATES);
 
 export const styling = pgTable(
   "styling",
@@ -361,8 +363,11 @@ export const outfit = pgTable(
     previewState: previewStateEnum("preview_state").notNull(),
     // The WebP in the private Blob store, once it's ready.
     previewPathname: text("preview_pathname"),
-    // Why the image model refused it, when it did.
+    // Why it was refused, when it was: by the image model, or by the Stylist, which kept neither image.
     previewRefusalReason: previewRefusalReasonEnum("preview_refusal_reason"),
+    // Where the Stylist's one redraw of the Preview is, once it asks for one. The redraw is kept in
+    // the private Blob store beside the Preview until the Stylist keeps one of them.
+    previewRedraw: previewRedrawStateEnum("preview_redraw"),
     // Body photos only: the Qloo entity ID of the Brand picked for each Brand Category, fixed as the
     // Outfit is saved and kept apart from the Pieces, so a Brand stays reserved even if no Piece shows
     // it: a One-Piece leaves out the Bottom Brand.

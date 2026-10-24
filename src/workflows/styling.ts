@@ -1,15 +1,18 @@
 import type { Line } from "@/config/accounts";
 import { PRODUCT_SEARCH_STEP_MAX_RETRIES } from "@/config/product-search";
 import { QLOO_STEP_MAX_RETRIES } from "@/config/qloo";
-import { PREVIEW_STEP_MAX_RETRIES, type PreviewState } from "@/config/stylings";
+import { PREVIEW_STEP_MAX_RETRIES } from "@/config/stylings";
 import type { Photo } from "@/server/ai/provider";
 import type { BrandToLookUp } from "@/server/outfit-assembly/brands";
 import type { QlooPerson } from "@/server/qloo/client";
 import {
   type BrandsFetched,
   type PeopleByLine,
+  type PreviewKept,
   type PreviewsStarted,
+  type PreviewToCheck,
   type ProductsSearched,
+  type RedrawToCheck,
   runStylist,
   type SavedOutfit,
   type StyleIconPassedOver,
@@ -48,6 +51,9 @@ export async function stylingWorkflow(stylingId: string): Promise<void> {
       startPreviews,
       openPreview,
       renderPreview,
+      openRedraw,
+      redrawPreview,
+      keepPreview,
       finish,
       saveNotes,
     },
@@ -161,14 +167,39 @@ async function openPreview(stylingId: string, outfit: number): Promise<StylistSt
 /**
  * One AI call, after fetching the Outfit's Product photos. A refusal is final; errors get the
  * retries, then the Preview is left to fail. A Product photo that still fails on the last try is
- * drawn from its title.
+ * drawn from its title. The Preview it drew goes into the Stylist's conversation, read from Blob
+ * here, so the run's data holds it while the Styling runs; the Product photos only by their links.
  */
-async function renderPreview(stylingId: string, outfitId: string): Promise<Extract<PreviewState, "ready" | "refused">> {
+async function renderPreview(stylingId: string, outfitId: string): Promise<PreviewToCheck> {
   "use step";
   const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
   return runWorkflowStep((steps) => steps.renderPreview(stylingId, outfitId), { maxRetries: PREVIEW_STEP_MAX_RETRIES });
 }
 renderPreview.maxRetries = PREVIEW_STEP_MAX_RETRIES;
+
+async function openRedraw(stylingId: string, input: unknown): Promise<StylistStepResult<{ outfitId: string; correction: string }>> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.openRedraw(stylingId, input));
+}
+
+/**
+ * One AI call, as for a Preview, with the Stylist's correction. A refusal is final; errors get the
+ * retries, then the redraw is left failed. The redraw goes into the Stylist's conversation, read from
+ * Blob here, so the run's data holds it while the Styling runs.
+ */
+async function redrawPreview(stylingId: string, outfitId: string, correction: string): Promise<RedrawToCheck> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.redrawPreview(stylingId, outfitId, correction), { maxRetries: PREVIEW_STEP_MAX_RETRIES });
+}
+redrawPreview.maxRetries = PREVIEW_STEP_MAX_RETRIES;
+
+async function keepPreview(stylingId: string, input: unknown): Promise<StylistStepResult<PreviewKept>> {
+  "use step";
+  const { runWorkflowStep } = await import("@/server/stylings/workflow-steps");
+  return runWorkflowStep((steps) => steps.keepPreview(stylingId, input));
+}
 
 async function finish(stylingId: string, outcome: StylingOutcome): Promise<void> {
   "use step";

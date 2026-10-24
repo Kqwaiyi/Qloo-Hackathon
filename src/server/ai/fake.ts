@@ -57,9 +57,13 @@ import type {
  *   once it has fetched its Brands for a body photo, and builds on the rest as usual.
  * - `second-brand`: each Outfit takes each Category's second Brand still in play, where it has one,
  *   rather than the first.
+ * - `preview-redrawn`: the Stylist finds its first Outfit's Preview wrong, redraws it with a
+ *   correction, and keeps the redraw, its banner saying so.
+ * - `preview-unfixable`: the Stylist finds its first Outfit's Preview wrong, redraws it, and finds
+ *   the redraw wrong too, so it keeps neither, leaving that Outfit with no Preview.
  *
- * A Preview is the user's own photo with a "Fake Preview" banner across its foot. Its scenarios
- * pass every photo and style as usual:
+ * A Preview is the user's own photo with a "Fake Preview" banner across its foot, or "Fake Preview,
+ * redrawn" for a redraw. Its scenarios pass every photo and style as usual:
  * - `preview-refused`: the image model refuses every Preview, for image safety.
  * - `preview-fails`: every Preview throws, as a model that keeps erroring without refusing does.
  */
@@ -80,6 +84,8 @@ export const FAKE_AI_SCENARIOS = [
   "tailoring-fails",
   "style-icon-passed-over",
   "second-brand",
+  "preview-redrawn",
+  "preview-unfixable",
   "preview-refused",
   "preview-fails",
 ] as const;
@@ -135,6 +141,11 @@ export class FakeAiProvider implements AiProvider {
   readonly previewRequests: FakePreviewRequest[] = [];
   /** Every turn its Stylist has been asked for, oldest first, with what each was sent. */
   readonly stylistRequests: FakeStylistRequest[] = [];
+  /**
+   * Whether its Stylist reads an image sent by its link as the link, as Claude could, rather than
+   * being sent the image itself. Claude's adapter takes every image inline, as a test may make it.
+   */
+  stylistReadsLinks = true;
   /** Plays the Stylist's turns a test scripts, in place of `scenario`'s: any it leaves undefined play as usual. */
   stylistTurn?: (request: FakeStylistRequest) => FakeStylistTurn | undefined;
   /** Runs during every call, as if the model were still working, so a test can look at a Styling part-way. */
@@ -162,7 +173,7 @@ export class FakeAiProvider implements AiProvider {
       // The conversation's first image is the photo.
       const scenario = this.scenarioOf(request.images[0]?.sha256);
       return this.stylistTurn?.(request) ?? fakeStylistTurn(request, (styleIcon) => this.styleIconScenarios[styleIcon.name] ?? stylistScenario(scenario, styleIcon));
-    });
+    }, { readsLinks: this.stylistReadsLinks });
   }
 
   async renderPreview(input: PreviewInput): Promise<PreviewResult> {
@@ -173,7 +184,7 @@ export class FakeAiProvider implements AiProvider {
     await this.wait("renderPreview");
     if (scenario === "preview-fails") throw new Error("The fake Preview failed, as its scenario asks.");
     if (scenario === "preview-refused") return { refused: true, reason: "image_safety" };
-    return { refused: false, image: await withFakePreviewBanner(photo) };
+    return { refused: false, image: await withFakePreviewBanner(photo, input.correction ? "Fake Preview, redrawn" : "Fake Preview") };
   }
 
   /** The scenario a Styling of the photo with this fingerprint plays: the one it was checked under, if kept, or `scenario`. */
@@ -196,15 +207,15 @@ function fingerprintedPiece(piece: PreviewPiece): FakePreviewPiece {
   return { ...piece, photo: piece.photo && fingerprint(piece.photo) };
 }
 
-/** The photo with a "Fake Preview" banner across its foot, as a PNG, as image models send. */
-async function withFakePreviewBanner(photo: Photo): Promise<Uint8Array> {
+/** The photo with a banner across its foot saying it's a fake Preview, as a PNG, as image models send. */
+async function withFakePreviewBanner(photo: Photo, label: string): Promise<Uint8Array> {
   const image = sharp(photo.bytes);
   const { width, height } = await image.metadata();
   const bannerHeight = Math.max(Math.round(height * 0.1), 12);
   const banner = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${bannerHeight}">
     <rect width="100%" height="100%" fill="#1c1917" fill-opacity="0.75"/>
     <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-family="sans-serif"
-      font-size="${Math.round(bannerHeight * 0.5)}" font-weight="600" fill="#ffffff">Fake Preview</text>
+      font-size="${Math.round(bannerHeight * 0.5)}" font-weight="600" fill="#ffffff">${label}</text>
   </svg>`;
   return new Uint8Array(await image.composite([{ input: Buffer.from(banner), gravity: "south" }]).png().toBuffer());
 }
@@ -253,6 +264,8 @@ function reportFor(scenario: Exclude<FakeAiScenario, "blocked" | "check-errors">
     case "tailoring-fails":
     case "style-icon-passed-over":
     case "second-brand":
+    case "preview-redrawn":
+    case "preview-unfixable":
     case "preview-refused":
     case "preview-fails":
       return passing;
@@ -269,6 +282,9 @@ function stylistScenario(scenario: FakeAiScenario, styleIcon: FakeScenarioStyleI
       return scenario;
     case "style-icon-passed-over":
       return styleIcon.first ? "passed-over" : "pass";
+    case "preview-redrawn":
+    case "preview-unfixable":
+      return styleIcon.first ? scenario : "pass";
     default:
       return "pass";
   }

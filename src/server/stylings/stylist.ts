@@ -1,15 +1,16 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { WorkflowAgent } from "@ai-sdk/workflow";
-import { hasToolCall, isStepCount, type ModelMessage, tool } from "ai";
+import { isStepCount, type ModelMessage, type Tool, tool } from "ai";
 import * as z from "zod";
 
 import type { Line } from "@/config/accounts";
-import { CATEGORY_LABELS } from "@/config/consultations";
+import { CATEGORY_LABELS, inASentence, type ProductCategory } from "@/config/consultations";
 import {
+  KEPT_PREVIEWS,
+  type KeptPreview,
   MAX_STYLIST_TURNS,
   PRODUCT_CALLS_AT_ONCE,
   PREVIEWS_AT_ONCE,
-  type PreviewState,
   QLOO_CALLS_AT_ONCE,
   TOP_BRANDS_PER_CATEGORY,
 } from "@/config/stylings";
@@ -29,6 +30,12 @@ import { STYLIST_PROMPT } from "./stylist-prompt";
 // Workflow's sandbox can load it.
 
 const WHY = 'One line of about 20 words, in English, to the user as "you", on why it suits them. Never a price.';
+
+/**
+ * The images a model may read by their links, as `supportedUrls` gives them: any at a web address.
+ * The conversation gives a Preview's Products' seller photos by their links (`SellerPhotoLink`).
+ */
+export const PHOTO_LINKS = { "image/*": [/^https?:\/\//] };
 
 /** A Product Piece as the Stylist saves it: one of the candidates its Brand's search found, by its id. */
 const productPieceSchema = z.object({
@@ -104,6 +111,26 @@ export const renderPreviewInputSchema = z.object({
 });
 export type RenderPreviewInput = z.infer<typeof renderPreviewInputSchema>;
 
+/** What redrawing a Preview takes: the Outfit's number, and the Stylist's one sentence on what to put right. */
+export const redrawPreviewInputSchema = z.object({
+  outfit: z.number().int().describe("The number of the Outfit whose Preview to redraw."),
+  correction: z
+    .string()
+    .describe(
+      'One sentence on what to put right, added to the Preview\'s own instruction, such as "Keep the face exactly as it is in the photo." About the Preview alone: never about the person\'s body, skin or face beyond whether the Preview changed them.',
+    ),
+});
+export type RedrawPreviewInput = z.infer<typeof redrawPreviewInputSchema>;
+
+/** What keeping a Preview takes: the Outfit's number, and which of its images to keep. */
+export const keepPreviewInputSchema = z.object({
+  outfit: z.number().int().describe("The number of the Outfit whose Preview to keep."),
+  keep: z
+    .enum(KEPT_PREVIEWS)
+    .describe('"first" for the Preview renderPreview drew, "redraw" for the one redrawPreview drew, or "none" only when both break a hard rule.'),
+});
+export type KeepPreviewInput = z.infer<typeof keepPreviewInputSchema>;
+
 /** What `findStyleIcons` gives the Stylist: the Style Icons it may use, in Qloo's order. */
 export interface FoundStyleIcons {
   styleIcons: StylistStyleIcon[];
@@ -153,10 +180,49 @@ export interface PreviewsStarted {
   outfits: number[];
 }
 
-/** What `renderPreview` gives the Stylist: whether the image model drew the Preview, declined, or failed. */
+/**
+ * A seller's own photo of one of a Preview's Products, by its link. The Stylist's model is sent the
+ * link, and a model that can't read a link fetches the photo inside its own step, so no step's
+ * input or output ever holds the photo (ADR-0011).
+ */
+export interface SellerPhotoLink {
+  category: ProductCategory;
+  /** The Product's title, as its seller gives it. */
+  title: string;
+  url: string;
+}
+
+/**
+ * A Preview as the step that drew it gives it back, for the Stylist to check: the image, read from
+ * Blob, and its Products' seller photos by their links. Or the image model's refusal, which is final.
+ */
+export type PreviewToCheck = { state: "ready"; image: Photo; sellerPhotos: SellerPhotoLink[] } | { state: "refused" };
+
+/**
+ * What `renderPreview` gives the Stylist: whether the image model drew the Preview, declined, or
+ * failed, and one it drew, to check, beside its Products' seller photos.
+ */
 export interface PreviewRendered {
   outfit: number;
   preview: "drawn" | "declined" | "failed";
+  image?: Photo;
+  sellerPhotos?: SellerPhotoLink[];
+}
+
+/** A redraw as the step that drew it gives it back, for the Stylist to check: the image, read from Blob, or the image model's refusal. */
+export type RedrawToCheck = { state: "ready"; image: Photo } | { state: "refused" };
+
+/** What `redrawPreview` gives the Stylist: whether the image model drew the redraw, declined, or failed, and one it drew, to check. */
+export interface PreviewRedrawn {
+  outfit: number;
+  redraw: "drawn" | "declined" | "failed";
+  image?: Photo;
+}
+
+/** What `keepPreview` gives the Stylist: the Outfit, and which of its images it kept. */
+export interface PreviewKept {
+  outfit: number;
+  kept: KeptPreview;
 }
 
 /** What one of the Stylist's tool steps came to: its result, or why it refused. */
@@ -238,11 +304,33 @@ export interface StylistSteps {
   openPreview(stylingId: string, outfit: number): Promise<StylistStepResult<{ outfitId: string }>>;
   /**
    * One AI call: fetches the Outfit's Product photos, then renders its Preview and saves it, or
-   * saves its refusal, which is final, returning which. Throws on errors worth retrying, leaving the
-   * Preview pending, as when a Product photo can't be fetched before the step's last try; on that
-   * last try, its Product is drawn from its title instead.
+   * saves its refusal, which is final, returning which, as `PreviewToCheck` describes. Throws on
+   * errors worth retrying, leaving the Preview pending, as when a Product photo can't be fetched
+   * before the step's last try; on that last try, its Product is drawn from its title instead.
    */
-  renderPreview(stylingId: string, outfitId: string): Promise<Extract<PreviewState, "ready" | "refused">>;
+  renderPreview(stylingId: string, outfitId: string): Promise<PreviewToCheck>;
+  /**
+   * The ID of one of the Styling's saved Outfits, by its number, whose Preview is to redraw, as
+   * `redrawPreviewInputSchema` describes it, with its correction, trimmed. It marks the Outfit's one
+   * redraw used, so a second is refused. Refused before the Previews start, for an Outfit it hasn't
+   * saved, or whose Preview wasn't drawn, and for a correction that's empty or longer than a sentence.
+   */
+  openRedraw(stylingId: string, input: unknown): Promise<StylistStepResult<{ outfitId: string; correction: string }>>;
+  /**
+   * One AI call: redraws an Outfit's Preview as `renderPreview` draws it, with the correction added
+   * to its instruction, and saves the redraw beside the Preview, or saves its refusal, which is
+   * final, returning which, as `RedrawToCheck` describes. Throws on errors worth retrying; on the
+   * step's last try, it saves that the redraw failed.
+   */
+  redrawPreview(stylingId: string, outfitId: string, correction: string): Promise<RedrawToCheck>;
+  /**
+   * Keeps one of a redrawn Outfit's images, as `keepPreviewInputSchema` describes it: the first,
+   * the redraw, which becomes the Outfit's Preview, or neither, which leaves the Outfit with no
+   * Preview, as a refusal does. Either way the one not kept is deleted. The first of a Preview never
+   * redrawn is kept already; anything else is refused before a redraw, and so is keeping a redraw the
+   * image model didn't draw. Kept already, there's nothing left to do.
+   */
+  keepPreview(stylingId: string, input: unknown): Promise<StylistStepResult<PreviewKept>>;
   /**
    * Switches in the Outfits made all at once, marking any Preview not ready failed, or fails the
    * Styling if it made none.
@@ -282,7 +370,8 @@ export async function runStylist(stylingId: string, steps: StylistSteps, model: 
       // The model chooses among its tools, never forced to call one: some models skip their thinking when they are.
       tools: run.tools,
       activeTools: toolsFor(brief),
-      stopWhen: [isStepCount(MAX_STYLIST_TURNS), hasToolCall("finish"), () => run.broken !== null],
+      // It stops once finish has gone through, not on a finish refused.
+      stopWhen: [isStepCount(MAX_STYLIST_TURNS), () => run.finished, () => run.broken !== null],
       // A turn whose tools ran has saved its notes already.
       onStepEnd: (step) => notes.save(step.stepNumber + 1, textsOf(step.content)),
     });
@@ -319,6 +408,8 @@ function toolsFor(brief: StylistBrief): StylistToolName[] {
     "saveOutfit",
     "startPreviews",
     "renderPreview",
+    "redrawPreview",
+    "keepPreview",
     "finish",
   ];
 }
@@ -400,6 +491,12 @@ function stylistTools(stylingId: string, steps: StylistSteps, notes: TurnNoteSav
   const productCalls = atMost(PRODUCT_CALLS_AT_ONCE);
   const previewsAtOnce = atMost(PREVIEWS_AT_ONCE);
   const drawing = new Set<number>();
+  // The Outfits whose Preview is being redrawn, which none of its images may be kept from meanwhile;
+  // those whose Preview has been redrawn, which may be redrawn no more; and of those, the ones whose
+  // images the Stylist has yet to keep one of, which the Styling may not finish before.
+  const redrawing = new Set<number>();
+  const redrawn = new Set<number>();
+  const awaitingKeep = new Set<number>();
   // A Brand looked up, a Style Icon's Brands fetched, or a Piece searched for, for one tool call is
   // shared with any other asking for it meanwhile, so the product search and Qloo are asked once.
   const lookingUp = new Map<string, Promise<void>>();
@@ -524,7 +621,7 @@ function stylistTools(stylingId: string, steps: StylistSteps, notes: TurnNoteSav
     }),
     renderPreview: tool({
       description:
-        "Draws the Preview of one saved Outfit, by its number: the user's photo with the Outfit's Pieces on them. Draw each Outfit's once, after startPreviews.",
+        "Draws the Preview of one saved Outfit, by its number: the user's photo with the Outfit's Pieces on them. Draw each Outfit's once, after startPreviews. Gives the Preview it drew, then the seller's own photo of each of the Outfit's Products, for you to check it.",
       inputSchema: renderPreviewInputSchema,
       execute: afterTurnNotes(async ({ outfit }): Promise<PreviewRendered> => {
         const { outfitId } = await inOrder(async () => {
@@ -533,14 +630,66 @@ function stylistTools(stylingId: string, steps: StylistSteps, notes: TurnNoteSav
           drawing.add(outfit);
           return opened;
         });
-        const preview = await previewsAtOnce(() => renderPreviewOrPlaceholder(stylingId, outfitId, steps));
-        return { outfit, preview: preview === "ready" ? "drawn" : preview === "refused" ? "declined" : "failed" };
+        // One still failing after its retries leaves its Outfit with a placeholder, not a broken
+        // Styling: finishing marks it failed.
+        const drawn = await previewsAtOnce(() => orFailed("A Preview step", () => steps.renderPreview(stylingId, outfitId)));
+        if (drawn.state !== "ready") return { outfit, preview: drawnAs(drawn.state) };
+        return { outfit, preview: "drawn", image: drawn.image, sellerPhotos: drawn.sellerPhotos };
       }),
+      // Its own output, which the agent doesn't type through the notes it saves first.
+      toModelOutput: ({ output }) => previewContent(output as PreviewRendered),
+    }),
+    redrawPreview: tool({
+      description:
+        "Draws one Outfit's Preview again, by the Outfit's number, once you've checked it and found it wrong: as renderPreview drew it, with your correction added to its instruction. Each Outfit's Preview may be redrawn once. Gives the redraw, for you to check and then keep the better of the two with keepPreview.",
+      inputSchema: redrawPreviewInputSchema,
+      execute: afterTurnNotes(async (input): Promise<PreviewRedrawn> => {
+        const { outfitId, correction } = await inOrder(async () => {
+          // The step's own check would let a retry of it through.
+          if (redrawn.has(input.outfit)) throw new Refused(onlyOneRedraw(input.outfit));
+          const opened = unlessRefused(await orBreak(() => steps.openRedraw(stylingId, input)));
+          redrawn.add(input.outfit);
+          awaitingKeep.add(input.outfit);
+          redrawing.add(input.outfit);
+          return opened;
+        });
+        try {
+          // One still failing after its retries leaves the first, for the Stylist to keep or not.
+          const drawn = await previewsAtOnce(() => orFailed("A Preview's redraw step", () => steps.redrawPreview(stylingId, outfitId, correction)));
+          if (drawn.state !== "ready") return { outfit: input.outfit, redraw: drawnAs(drawn.state) };
+          return { outfit: input.outfit, redraw: "drawn", image: drawn.image };
+        } finally {
+          redrawing.delete(input.outfit);
+        }
+      }),
+      // Its own output, which the agent doesn't type through the notes it saves first.
+      toModelOutput: ({ output }) => redrawContent(output as PreviewRedrawn),
+    }),
+    keepPreview: tool({
+      description:
+        'Keeps one of a redrawn Outfit\'s Previews, by the Outfit\'s number: "first", "redraw", or "none" only when both break a hard rule, which leaves the Outfit with no Preview. A Preview you never redraw is kept as it is.',
+      inputSchema: keepPreviewInputSchema,
+      execute: afterTurnNotes(
+        (input): Promise<PreviewKept> =>
+          inOrder(async () => {
+            if (redrawing.has(input.outfit)) throw new Refused(`Outfit ${input.outfit}'s Preview is still being redrawn: keep one once you've seen it.`);
+            const kept = unlessRefused(await orBreak(() => steps.keepPreview(stylingId, input)));
+            awaitingKeep.delete(input.outfit);
+            return kept;
+          }),
+      ),
     }),
     finish: tool({
-      description: "Ends the Styling, once every saved Outfit's Preview is drawn. The Outfits you saved are then shown to the user.",
+      description:
+        "Ends the Styling, once every saved Outfit's Preview is drawn and checked, and any you redrew kept. The Outfits you saved are then shown to the user.",
       inputSchema: z.object({}),
       execute: afterTurnNotes(async () => {
+        // A redrawn Preview left unkept would leave its Outfit with none.
+        const toKeep = [...awaitingKeep].toSorted((a, b) => a - b);
+        if (toKeep.length > 0) {
+          const whose = toKeep.length === 1 ? `Outfit ${toKeep[0]}'s` : `Outfits ${inASentence(toKeep.map(String))}'`;
+          throw new Refused(`Keep one of ${whose} redrawn Previews first, with keepPreview.`);
+        }
         state.finished = true;
         return { finished: true };
       }),
@@ -577,16 +726,74 @@ async function findStyleIcons(
   await steps.saveStyleIcons(stylingId, peopleByLine);
 }
 
-/**
- * Renders one Outfit's Preview, returning how it came out. One still failing after its retries
- * leaves its Outfit with a placeholder, not a broken Styling: finishing marks it failed.
- */
-async function renderPreviewOrPlaceholder(stylingId: string, outfitId: string, steps: Pick<StylistSteps, "renderPreview">): Promise<PreviewState> {
+/** A Preview step's result, or that it failed, once it still fails after its retries. */
+async function orFailed<T>(step: string, draw: () => Promise<T>): Promise<T | { state: "failed" }> {
   try {
-    return await steps.renderPreview(stylingId, outfitId);
+    return await draw();
   } catch (error) {
-    console.error("A Preview step failed:", error instanceof Error ? error.message : "unknown error");
-    return "failed";
+    console.error(`${step} failed:`, error instanceof Error ? error.message : "unknown error");
+    return { state: "failed" };
+  }
+}
+
+/** How the Stylist is told a Preview, or its redraw, came out when there's no image: the image model declined, or it failed. */
+function drawnAs(state: "refused" | "failed"): "declined" | "failed" {
+  return state === "refused" ? "declined" : "failed";
+}
+
+/** Why a second redraw of an Outfit's Preview is refused. */
+export function onlyOneRedraw(outfit: number): string {
+  return `Outfit ${outfit}'s Preview has been redrawn once already, as often as it may be.`;
+}
+
+/**
+ * A Preview's result as the Stylist's model is shown it: what came of it, then the Preview it drew,
+ * then each of its Products' seller photos, by its link. A link that isn't one is left out.
+ */
+function previewContent({ image, sellerPhotos = [], ...result }: PreviewRendered): ToolModelOutput {
+  return toolContent(result, [
+    ...(image ? captioned(`Outfit ${result.outfit}'s Preview:`, imagePart(image)) : []),
+    ...sellerPhotos.flatMap(({ category, title, url }) => {
+      const link = linkOf(url);
+      return link
+        ? captioned(`The seller's own photo of its ${CATEGORY_LABELS[category]}, "${title}":`, { type: "file", mediaType: "image", data: { type: "url", url: link } })
+        : [];
+    }),
+  ]);
+}
+
+/** A redraw's result as the Stylist's model is shown it: what came of it, then the redraw it drew. */
+function redrawContent({ image, ...result }: PreviewRedrawn): ToolModelOutput {
+  return toolContent(result, image ? captioned(`Outfit ${result.outfit}'s redrawn Preview:`, imagePart(image)) : []);
+}
+
+/** A tool's output as JSON, before the files it gives the Stylist's model, each after its caption. */
+function toolContent(result: object, files: ToolContentPart[]): ToolModelOutput {
+  return { type: "content", value: [{ type: "text", text: JSON.stringify(result) }, ...files] };
+}
+
+/** A file, after a line of text saying what it is. */
+function captioned(caption: string, file: ToolContentPart): ToolContentPart[] {
+  return [{ type: "text", text: caption }, file];
+}
+
+/** What a tool gives the Stylist's model in place of its output, as JSON. */
+type ToolModelOutput = Awaited<ReturnType<NonNullable<Tool["toModelOutput"]>>>;
+
+/** One part of what a tool gives the Stylist's model: a line of text, or a file. */
+type ToolContentPart = Extract<ToolModelOutput, { type: "content" }>["value"][number];
+
+/** An image, as the conversation holds it: its own bytes. */
+function imagePart({ bytes, mediaType }: Photo): ToolContentPart {
+  return { type: "file", mediaType, data: { type: "data", data: bytes } };
+}
+
+/** The link, or null when it isn't one. */
+function linkOf(url: string): URL | null {
+  try {
+    return new URL(url);
+  } catch {
+    return null;
   }
 }
 

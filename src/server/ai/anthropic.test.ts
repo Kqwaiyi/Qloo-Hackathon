@@ -1,5 +1,5 @@
 import { WorkflowAgent } from "@ai-sdk/workflow";
-import { isStepCount, tool } from "ai";
+import { generateText, isStepCount, tool } from "ai";
 import { inspect } from "node:util";
 import { beforeEach, describe, expect, it } from "vitest";
 import * as z from "zod";
@@ -256,6 +256,25 @@ describe("the Stylist's model", () => {
     ]);
     expect(steps.flatMap(({ toolResults }) => toolResults.map(({ output }) => output))).toEqual([{ outfit: 1 }]);
     expect(anthropic.requests).toHaveLength(2);
+  });
+
+  it("sends Claude every image inline, never by its link, so a seller photo is fetched before Claude is asked", async () => {
+    anthropic.respond = () => anthropicText("All done.");
+    const sellerPhoto = new TextEncoder().encode("the bytes of a seller's photo of a top");
+    const asked: { url: string; isUrlSupportedByModel: boolean }[] = [];
+
+    await generateText({
+      model: ai.stylistModel(),
+      messages: [{ role: "user", content: [{ type: "text", text: BRIEF }, { type: "file", mediaType: "image", data: new URL("https://cdn.seller.example/top.png") }] }],
+      experimental_download: async (requests) =>
+        requests.map(({ url, isUrlSupportedByModel }) => {
+          asked.push({ url: url.toString(), isUrlSupportedByModel });
+          return { data: sellerPhoto, mediaType: "image/png" };
+        }),
+    });
+
+    expect(asked).toEqual([{ url: "https://cdn.seller.example/top.png", isUrlSupportedByModel: false }]);
+    expect(imagesOf(anthropic.requests[0]!)).toEqual([{ type: "image", source: { type: "base64", media_type: "image/png", data: base64(sellerPhoto) }, cache_control: { type: "ephemeral" } }]);
   });
 
   it("answers whole turns only: a streamed one is refused before anything is sent", async () => {

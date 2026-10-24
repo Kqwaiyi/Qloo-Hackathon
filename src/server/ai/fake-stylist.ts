@@ -4,11 +4,22 @@ import type {
   LanguageModelV4GenerateResult,
   LanguageModelV4Prompt,
   LanguageModelV4ToolResultOutput,
+  SharedV4FileData,
 } from "@ai-sdk/provider";
 import { createHash } from "node:crypto";
 
-import { BRAND_CATEGORIES, type BrandCategory, CATEGORY_LABELS, inASentence, type PhotoStyleWords, photoStyleText, type ProductCategory } from "@/config/consultations";
 import {
+  BRAND_CATEGORIES,
+  type BrandCategory,
+  CATEGORY_LABELS,
+  inASentence,
+  PHOTO_TYPE_LABELS,
+  type PhotoStyleWords,
+  photoStyleText,
+  type ProductCategory,
+} from "@/config/consultations";
+import {
+  type KeptPreview,
   MAX_BRAND_FETCHES_PER_STYLING,
   MAX_PRODUCT_SEARCHES_PER_STYLING,
   PRODUCT_CALLS_AT_ONCE,
@@ -16,16 +27,22 @@ import {
   TOP_BRANDS_PER_CATEGORY,
 } from "@/config/stylings";
 import { type BrandLists, firstBrandsInPlay } from "@/server/outfit-assembly/brands";
-import type {
-  BrandsFetched,
-  FoundStyleIcons,
-  ProductsSearched,
-  RenderPreviewInput,
-  SavedOutfit,
-  SaveOutfitInput,
-  SearchCategory,
-  SearchProductsInput,
-  StyleIconPassedOver,
+import {
+  type BrandsFetched,
+  type FoundStyleIcons,
+  type KeepPreviewInput,
+  PHOTO_LINKS,
+  type PreviewKept,
+  type PreviewRedrawn,
+  type PreviewRendered,
+  type ProductsSearched,
+  type RedrawPreviewInput,
+  type RenderPreviewInput,
+  type SavedOutfit,
+  type SaveOutfitInput,
+  type SearchCategory,
+  type SearchProductsInput,
+  type StyleIconPassedOver,
 } from "@/server/stylings/stylist";
 import { readStylistBrief, type StylistBrief, type StylistStyleIcon } from "@/server/stylings/stylist-brief";
 
@@ -37,6 +54,12 @@ import { readStylistBrief, type StylistBrief, type StylistStyleIcon } from "@/se
 export interface FakeImage {
   mediaType: string;
   sha256: string;
+}
+
+/** A file the fake was sent by its link, which it reads as a link, never fetching it. */
+export interface FakeLink {
+  mediaType: string;
+  url: string;
 }
 
 /** One tool call the Stylist made in an earlier turn, and what came back: its output, or the error it read. */
@@ -56,8 +79,10 @@ export interface FakeStylistRequest {
   instructions: string;
   /** The brief in the conversation's first message, or null when there's none. */
   brief: StylistBrief | null;
-  /** Every image in the conversation, in order. */
+  /** Every image in the conversation, in order: the photo in its first message, then any a tool gave back, such as a Preview. */
   images: FakeImage[];
+  /** Every file the conversation gives by its link, in order, such as a Preview's Products' seller photos. */
+  links: FakeLink[];
   /** The tools offered this turn, by name. */
   tools: string[];
   /** Every earlier tool call and what came back, in order. */
@@ -77,9 +102,20 @@ export interface FakeStylistCall {
 export type FakeStylistTurn = { calls: FakeStylistCall[]; text?: string } | { text: string } | { refused: true };
 
 /** How the fake plays the Stylist for one Style Icon's Outfit: making the fixed pipeline's choices, or one of its scenarios. */
-export type FakeStylistScenario = "pass" | "one-piece" | "unknown-cut" | "tailoring-fails" | "passed-over" | "second-brand";
+export type FakeStylistScenario =
+  | "pass"
+  | "one-piece"
+  | "unknown-cut"
+  | "tailoring-fails"
+  | "passed-over"
+  | "second-brand"
+  | "preview-redrawn"
+  | "preview-unfixable";
 
-/** A Style Icon the fake picks a scenario for: by its name, and whether it's the first the Styling may use. */
+/**
+ * A Style Icon the fake picks a scenario for: by its name, and whether it's the first the Styling may
+ * use, or for a Preview, whether its Outfit is the Styling's first.
+ */
 export interface FakeScenarioStyleIcon {
   name: string;
   first: boolean;
@@ -92,13 +128,17 @@ export interface FakeScenarioStyleIcon {
  */
 const BRAND_FETCHES_UP_FRONT = 3;
 
-/** A fake model whose every turn is what `play` makes of what it was sent. */
-export function fakeStylistModel(play: (request: FakeStylistRequest) => Promise<FakeStylistTurn>): LanguageModelV4 {
+/**
+ * A fake model whose every turn is what `play` makes of what it was sent. Unless `readsLinks` is
+ * false, it reads an image sent by its link as the link, as Claude could, never fetching it; when it
+ * doesn't, it's sent the image itself.
+ */
+export function fakeStylistModel(play: (request: FakeStylistRequest) => Promise<FakeStylistTurn>, { readsLinks = true } = {}): LanguageModelV4 {
   return {
     specificationVersion: "v4",
     provider: "fake",
     modelId: "fake-stylist",
-    supportedUrls: {},
+    supportedUrls: readsLinks ? PHOTO_LINKS : {},
     async doGenerate(options) {
       const request = requestOf(options);
       return resultOf(request.turn, await play(request));
@@ -124,6 +164,11 @@ export function fakeStylistModel(play: (request: FakeStylistRequest) => Promise<
  * - `passed-over`: it passes over the Style Icon, saying why, in place of its Outfit: for a body
  *   photo, once it has fetched its Brands.
  * - `second-brand`: each Category's second Brand still in play, where it has one, not its first.
+ * - `preview-redrawn`: its Outfit's Preview, once drawn, is redrawn with a correction, and the redraw
+ *   kept, or the first when the image model drew no redraw.
+ * - `preview-unfixable`: its Outfit's Preview, once drawn, is redrawn with a correction, and neither
+ *   image kept.
+ * Any other keeps each Preview as it was first drawn.
  *
  * Each turn, before its tool calls, it writes a note to the user on what they're for, one line for
  * each kind of tool it calls (`fakeNotes`).
@@ -149,7 +194,48 @@ function fakeStylistCalls(request: FakeStylistRequest, scenarioFor: (styleIcon: 
   const drawn = new Set(succeeded(request, "renderPreview").map((result) => (result.input as RenderPreviewInput).outfit));
   const toDraw = saved.map((result) => (result.output as SavedOutfit).outfit).filter((outfit) => !drawn.has(outfit));
   if (toDraw.length > 0) return toDraw.map((outfit) => ({ tool: "renderPreview", input: { outfit } }));
+  const checking = previewCheckCalls(request, scenarioFor);
+  if (checking.length > 0) return checking;
   return [{ tool: "finish", input: {} }];
+}
+
+/**
+ * The redraws and keeps of the Previews drawn, as each Outfit's scenario plays them: an Outfit whose
+ * scenario is `preview-redrawn` or `preview-unfixable` has its Preview redrawn, once, with the fake's
+ * correction, then keeps the redraw, or for `preview-unfixable`, neither image. Any other keeps its
+ * Preview as it was drawn, needing no call, and so does one whose redraw was refused.
+ */
+function previewCheckCalls(request: FakeStylistRequest, scenarioFor: (styleIcon: FakeScenarioStyleIcon) => FakeStylistScenario): FakeStylistCall[] {
+  const saved = succeeded(request, "saveOutfit").map((result) => ({
+    outfit: (result.output as SavedOutfit).outfit,
+    styleIcon: (result.input as SaveOutfitInput).styleIcon,
+  }));
+  const nameOf = new Map(styleIconsOf(request).map((icon) => [icon.number, icon.name]));
+  const firstOutfit = Math.min(...saved.map(({ outfit }) => outfit));
+  const scenarioOf = (outfit: number) => {
+    const styleIcon = saved.find((savedOutfit) => savedOutfit.outfit === outfit)?.styleIcon;
+    return scenarioFor({ name: (styleIcon !== undefined && nameOf.get(styleIcon)) || "", first: outfit === firstOutfit });
+  };
+  const redrawsTried = new Set(request.toolResults.flatMap(({ toolName, input }) => (toolName === "redrawPreview" ? [(input as RedrawPreviewInput).outfit] : [])));
+  const redrawn = new Map(succeeded(request, "redrawPreview").map(({ output }) => [(output as PreviewRedrawn).outfit, (output as PreviewRedrawn).redraw]));
+  const kept = new Set(succeeded(request, "keepPreview").map(({ output }) => (output as PreviewKept).outfit));
+  return succeeded(request, "renderPreview").flatMap(({ output }): FakeStylistCall[] => {
+    const { outfit, preview } = output as PreviewRendered;
+    const scenario = scenarioOf(outfit);
+    if (preview !== "drawn" || (scenario !== "preview-redrawn" && scenario !== "preview-unfixable")) return [];
+    if (!redrawsTried.has(outfit)) return [{ tool: "redrawPreview", input: { outfit, correction: fakeCorrection(request) } }];
+    const redraw = redrawn.get(outfit);
+    if (redraw === undefined || kept.has(outfit)) return [];
+    const keep: KeptPreview = scenario === "preview-unfixable" ? "none" : redraw === "drawn" ? "redraw" : "first";
+    return [{ tool: "keepPreview", input: { outfit, keep } }];
+  });
+}
+
+/** The fake's correction for a redraw: about a face added to a Body-Only Photo, or a face changed on any other. */
+function fakeCorrection(request: FakeStylistRequest): string {
+  return request.brief?.photo === PHOTO_TYPE_LABELS.body_only
+    ? "Never add a face or a head where the photo shows none."
+    : "Keep the person's face exactly as it is in their photo.";
 }
 
 /** The Style Icons the Stylist builds from: those it found, or its brief's. */
@@ -191,6 +277,16 @@ function fakeNotes(request: FakeStylistRequest, calls: readonly FakeStylistCall[
         const outfits = inputsOf<RenderPreviewInput>(tool).flatMap(({ outfit }) => (outfit === undefined ? [] : [String(outfit)]));
         return outfits.length === 1 ? `I'm drawing the Preview of Outfit ${outfits[0]}.` : `I'm drawing the Previews of Outfits ${inASentence(outfits)}.`;
       }
+      case "redrawPreview": {
+        const outfits = inputsOf<RedrawPreviewInput>(tool).flatMap(({ outfit }) => (outfit === undefined ? [] : [String(outfit)]));
+        return outfits.length === 1
+          ? `Outfit ${outfits[0]}'s Preview doesn't show you as you are in your photo, so I'm drawing it again.`
+          : `The Previews of Outfits ${inASentence(outfits)} don't show you as you are in your photo, so I'm drawing them again.`;
+      }
+      case "keepPreview":
+        return inputsOf<KeepPreviewInput>(tool)
+          .flatMap(({ outfit, keep }) => (outfit === undefined || keep === undefined ? [] : [KEEP_NOTES[keep](outfit)]))
+          .join("\n");
       case "finish":
         return succeeded(request, "saveOutfit").length > 0 ? "Your Outfits are ready." : "I couldn't make an Outfit for you this time.";
       default:
@@ -199,6 +295,13 @@ function fakeNotes(request: FakeStylistRequest, calls: readonly FakeStylistCall[
   };
   return [...new Set(calls.map((call) => call.tool))].flatMap((tool) => note(tool) ?? []).join("\n");
 }
+
+/** The fake's note on keeping one of a redrawn Preview's images, by which. */
+const KEEP_NOTES: Record<KeptPreview, (outfit: number) => string> = {
+  first: (outfit) => `The first Preview of Outfit ${outfit} shows you better, so I'm keeping it.`,
+  redraw: (outfit) => `The redrawn Preview of Outfit ${outfit} shows you as you are, so I'm keeping it.`,
+  none: (outfit) => `Neither Preview of Outfit ${outfit} shows you as you are, so I'm leaving it without one.`,
+};
 
 /** Passing over a Style Icon, with the fake's reason: about its signature cut, or for a body photo, its Brands. */
 function passOverCall(request: FakeStylistRequest, icon: StylistStyleIcon): FakeStylistCall {
@@ -496,22 +599,26 @@ function requestOf({ prompt, tools = [] }: LanguageModelV4CallOptions): FakeStyl
     turn: prompt.filter((message) => message.role === "assistant").length + 1,
     instructions: prompt.flatMap((message) => (message.role === "system" ? [message.content] : [])).join("\n"),
     brief: firstText?.type === "text" ? readStylistBrief(firstText.text) : null,
-    images: imagesIn(prompt),
+    images: filesIn(prompt).flatMap(({ mediaType, data }) => {
+      if (data.type !== "data") return [];
+      const bytes = typeof data.data === "string" ? Buffer.from(data.data, "base64") : data.data;
+      return [{ mediaType, sha256: createHash("sha256").update(bytes).digest("hex") }];
+    }),
+    links: filesIn(prompt).flatMap(({ mediaType, data }) => (data.type === "url" ? [{ mediaType, url: data.url.toString() }] : [])),
     tools: tools.map((offered) => offered.name),
     toolResults: toolResultsIn(prompt),
   };
 }
 
-function imagesIn(prompt: LanguageModelV4Prompt): FakeImage[] {
-  return prompt.flatMap((message) =>
-    message.role === "user"
-      ? message.content.flatMap((part) => {
-          if (part.type !== "file" || part.data.type !== "data") return [];
-          const bytes = typeof part.data.data === "string" ? Buffer.from(part.data.data, "base64") : part.data.data;
-          return [{ mediaType: part.mediaType, sha256: createHash("sha256").update(bytes).digest("hex") }];
-        })
-      : [],
-  );
+/** Every file in the conversation, in order: in the user's messages, and in what tools gave back. */
+function filesIn(prompt: LanguageModelV4Prompt): { mediaType: string; data: SharedV4FileData }[] {
+  return prompt.flatMap((message) => {
+    if (message.role === "user") return message.content.flatMap((part) => (part.type === "file" ? [part] : []));
+    if (message.role !== "tool") return [];
+    return message.content.flatMap((part) =>
+      part.type === "tool-result" && part.output.type === "content" ? part.output.value.flatMap((item) => (item.type === "file" ? [item] : [])) : [],
+    );
+  });
 }
 
 function toolResultsIn(prompt: LanguageModelV4Prompt): FakeStylistToolResult[] {
@@ -544,8 +651,11 @@ function outputOf(output: LanguageModelV4ToolResultOutput): { output: unknown; e
       return { output: null, error: JSON.stringify(output.value) };
     case "execution-denied":
       return { output: null, error: output.reason ?? "denied" };
-    case "content":
-      return { output: output.value, error: null };
+    case "content": {
+      // What came of the call is its first text, as JSON, before any images it gave back.
+      const first = output.value.find((item) => item.type === "text");
+      return { output: first?.type === "text" ? JSON.parse(first.text) : output.value, error: null };
+    }
   }
 }
 

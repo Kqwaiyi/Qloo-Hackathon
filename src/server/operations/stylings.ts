@@ -219,7 +219,11 @@ export interface StylingProgressView {
 /** One entry of the Stylist's Notes: a note the Stylist wrote to the user, or a step our code wrote for one of its tool calls. */
 export type StylistNoteView = StylistNoteEntry;
 
-/** "Generating Previews (n of N)": the Previews done so far, of the Outfits the Styling will make. */
+/**
+ * "Generating Previews (n of N)": the Previews kept, refused or failed so far, of the Outfits the
+ * Styling will make. A Preview the Stylist redraws stays counted while it's redrawn, so a redraw
+ * never moves it.
+ */
 export interface PreviewsProgress {
   done: number;
   of: number;

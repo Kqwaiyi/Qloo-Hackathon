@@ -1,7 +1,7 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 
 import type { PhotoStyleWords, PhotoType, ProductCategory } from "@/config/consultations";
-import type { PreviewRefusalReason } from "@/config/stylings";
+import type { ImageModelRefusalReason } from "@/config/stylings";
 
 // Our own AI provider interface (spec: "AI provider interface"). The domain depends only on this,
 // never on a provider: only the Stylist's model is one of the AI SDK's own, since the AI SDK's
@@ -71,10 +71,15 @@ export interface PreviewInput {
   photoType: PhotoType;
   /** The Pieces the user is shown wearing, in Category order: only these change. */
   pieces: readonly PreviewPiece[];
+  /**
+   * A redraw's: the Stylist's one sentence on what an earlier try got wrong, added to the Preview's
+   * own instruction, never in its place. None on a first try.
+   */
+  correction?: string;
 }
 
 /** The image the model drew, in whatever format it sent, or its refusal and why. */
-export type PreviewResult = { refused: false; image: Uint8Array } | { refused: true; reason: PreviewRefusalReason };
+export type PreviewResult = { refused: false; image: Uint8Array } | { refused: true; reason: ImageModelRefusalReason };
 
 /**
  * An AI call that failed in a way asking again can't change, such as a request the provider
@@ -98,10 +103,13 @@ export interface AiProvider {
    *
    * It answers whole turns, through `doGenerate`, and is configured for the Stylist: the prompt,
    * the tools and the conversation's first message, the brief and the photo, never change within a
-   * Styling, so a real model caches them. Nothing of its thinking comes back but what the model
-   * needs given back. A turn it refuses comes back with finish reason content-filter and no tool
-   * calls. A turn that fails throws an error with nothing of the request in it: one worth retrying
-   * for the AI SDK's retries, or an `UnretryableAiError`.
+   * Styling, so a real model caches them. Each Preview the Stylist checks comes back from its tool as
+   * its image, and its Products' seller photos by their links: a model whose `supportedUrls` don't
+   * cover a link is sent the photo itself, fetched inside its model step (`stylistModelOn`).
+   * Nothing of its thinking comes back but what the model needs given back. A turn it refuses comes
+   * back with finish reason content-filter and no tool calls. A turn that fails throws an error with
+   * nothing of the request in it: one worth retrying for the AI SDK's retries, or an
+   * `UnretryableAiError`.
    */
   stylistModel(): LanguageModelV4;
   /**

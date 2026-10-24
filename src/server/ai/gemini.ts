@@ -114,8 +114,9 @@ function productPhotos(pieces: readonly PreviewPiece[]): Photo[] {
  * Product by its seller's photo, named by its image, or by its title when it has none, on the
  * Main Person alone, named only as the most prominent person (ADR-0009). Keep everything else,
  * everyone else in the photo included. It never names the Style Icon, which the Preview isn't told.
+ * A redraw's correction follows it all, so every rule still holds.
  */
-function previewInstruction({ photoType, pieces }: PreviewInput): string {
+function previewInstruction({ photoType, pieces, correction }: PreviewInput): string {
   const changesHair = pieces.some(({ category }) => category === "hairstyle");
   // The user's photo is image 1; the Product photos follow it, as the request sends them.
   const photos = productPhotos(pieces);
@@ -160,5 +161,6 @@ function previewInstruction({ photoType, pieces }: PreviewInput): string {
     ...(photoType === "body_only"
       ? ["", "If any part of their face is visible, leave it exactly as it is. Never add a face or a head that isn't in the photo."]
       : []),
+    ...(correction ? ["", "An earlier try at this edit got something wrong. Put it right, keeping every rule above:", oneLine(correction)] : []),
   ].join("\n");
 }

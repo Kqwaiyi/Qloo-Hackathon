@@ -2,7 +2,7 @@ import { and, asc, eq, gt, inArray, max, ne, notInArray } from "drizzle-orm";
 
 import { type PhotoStyleWords, photoStyleText, type ProductCategory } from "@/config/consultations";
 import { countryInSentence } from "@/config/countries";
-import { STYLIST_NOTE_MAX_LENGTH, type StylistNoteKind } from "@/config/stylings";
+import { type KeptPreview, type PreviewRedrawOutcome, STYLIST_NOTE_MAX_LENGTH, type StylistNoteKind } from "@/config/stylings";
 import type { Database, Transaction } from "@/server/db/database";
 import { outfit, styling, stylistNote } from "@/server/db/schema";
 
@@ -160,4 +160,16 @@ export const STEPS = {
   previewDrawn: (outfit: number, drawn: boolean) => (drawn ? `Drew Outfit ${outfit}'s Preview` : `The image model declined to draw Outfit ${outfit}'s Preview`),
   /** One Preview not drawn by the time its Styling finished, as when the image model kept failing. */
   previewFailed: (outfit: number) => `Couldn't draw Outfit ${outfit}'s Preview`,
+  /** The Stylist's one redraw of a Preview: drawn, declined by the image model, or still failing after its retries. */
+  previewRedrawn: (outfit: number, outcome: PreviewRedrawOutcome) =>
+    outcome === "ready"
+      ? `Redrew Outfit ${outfit}'s Preview`
+      : outcome === "refused"
+        ? `The image model declined to redraw Outfit ${outfit}'s Preview`
+        : `Couldn't redraw Outfit ${outfit}'s Preview`,
+  /** Which of a redrawn Preview's images the Stylist kept: its first, its redraw, or neither. */
+  previewKept: (outfit: number, kept: KeptPreview) =>
+    kept === "none" ? `Left Outfit ${outfit} without a Preview` : `Kept Outfit ${outfit}'s ${kept === "first" ? "first" : "redrawn"} Preview`,
+  /** A redrawn Preview none of whose images the Stylist kept before its Styling ended. */
+  previewLeftUnkept: (outfit: number) => `Left Outfit ${outfit} without a Preview, as the Styling ended before one of its two was kept`,
 };

@@ -19,7 +19,7 @@ import {
   type PriceRangeUsd,
   SIGNED_LINK_LIFETIME_SECONDS,
 } from "@/config/consultations";
-import type { PreviewState, StylingFailureReason } from "@/config/stylings";
+import type { PreviewRefusalReason, PreviewState, StylingFailureReason } from "@/config/stylings";
 import { needsPhotoConsent, photoConsentStands, recordPhotoConsent } from "@/server/accounts/photo-consent";
 import type { PhotoCheckResult } from "@/server/ai/provider";
 import type { BlobStore } from "@/server/blob/store";
@@ -277,8 +277,11 @@ export interface OutfitView {
 /** What an Outfit's card shows beside its Preview. */
 export type OutfitCardContent = Pick<OutfitView, "position" | "styleIconName" | "total" | "leftOutOfTotal" | "pieces">;
 
-/** The Outfit's Preview: a signed link to it, valid for 1 hour from now, or why there's none. */
-export type PreviewView = { state: "ready"; url: string } | { state: "refused" | "failed" };
+/**
+ * The Outfit's Preview: a signed link to it, valid for 1 hour from now, or why there's none: refused,
+ * by the image model or by the AI Stylist, which kept neither of its images, or failed.
+ */
+export type PreviewView = { state: "ready"; url: string } | { state: "refused"; by: "image-model" | "stylist" } | { state: "failed" };
 
 /**
  * A Piece's row, as its viewer is shown it: every price in whole units of the currency of the
@@ -443,6 +446,7 @@ export async function readConsultation(
       styleIconName: styleIcon.name,
       previewState: outfit.previewState,
       previewPathname: outfit.previewPathname,
+      previewRefusalReason: outfit.previewRefusalReason,
     })
     .from(outfit)
     .innerJoin(styleIcon, eq(styleIcon.id, outfit.styleIconId))
@@ -467,11 +471,11 @@ export async function readConsultation(
   };
   const outfits = await Promise.all(
     outfitRows.map(
-      async ({ id, position, styleIconName, previewState, previewPathname }): Promise<OutfitView> => ({
+      async ({ id, position, styleIconName, previewState, previewPathname, previewRefusalReason }): Promise<OutfitView> => ({
         id,
         position,
         styleIconName,
-        preview: await previewView(ctx.blob, previewState, previewPathname, linkValidUntil),
+        preview: await previewView(ctx.blob, { previewState, previewPathname, previewRefusalReason }, linkValidUntil),
         ...piecesAsShown(
           pieceRows
             .filter((pieceRow) => pieceRow.outfitId === id)
@@ -491,7 +495,7 @@ export async function readConsultation(
     photoStyle: row.photoStyle,
     state: row.state,
     outfits,
-    everyPreviewRefused: outfits.length > 0 && outfits.every((outfitView) => outfitView.preview.state === "refused"),
+    everyPreviewRefused: outfits.length > 0 && outfits.every(({ preview }) => preview.state === "refused" && preview.by === "image-model"),
     everyOutfitBuilt: !(await hasCurrentStyleIconLeft(ctx.db, row.id)),
     failedStyling: await failedStylingView(ctx.db, await readLatestFailedStyling(ctx.db, row.id)),
     // Outfits are shown in the order their Stylings made them, so each Styling's first is oldest first.
@@ -616,11 +620,15 @@ export function signedLinkValidUntil(clock: Clock): Date {
 
 async function previewView(
   blob: BlobStore,
-  state: PreviewState,
-  pathname: string | null,
+  {
+    previewState: state,
+    previewPathname: pathname,
+    previewRefusalReason: reason,
+  }: { previewState: PreviewState; previewPathname: string | null; previewRefusalReason: PreviewRefusalReason | null },
   validUntil: Date,
 ): Promise<PreviewView> {
   if (state === "ready" && pathname) return { state, url: await blob.signedUrl(pathname, validUntil) };
+  if (state === "refused") return { state, by: reason === "not_kept" ? "stylist" : "image-model" };
   // Finishing a Styling marks every Preview not ready failed, so a current Outfit's is never pending.
-  return { state: state === "refused" ? "refused" : "failed" };
+  return { state: "failed" };
 }

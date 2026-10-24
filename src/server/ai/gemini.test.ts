@@ -182,6 +182,18 @@ describe("Previews", () => {
     expect(text).toContain("- their hair, and anything covering it");
   });
 
+  it("adds a redraw's correction after the whole of the Preview's own instruction, which it never replaces", async () => {
+    gemini.respond = () => geminiImage(DRAWN);
+    await ai.renderPreview(PREVIEW);
+    const instruction = textOf(gemini.requests[0]!);
+
+    await ai.renderPreview({ ...PREVIEW, correction: "  Keep the face exactly\nas it is in the photo.  " });
+
+    const redraw = gemini.requests[1]!;
+    expect(textOf(redraw)).toBe(`${instruction}\n\nAn earlier try at this edit got something wrong. Put it right, keeping every rule above:\nKeep the face exactly as it is in the photo.`);
+    expect(photoPartsOf(redraw)).toEqual(photoPartsOf(gemini.requests[0]!));
+  });
+
   it("comes back refused as blocked when Google blocks the request, without asking again", async () => {
     gemini.respond = () => geminiPromptBlocked("PROHIBITED_CONTENT");
 

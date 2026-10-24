@@ -95,9 +95,12 @@ const STYLIST_OPTIONS = {
  * log can see it: one worth retrying still is, for those retries, and one Anthropic will give again
  * is an UnretryableAiError. A turn Claude refuses comes back as a refusal, its finish reason
  * content-filter, with none of the tool calls it had written so far, so nothing it asked for runs.
- * Turns are whole: nothing streams one, which couldn't take back a refused turn's tool calls.
+ * Turns are whole: nothing streams one, which couldn't take back a refused turn's tool calls. Every
+ * image goes inline, as its own bytes: it reads none by its link, so a seller photo sent by its link
+ * is fetched before Claude is asked, by whatever calls it.
  */
 const STYLIST_MIDDLEWARE: LanguageModelMiddleware = {
+  overrideSupportedUrls: () => ({}),
   transformParams: async ({ params }) => ({
     ...params,
     prompt: withStablePrefixCached(params.prompt),

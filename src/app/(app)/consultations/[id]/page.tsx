@@ -158,7 +158,7 @@ function OutfitPreview({ preview, styleIconName }: { preview: PreviewView; style
   if (preview.state !== "ready") {
     return (
       <p className="flex min-h-32 items-center justify-center bg-stone-100 p-6 text-center text-sm text-stone-600 @2xl:aspect-[3/4] @2xl:w-64 @2xl:shrink-0 @2xl:self-start">
-        {preview.state === "refused" ? COPY.previewRefused : COPY.previewFailed}
+        {preview.state === "failed" ? COPY.previewFailed : preview.by === "stylist" ? COPY.previewNotKept : COPY.previewRefused}
       </p>
     );
   }

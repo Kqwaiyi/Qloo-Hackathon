@@ -221,15 +221,19 @@ export default function Page() {
             each one and read its Photo Style, and runs your AI Stylist. As your AI Stylist, it gets with your photo only what
             it needs to make your Outfits: the Photo Type, your age group, the Photo Style, the Style Icons&apos; names,
             whether each Outfit is menswear or womenswear, the Brands, and the names, descriptions and colours of the
-            Brands&apos; Products to pick from. It never gets your username, email or Country, and gets your Budget Tier only
-            when you change it.
+            Brands&apos; Products to pick from. To check each Preview, it also gets the Preview, any redraw of it, and the
+            seller&apos;s own photo of each of its Products, fetched by the photo&apos;s link (see{" "}
+            <a href="#previews" className={textLink}>
+              Previews are AI-generated
+            </a>
+            ). It never gets your username, email or Country, and gets your Budget Tier only when you change it.
             Anthropic deletes what it gets within 30 days, but keeps anything its trust and safety team flags as breaking its
             usage policy for up to 2 years. It doesn&apos;t use any of it to train its models.
           </li>
           <li>
             <strong>Google&apos;s Gemini</strong>, our other AI provider, gets your photos as our processor. With each one it
-            gets only what it needs to draw an Outfit&apos;s Preview: the Photo Type, the Hairstyle&apos;s cut, and the names
-            and sellers&apos; photos of the Products picked (see{" "}
+            gets only what it needs to draw an Outfit&apos;s Preview: the Photo Type, the Hairstyle&apos;s cut, the names and
+            sellers&apos; photos of the Products picked, and for a redraw, your AI Stylist&apos;s note on what to put right (see{" "}
             <a href="#previews" className={textLink}>
               Previews are AI-generated
             </a>
@@ -332,7 +336,7 @@ export default function Page() {
             <strong>Workflow run data</strong>, Vercel&apos;s record of each Styling&apos;s steps: while a Styling runs, it
             holds your photo, its Previews and the AI Stylist&apos;s conversation, with the Style Icons and the Pieces&apos;
             text, all encrypted. None of it can be read once the Styling ends, and every copy is gone within 36 days. It
-            never holds the Product photos themselves.
+            holds the Product photos only by their links, never the photos themselves.
           </li>
           <li>
             <strong>Database backups</strong>: Neon&apos;s restore window keeps earlier states of the database for 6 hours.
@@ -419,7 +423,7 @@ export default function Page() {
               />
               <PhotoScheduleRow where="Runtime logs, which never hold the images" gone="Within a day" />
               <PhotoScheduleRow
-                where="Anthropic's copy of the photo"
+                where="Anthropic's copy of the photo and Previews"
                 gone="Within 30 days of being sent, or up to 2 years if its trust and safety team flags it"
               />
               <PhotoScheduleRow
@@ -438,10 +442,17 @@ export default function Page() {
           not a photo of you in the real clothes.
         </p>
         <p className={paragraph}>
+          Your AI Stylist checks each Preview against your photo and its Products&apos; photos. When one is wrong, it has it
+          drawn once more, with a note on what to put right, and keeps the better of the two. When neither shows you as you
+          are, it leaves that Outfit without a Preview.
+        </p>
+        <p className={paragraph}>
           Each Product in a Preview is drawn from its seller&apos;s own photo of it, or from its name when that photo
           can&apos;t be fetched. To draw a Preview, the app fetches those photos and sends them to Google&apos;s Gemini with
-          your photo. It fetches them only while it draws the Preview, and never keeps them: no Product photo is stored with
-          your photos, in our database or in our logs.
+          your photo. Once your AI Stylist has the Preview to check, the app fetches them again, by their links, each time
+          it sends Anthropic&apos;s Claude the Styling&apos;s conversation with the Preview in it, until the Styling ends. It
+          fetches them only to send them, and never keeps them: no Product photo is stored with your photos, in our
+          database, in our logs or in a Styling&apos;s run data, which holds only their links.
         </p>
       </LegalSection>
 
