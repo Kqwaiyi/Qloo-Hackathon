@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 
@@ -7,13 +7,14 @@ import type { ProductSearchMarket } from "@/config/product-search";
 import {
   addsToCurrentOutfits,
   isStuck,
+  type KeptPreview,
   PREVIEW_REDRAW_STATES,
   type PreviewRedrawOutcome,
   type PreviewRefusalReason,
   stylingLimitsFor,
   type StylingStage,
 } from "@/config/stylings";
-import { type AiProvider, isPhotoMediaType, type Photo, type PreviewPiece, type PreviewResult, UnretryableAiError } from "@/server/ai/provider";
+import { type AiProvider, type FirstDrawToJudge, isPhotoMediaType, type Photo, type PreviewPiece, type PreviewResult, UnretryableAiError } from "@/server/ai/provider";
 import type { BlobStore } from "@/server/blob/store";
 import type { Clock } from "@/server/clock";
 import { previewPathnameFor, previewRedrawPathnameFor } from "@/server/consultations/blob-pathnames";
@@ -29,8 +30,9 @@ import type { QlooClient } from "@/server/qloo/client";
 import { recordUsage } from "@/server/usage/records";
 
 import { readBuildingBeside } from "./current-outfits";
-import type { PreviewToCheck, SellerPhotoLink, StylingOutcome, StylistSteps } from "./stylist";
-import { addSteps, deleteStylistNotesNoLongerShown, STEPS } from "./stylist-notes";
+import type { PreviewSteps } from "./preview-phase";
+import type { StylingOutcome, StylistSteps } from "./stylist";
+import { addSteps, addStylistNotes, checkedNote, deleteStylistNotesNoLongerShown, STEPS } from "./stylist-notes";
 
 /** What the steps run on. The Workflow gives them the app's services; tests give them fakes. */
 export interface StylingContext {
@@ -71,10 +73,10 @@ export interface StepTry {
   lastTry?: boolean;
 }
 
-/** The steps every Styling shares, whatever its photo, running on `ctx`, as this try of them. */
+/** The steps every Styling shares, whatever its photo, its Preview phase's among them, running on `ctx`, as this try of them. */
 export type SharedStylingSteps = Pick<
   StylistSteps,
-  "ranksStyleIcons" | "styleIconLines" | "fetchStyleIcons" | "saveStyleIcons" | "renderPreview" | "redrawPreview" | "finish"
+  "ranksStyleIcons" | "styleIconLines" | "fetchStyleIcons" | "saveStyleIcons" | keyof PreviewSteps | "finish"
 >;
 
 /** The steps every Styling shares, running on `ctx`, as this try of them. */
@@ -123,21 +125,24 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
       });
     },
 
+    async startPreviews(stylingId) {
+      return whileRunning(ctx.db, stylingId, async (tx) => {
+        const [running] = await tx.select({ stage: styling.stage }).from(styling).where(eq(styling.id, stylingId));
+        const made = await tx.select({ id: outfit.id }).from(outfit).where(eq(outfit.stylingId, stylingId)).orderBy(asc(outfit.position));
+        // One that saved no Outfit has no Previews to make: it fails as it finishes. A retry after
+        // the move went through has nothing left to move.
+        if (made.length > 0 && running?.stage !== "previews") await moveStage(tx, ctx.clock, stylingId, "previews");
+        return made.map(({ id }) => id);
+      });
+    },
+
     async renderPreview(stylingId, outfitId) {
       const toRender = await readOutfitToRender(ctx.db, stylingId, outfitId);
-      const pieces = await readPiecesToDraw(ctx.db, outfitId);
-      // The Preview drawn goes back to the Stylist to check, read from Blob, beside its Products'
-      // seller photos by their links, never the photos themselves.
-      const toCheck = async (pathname: string): Promise<PreviewToCheck> => ({
-        state: "ready",
-        image: await readPhoto(ctx.blob, pathname),
-        sellerPhotos: sellerPhotoLinks(pieces),
-      });
       // A retry after the save went through has nothing left to draw. Only finishing marks a Preview failed.
-      if (toRender.previewState !== "pending") return toRender.previewPathname ? toCheck(toRender.previewPathname) : { state: "refused" };
+      if (toRender.previewState !== "pending") return toRender.previewPathname ? "ready" : "refused";
       let preview: PreviewResult;
       try {
-        preview = await drawPreview(ctx, { lastTry }, toRender, pieces);
+        preview = await drawPreview(ctx, { lastTry }, toRender, await readPiecesToDraw(ctx.db, outfitId));
       } catch (error) {
         // Still failing on the last try, or failing for good, the Outfit is left without a Preview, as the Stylist's Notes say.
         if (lastTry || error instanceof UnretryableAiError) await savePreviewFailed(ctx.db, stylingId, outfitId).catch(() => {});
@@ -145,21 +150,27 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
       }
       if (preview.refused) {
         await savePreview(ctx.db, stylingId, outfitId, { previewState: "refused", previewRefusalReason: preview.reason });
-        return { state: "refused" };
+        return "refused";
       }
       const pathname = previewPathnameFor(toRender.consultationId, outfitId);
       await storePreview(ctx, stylingId, pathname, preview.image, () =>
         savePreview(ctx.db, stylingId, outfitId, { previewState: "ready", previewPathname: pathname }),
       );
-      return toCheck(pathname);
+      return "ready";
     },
 
-    async redrawPreview(stylingId, outfitId, correction) {
+    async judgeFirstDraw(stylingId, outfitId) {
+      const toJudge = await readOutfitToRender(ctx.db, stylingId, outfitId);
+      if (!toJudge.previewPathname) throw new Error(`Outfit ${outfitId} has no Preview to judge.`);
+      const [drawnFrom, preview] = await Promise.all([previewDrawnFrom(ctx, { lastTry }, outfitId, toJudge), readPhoto(ctx.blob, toJudge.previewPathname)]);
+      return ctx.ai.judgePreview({ draw: "first", ...drawnFrom, preview });
+    },
+
+    async redrawPreview(stylingId, outfitId, { correction, note }) {
+      await openRedraw(ctx.db, stylingId, outfitId, note);
       const toRender = await readOutfitToRender(ctx.db, stylingId, outfitId);
-      const pathname = previewRedrawPathnameFor(toRender.consultationId, outfitId);
       // A retry after the save went through has nothing left to draw.
-      if (toRender.previewRedraw === "ready") return { state: "ready", image: await readPhoto(ctx.blob, pathname) };
-      if (toRender.previewRedraw === "refused") return { state: "refused" };
+      if (toRender.previewRedraw === "ready" || toRender.previewRedraw === "refused") return toRender.previewRedraw;
       if (toRender.previewRedraw !== "pending") throw new Error(`Outfit ${outfitId} has no redraw of its Preview to draw.`);
       let preview: PreviewResult;
       try {
@@ -171,15 +182,50 @@ export function stylingSteps(ctx: StylingContext, { lastTry = true }: StepTry = 
       }
       if (preview.refused) {
         await saveRedraw(ctx.db, stylingId, outfitId, "refused");
-        return { state: "refused" };
+        return "refused";
       }
+      const pathname = previewRedrawPathnameFor(toRender.consultationId, outfitId);
       await storePreview(ctx, stylingId, pathname, preview.image, () => saveRedraw(ctx.db, stylingId, outfitId, "ready"));
-      return { state: "ready", image: await readPhoto(ctx.blob, pathname) };
+      return "ready";
+    },
+
+    async judgeRedraw(stylingId, outfitId, firstVerdict) {
+      const toJudge = await readOutfitToRender(ctx.db, stylingId, outfitId);
+      if (!toJudge.previewPathname || toJudge.previewRedraw !== "ready") throw new Error(`Outfit ${outfitId} has no redraw of its Preview to judge.`);
+      const [drawnFrom, first, redraw] = await Promise.all([
+        previewDrawnFrom(ctx, { lastTry }, outfitId, toJudge),
+        readPhoto(ctx.blob, toJudge.previewPathname),
+        readPhoto(ctx.blob, previewRedrawPathnameFor(toJudge.consultationId, outfitId)),
+      ]);
+      return ctx.ai.judgePreview({ draw: "redraw", ...drawnFrom, first, redraw, firstVerdict });
+    },
+
+    async keepPreview(stylingId, outfitId, { kept, note }) {
+      const toDelete = await whileRunning(ctx.db, stylingId, async (tx) => {
+        const [saved] = await tx
+          .select({ consultationId: outfit.consultationId, position: outfit.position, previewRedraw: outfit.previewRedraw })
+          .from(outfit)
+          .where(and(eq(outfit.id, outfitId), eq(outfit.stylingId, stylingId)));
+        if (!saved) throw new Error(`Styling ${stylingId} has no Outfit ${outfitId}.`);
+        const images = { first: previewPathnameFor(saved.consultationId, outfitId), redraw: previewRedrawPathnameFor(saved.consultationId, outfitId) };
+        // A retry after the keep went through has nothing left to keep, but the images not kept to delete.
+        if (saved.previewRedraw !== "kept") {
+          await tx.update(outfit).set(KEEPS[kept].saved(images)).where(eq(outfit.id, outfitId));
+          const shown = note === undefined ? null : checkedNote(note);
+          await addStylistNotes(tx, stylingId, [
+            ...(shown ? [{ kind: "note" as const, text: shown }] : []),
+            { kind: "step", text: STEPS.previewKept(saved.position, kept) },
+          ]);
+        }
+        return KEEPS[kept].notKept(images);
+      });
+      // Once the keep is saved, the images not kept go, as no Outfit shows them.
+      await Promise.all(toDelete.map((pathname) => ctx.blob.delete(pathname)));
     },
 
     async finish(stylingId, outcome) {
       await finishStyling(ctx, stylingId, outcome);
-      // A redrawn Preview none of whose images the Stylist kept is left without a Preview as its
+      // A redrawn Preview neither of whose images was kept is left without a Preview as its
       // Styling finishes, so both images go. A retry deletes them again, which does no harm.
       const unkept = await ctx.db
         .select({ id: outfit.id, consultationId: outfit.consultationId })
@@ -226,9 +272,7 @@ async function readPiecesToDraw(db: Database, outfitId: string) {
 
 /**
  * One AI call drawing an Outfit's Preview from the photo and its Pieces, with a redraw's correction.
- * Each Product's photo is fetched here, inside the step, so no image passes between steps, and goes
- * to the model inline. One that can't be fetched fails a try the step will retry, before the model is
- * asked, as it may come then; on the last try, its Product is drawn from its title instead.
+ * Each Product's photo is fetched here, inside the step, as `previewPieces` fetches it.
  */
 async function drawPreview(
   ctx: StylingContext,
@@ -237,22 +281,7 @@ async function drawPreview(
   pieces: Awaited<ReturnType<typeof readPiecesToDraw>>,
   correction?: string,
 ): Promise<PreviewResult> {
-  const productPhoto = async (category: PieceCategory, url: string): Promise<Photo | null> => {
-    try {
-      return await ctx.productPhotos.fetch(url);
-    } catch (error) {
-      const failure = `The ${CATEGORY_LABELS[category]}'s Product photo couldn't be fetched: ${error instanceof Error ? error.message : "unknown error"}`;
-      if (!lastTry) throw new Error(failure);
-      console.warn(`${failure} It's drawn from its title.`);
-      return null;
-    }
-  };
-  const drawn = await Promise.all(
-    pieces.toSorted(byCategoryOrder).map(async ({ category, item, details, productPhotoUrl }): Promise<PreviewPiece> => {
-      if (category === "hairstyle") return { category, details: details ?? item };
-      return { category, title: item, photo: productPhotoUrl ? await productPhoto(category, productPhotoUrl) : null };
-    }),
-  );
+  const drawn = await previewPieces(ctx, { lastTry }, pieces);
   // Never the Style Icon: only what the user is shown wearing.
   return ctx.ai.renderPreview({
     photo: await readPhoto(ctx.blob, toRender.photoPathname),
@@ -260,6 +289,50 @@ async function drawPreview(
     pieces: drawn,
     ...(correction && { correction }),
   });
+}
+
+/**
+ * What every verdict on an Outfit's Preview is given: what the Preview was drawn from, the photo read
+ * from Blob and the Pieces as `previewPieces` gives them, here, inside the verdict's step, so no image
+ * passes between steps.
+ */
+async function previewDrawnFrom(
+  ctx: StylingContext,
+  { lastTry }: { lastTry: boolean },
+  outfitId: string,
+  { photoPathname, photoType, hairCovered }: { photoPathname: string; photoType: PhotoType; hairCovered: boolean },
+): Promise<Omit<FirstDrawToJudge, "draw" | "preview">> {
+  const [photo, pieces] = await Promise.all([readPhoto(ctx.blob, photoPathname), previewPieces(ctx, { lastTry }, await readPiecesToDraw(ctx.db, outfitId))]);
+  return { photo, photoType, hairCovered, pieces };
+}
+
+/**
+ * An Outfit's Pieces as a Preview is drawn and judged from them, in Category order. Each Product's
+ * photo is fetched here, inside the step, so no image passes between steps, and goes to the model
+ * inline. One that can't be fetched fails a try the step will retry, before the model is asked, as
+ * it may come then; on the last try, its Product goes by its title alone.
+ */
+async function previewPieces(
+  ctx: Pick<StylingContext, "productPhotos">,
+  { lastTry }: { lastTry: boolean },
+  pieces: Awaited<ReturnType<typeof readPiecesToDraw>>,
+): Promise<PreviewPiece[]> {
+  const productPhoto = async (category: PieceCategory, url: string): Promise<Photo | null> => {
+    try {
+      return await ctx.productPhotos.fetch(url);
+    } catch (error) {
+      const failure = `The ${CATEGORY_LABELS[category]}'s Product photo couldn't be fetched: ${error instanceof Error ? error.message : "unknown error"}`;
+      if (!lastTry) throw new Error(failure);
+      console.warn(`${failure} It goes by its title.`);
+      return null;
+    }
+  };
+  return Promise.all(
+    pieces.toSorted(byCategoryOrder).map(async ({ category, item, details, productPhotoUrl }): Promise<PreviewPiece> => {
+      if (category === "hairstyle") return { category, details: details ?? item };
+      return { category, title: item, photo: productPhotoUrl ? await productPhoto(category, productPhotoUrl) : null };
+    }),
+  );
 }
 
 /** Stores a Preview the image model drew at `pathname`, as WebP, then saves it with `save`. */
@@ -278,6 +351,46 @@ async function storePreview(ctx: StylingContext, stylingId: string, pathname: st
     throw error;
   }
 }
+
+/**
+ * Opens an Outfit's one redraw of its Preview, as drawn, and adds the note of the verdict that found
+ * it wrong, checked like any note, dropped silently when it can't be kept. A redraw opened already is
+ * never opened again, so a retry adds no note, and no Preview is redrawn twice.
+ */
+async function openRedraw(db: Database, stylingId: string, outfitId: string, note: string): Promise<void> {
+  await whileRunning(db, stylingId, async (tx) => {
+    const [opened] = await tx
+      .update(outfit)
+      .set({ previewRedraw: "pending" })
+      .where(and(eq(outfit.id, outfitId), eq(outfit.previewState, "ready"), isNull(outfit.previewRedraw)))
+      .returning({ id: outfit.id });
+    const shown = checkedNote(note);
+    if (opened && shown) await addStylistNotes(tx, stylingId, [{ kind: "note", text: shown }]);
+  });
+}
+
+/** Where a redrawn Preview's two images are in the private Blob store. */
+interface RedrawnPreviewImages {
+  first: string;
+  redraw: string;
+}
+
+/**
+ * What keeping each of a redrawn Preview's images comes to: what its Outfit saves, and which of the
+ * images then go, as no Outfit shows them. Keeping neither leaves the Outfit with no Preview, as a
+ * refusal does.
+ */
+const KEEPS: Record<
+  KeptPreview,
+  { saved: (images: RedrawnPreviewImages) => Partial<typeof outfit.$inferInsert>; notKept: (images: RedrawnPreviewImages) => string[] }
+> = {
+  first: { saved: () => ({ previewRedraw: "kept" }), notKept: ({ redraw }) => [redraw] },
+  redraw: { saved: ({ redraw }) => ({ previewRedraw: "kept", previewPathname: redraw }), notKept: ({ first }) => [first] },
+  none: {
+    saved: () => ({ previewRedraw: "kept", previewState: "refused", previewPathname: null, previewRefusalReason: "not_kept" }),
+    notKept: ({ first, redraw }) => [first, redraw],
+  },
+};
 
 /** Saves how an Outfit's pending redraw came out, with its step in the Stylist's Notes, only while its Styling runs. */
 async function saveRedraw(db: Database, stylingId: string, outfitId: string, outcome: PreviewRedrawOutcome): Promise<void> {
@@ -319,7 +432,7 @@ async function savePreviewFailed(db: Database, stylingId: string, outfitId: stri
   });
 }
 
-/** Where a redraw is until the Stylist keeps one of its Preview's images. */
+/** Where a redraw is until the Preview phase keeps one of its Preview's images. */
 const UNKEPT_REDRAWS = PREVIEW_REDRAW_STATES.filter((state) => state !== "kept");
 
 /**
@@ -331,10 +444,10 @@ export type StylingFinish = StylingOutcome | "stuck";
 /**
  * Finishes a running Styling, returning whether it did. Whatever Outfits it made switch in at once,
  * after any it adds to, and the Consultation is ready; a Preview not ready by then never will be, so
- * it's marked failed, as is one the Stylist redrew without keeping either image (the finish step
- * deletes those images). One that made none has failed, as nothing could be built if its steps all
- * completed, and otherwise as broken: nothing switches, and the Consultation keeps whatever it
- * showed before, or shows No Outfits. A Styling that isn't running any more is left as it is, and
+ * it's marked failed, as is one redrawn without either image kept (the finish step deletes those
+ * images). One that made none has failed, as nothing could be built if its steps all completed,
+ * and otherwise as broken: nothing switches, and the Consultation keeps whatever it showed before,
+ * or shows No Outfits. A Styling that isn't running any more is left as it is, and
  * so is one finishing as stuck whose stage has moved since it was found.
  */
 export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, stylingId: string, how: StylingFinish): Promise<boolean> {
@@ -361,14 +474,12 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
         .update(outfit)
         .set({ previewState: "failed" })
         .where(and(eq(outfit.stylingId, stylingId), eq(outfit.previewState, "pending")));
-      // Nor will one the Stylist redrew without keeping either image, as when it ran out of turns:
-      // nobody chose which shows the user as they are. The Stylist's Notes say so.
-      const unkept = await tx
+      // Nor will one redrawn without either image kept, as when the Styling finished as stuck
+      // before its Preview phase kept one: nothing chose which shows the user as they are.
+      await tx
         .update(outfit)
         .set({ previewState: "failed", previewPathname: null })
-        .where(and(eq(outfit.stylingId, stylingId), inArray(outfit.previewRedraw, UNKEPT_REDRAWS)))
-        .returning({ position: outfit.position });
-      await addSteps(tx, stylingId, ...unkept.toSorted((a, b) => a.position - b.position).map(({ position }) => STEPS.previewLeftUnkept(position)));
+        .where(and(eq(outfit.stylingId, stylingId), inArray(outfit.previewRedraw, UNKEPT_REDRAWS)));
       // Any other replaces the current Outfits, and with them their Style Icons.
       if (!addsToCurrentOutfits(running.kind)) {
         await tx
@@ -442,14 +553,10 @@ export async function readRunningStyling(db: Database, stylingId: string) {
   return { ...running, limits: stylingLimitsFor(onDemoAccount) };
 }
 
-/** The links to the seller photos of an Outfit's Products, in Piece order: those that have one. */
-function sellerPhotoLinks(pieces: readonly { category: PieceCategory; item: string; productPhotoUrl: string | null }[]): SellerPhotoLink[] {
-  return pieces
-    .toSorted(byCategoryOrder)
-    .flatMap(({ category, item, productPhotoUrl }) => (category !== "hairstyle" && productPhotoUrl ? [{ category, title: item, url: productPhotoUrl }] : []));
-}
-
-/** What one Outfit's Preview is rendered from, and whether it, or its redraw, is still to render. Throws if the Styling isn't running. */
+/**
+ * What one Outfit's Preview is rendered and judged from, and whether it, or its redraw, is still to
+ * render. Throws if the Styling isn't running.
+ */
 async function readOutfitToRender(db: Database, stylingId: string, outfitId: string) {
   const [row] = await db
     .select({
@@ -459,6 +566,7 @@ async function readOutfitToRender(db: Database, stylingId: string, outfitId: str
       previewRedraw: outfit.previewRedraw,
       photoPathname: consultation.photoPathname,
       photoType: consultation.photoType,
+      hairCovered: consultation.hairCovered,
     })
     .from(outfit)
     .innerJoin(styling, eq(styling.id, outfit.stylingId))

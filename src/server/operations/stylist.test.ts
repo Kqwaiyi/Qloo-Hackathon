@@ -5,7 +5,6 @@ import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { PhotoType } from "@/config/consultations";
-import type { KeptPreview } from "@/config/stylings";
 import type { FakeStylistRequest, FakeStylistTurn } from "@/server/ai/fake-stylist";
 import { brandMatch, consultation, outfit, piece, qlooCache, styleIcon, styling, stylistNote, usageRecord } from "@/server/db/schema";
 import { deleteAccount } from "@/server/operations/account";
@@ -62,23 +61,26 @@ beforeEach(async () => {
   harness.ai.stylistRequests.length = 0;
   harness.ai.stylistTurn = undefined;
   harness.ai.previewRequests.length = 0;
+  harness.ai.previewScenarios = [];
+  harness.ai.verdictRequests.length = 0;
+  harness.ai.previewVerdicts = [];
   harness.ai.duringCall = undefined;
   harness.ai.styleIconScenarios = {};
   harness.stylings.pending.length = 0;
+  harness.stylings.previewRetries = 0;
   harness.qloo.requests.length = 0;
   harness.qloo.respond = qlooAnswering(WOMEN);
   harness.channel3.requests.length = 0;
   harness.channel3.respond = channel3SellingEveryBrand();
   harness.productPhotos.requests.length = 0;
   harness.productPhotos.respond = (url) => productPhoto(url);
-  harness.ai.stylistReadsLinks = true;
   await harness.db.delete(qlooCache);
   await harness.db.delete(brandMatch);
   await harness.db.delete(usageRecord);
 });
 
 describe("the Stylist's conversation", () => {
-  it("holds the photo once, as the first message gave it, on every turn, before any Preview", async () => {
+  it("holds the photo once, as the first message gave it, on every turn, and no other image", async () => {
     const browser = await signedInUser();
     const consultationId = await start(browser);
 
@@ -87,9 +89,9 @@ describe("the Stylist's conversation", () => {
     const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
     const photo = { mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) };
     expect(harness.ai.stylistRequests.length).toBeGreaterThan(1);
-    for (const request of harness.ai.stylistRequests) {
-      expect(request.images[0]).toEqual(photo);
-      expect(request.images.filter(({ sha256 }) => sha256 === photo.sha256)).toHaveLength(1);
+    for (const { images, links } of harness.ai.stylistRequests) {
+      expect(images).toEqual([photo]);
+      expect(links).toEqual([]);
     }
     expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.styleIconName)).toEqual([
       "Ava Stone",
@@ -168,24 +170,19 @@ describe("the Stylist's prompt", () => {
     expect(prompt).toMatch(/writeNote is only for these notes/i);
   });
 
-  it("says what to check in each Preview, against the photo and the Products' seller photos, and lists the hard rules", async () => {
+  it("has the Stylist save every Outfit it'll make, then finish, leaving each Preview to be drawn and checked once it has", async () => {
     const prompt = await promptSent();
 
-    expect(prompt).toMatch(/check each Preview beside the person's photo and the seller's own photo of each of the Outfit's Products/i);
-    expect(prompt).toMatch(/each Piece is the one you saved/i);
-    expect(prompt).toMatch(/on a Body-Only Photo, no face or head is added/i);
-    expect(prompt).toMatch(/the hard rules: a changed or invented face, a removed or changed head covering, and anyone else in the photo changed/i);
-    expect(prompt).toMatch(/redraw it once, with redrawPreview/i);
-    expect(prompt).toMatch(/keep whichever of the two is better/i);
-    expect(prompt).toMatch(/keep none only when both break a hard rule/i);
+    expect(prompt).toMatch(/finish: once you've saved every Outfit you'll make, call it/i);
+    expect(prompt).toMatch(/each Outfit's Preview is drawn and checked for you/i);
+    expect(prompt).not.toMatch(/startPreviews|renderPreview|redrawPreview|keepPreview|Checking each Preview|hard rule/);
   });
 
-  it("never comments on the person's body, skin or face beyond whether a Preview changed them", async () => {
+  it("never writes about what covers the person's hair", async () => {
     const prompt = await promptSent();
 
-    expect(prompt).toMatch(/never comment on the person's body, skin or face beyond whether the Preview changed them/i);
     // Only whether the hair is covered is ever kept (ADR-0005).
-    expect(prompt).toMatch(/never say what covers their hair: call it their head covering/i);
+    expect(prompt).toMatch(/nothing you write, whether a note, a why, a cut or its details, mentions .* what covers their hair/i);
   });
 
   it("covers every tool the Stylist has", async () => {
@@ -201,19 +198,8 @@ describe("the Stylist's prompt", () => {
     await harness.stylings.runPending();
 
     const [first] = harness.ai.stylistRequests;
-    expect(first!.tools.toSorted()).toEqual([
-      "fetchBrands",
-      "findStyleIcons",
-      "finish",
-      "keepPreview",
-      "passOverStyleIcon",
-      "redrawPreview",
-      "renderPreview",
-      "saveOutfit",
-      "searchProducts",
-      "startPreviews",
-      "writeNote",
-    ]);
+    // No Preview tool: Previews are drawn and judged once the Stylist finishes.
+    expect(first!.tools.toSorted()).toEqual(["fetchBrands", "findStyleIcons", "finish", "passOverStyleIcon", "saveOutfit", "searchProducts", "writeNote"]);
     for (const tool of first!.tools) expect(first!.instructions).toContain(tool);
     expect(first!.instructions).toMatch(/top 3 Brands/i);
     expect(first!.instructions).toMatch(/One-Piece/);
@@ -266,17 +252,7 @@ describe("each kind of Styling's brief", () => {
       ageGroup: "30–34",
       outfits: 2,
     });
-    expect(first!.tools.toSorted()).toEqual([
-      "findStyleIcons",
-      "finish",
-      "keepPreview",
-      "passOverStyleIcon",
-      "redrawPreview",
-      "renderPreview",
-      "saveOutfit",
-      "startPreviews",
-      "writeNote",
-    ]);
+    expect(first!.tools.toSorted()).toEqual(["findStyleIcons", "finish", "passOverStyleIcon", "saveOutfit", "writeNote"]);
   });
 
   it('gives "Show 2 more Outfits" the next unused Style Icons, and those already used, to carry on down without asking Qloo', async () => {
@@ -416,9 +392,9 @@ describe("each kind of Styling's brief", () => {
 });
 
 describe("the turn cap", () => {
-  it("finishes the Styling with the Outfits the Stylist saved once its 30 turns are used up", async () => {
-    // It saves Ava Stone's Outfit, then keeps asking for a Preview before starting the Previews.
-    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? save(hairstyleOutfit(1)) : turn > 2 ? call("renderPreview", { outfit: 1 }) : undefined);
+  it("finishes the Styling with the Outfits the Stylist saved once its 30 turns are used up, drawing and judging their Previews", async () => {
+    // It saves Ava Stone's Outfit, then keeps asking for its Style Icons again, never finishing.
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? save(hairstyleOutfit(1)) : turn > 2 ? call("findStyleIcons", {}) : undefined);
     const browser = await signedInUser();
     const consultationId = await start(browser);
 
@@ -427,10 +403,11 @@ describe("the turn cap", () => {
     expect(harness.ai.stylistRequests.map(({ turn }) => turn)).toEqual(Array.from({ length: 30 }, (_, index) => index + 1));
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       state: "ready",
-      outfits: [{ position: 1, styleIconName: "Ava Stone", preview: { state: "failed" } }],
+      outfits: [{ position: 1, styleIconName: "Ava Stone", preview: { state: "ready" } }],
     });
     expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1 })]);
-    expect(harness.ai.previewRequests).toEqual([]);
+    expect(harness.ai.previewRequests).toHaveLength(1);
+    expect(harness.ai.verdictRequests).toHaveLength(1);
   });
 });
 
@@ -500,73 +477,9 @@ describe("the Stylist's tools", () => {
     await harness.stylings.runPending();
 
     expect(harness.ai.stylistRequests[2]!.toolResults.at(-1)).toMatchObject({
-      error: "Refused: This Styling makes at most 2 Outfits, and you've saved them all: start the Previews.",
+      error: "Refused: This Styling makes at most 2 Outfits, and you've saved them all: finish.",
     });
     expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toHaveLength(2);
-  });
-
-  it("refuse a Preview asked for before the Stylist says it has saved every Outfit, and a save after it says so", async () => {
-    harness.ai.stylistTurn = ({ turn }) =>
-      turn === 2
-        ? save(hairstyleOutfit(1))
-        : turn === 3
-          ? call("renderPreview", { outfit: 1 })
-          : turn === 4
-            ? call("startPreviews", {})
-            : turn === 5
-              ? save(hairstyleOutfit(2))
-              : undefined;
-    const browser = await signedInUser();
-    const consultationId = await start(browser);
-
-    await harness.stylings.runPending();
-
-    expect(harness.ai.stylistRequests[3]!.toolResults.at(-1)).toMatchObject({
-      toolName: "renderPreview",
-      error: "Refused: Say you've saved every Outfit first, with startPreviews.",
-    });
-    expect(harness.ai.stylistRequests[4]!.toolResults.at(-1)).toEqual({ toolName: "startPreviews", input: {}, output: { outfits: [1] }, error: null });
-    expect(harness.ai.stylistRequests[5]!.toolResults.at(-1)).toMatchObject({
-      toolName: "saveOutfit",
-      error: "Refused: You've started the Previews, so no more Outfits can be saved.",
-    });
-    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
-      outfits: [{ styleIconName: "Ava Stone", preview: { state: "ready" } }],
-    });
-    // Drawn once, after the Previews started.
-    expect(harness.ai.previewRequests).toHaveLength(1);
-  });
-
-  it("refuse a second Preview of the same Outfit, and one of an Outfit the Stylist hasn't saved", async () => {
-    harness.ai.stylistTurn = ({ toolResults }) =>
-      toolResults.at(-1)?.toolName === "startPreviews" ? call("renderPreview", { outfit: 1 }, { outfit: 1 }, { outfit: 3 }) : undefined;
-    const browser = await signedInUser();
-    const consultationId = await start(browser);
-
-    await harness.stylings.runPending();
-
-    const afterDrawing = harness.ai.stylistRequests.find(({ toolResults }) => toolResults.at(-1)?.toolName === "renderPreview")!;
-    expect(afterDrawing.toolResults.slice(-3)).toEqual([
-      { toolName: "renderPreview", input: { outfit: 1 }, output: { outfit: 1, preview: "drawn" }, error: null },
-      { toolName: "renderPreview", input: { outfit: 1 }, output: null, error: "Refused: Outfit 1's Preview is already being drawn." },
-      { toolName: "renderPreview", input: { outfit: 3 }, output: null, error: "Refused: You haven't saved an Outfit 3." },
-    ]);
-    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.preview.state)).toEqual(["ready", "ready"]);
-    expect(harness.ai.previewRequests).toHaveLength(2);
-  });
-
-  it("say when the image model declines a Preview", async () => {
-    harness.ai.previewScenarios = ["preview-refused"];
-    const browser = await signedInUser();
-    await start(browser);
-
-    await harness.stylings.runPending();
-
-    const drawn = harness.ai.stylistRequests.at(-1)!.toolResults.filter(({ toolName }) => toolName === "renderPreview");
-    expect(drawn.map(({ output }) => output)).toEqual([
-      { outfit: 1, preview: "declined" },
-      { outfit: 2, preview: "drawn" },
-    ]);
   });
 
   it("find Style Icons once, giving them again without asking Qloo when asked twice", async () => {
@@ -649,11 +562,8 @@ describe("passing over a Style Icon", () => {
     expect(JSON.stringify((await readConsultation(harness.context(browser), consultationId))!.stylistNotes)).not.toContain("Passed over");
   });
 
-  it("refuses to pass over a Style Icon that has inspired an Outfit, and any once the Previews start", async () => {
-    harness.ai.stylistTurn = ({ turn, toolResults }) => {
-      if (turn === 3) return call("passOverStyleIcon", { styleIcon: 1, reason: REASON });
-      return toolResults.at(-1)?.toolName === "startPreviews" ? call("passOverStyleIcon", { styleIcon: 3, reason: REASON }) : undefined;
-    };
+  it("refuses to pass over a Style Icon that has inspired an Outfit", async () => {
+    harness.ai.stylistTurn = ({ turn }) => (turn === 3 ? call("passOverStyleIcon", { styleIcon: 1, reason: REASON }) : undefined);
     const browser = await signedInUser();
     const consultationId = await start(browser);
 
@@ -662,7 +572,6 @@ describe("passing over a Style Icon", () => {
     expect(saveResults().map(({ error }) => error)).toEqual([null, null]);
     expect(harness.ai.stylistRequests.at(-1)!.toolResults.filter(({ toolName }) => toolName === "passOverStyleIcon").map(({ error }) => error)).toEqual([
       "Refused: Ava Stone has already inspired an Outfit.",
-      "Refused: You've started the Previews, so no Style Icon can be passed over now.",
     ]);
     expect(await styleIconStatusesOf(consultationId)).toEqual(["used", "used", "unused"]);
   });
@@ -724,8 +633,8 @@ describe("the fake Stylist's scenarios", () => {
   });
 });
 
-describe("the fake Stylist's Preview scenarios", () => {
-  it("redraw the first Outfit's Preview, with a correction, and keep the redraw, in preview-redrawn", async () => {
+describe("the fake verdict's scenarios", () => {
+  it("find each first draw wrong, breaking no hard rule, and its redraw better, in preview-redrawn", async () => {
     harness.ai.scenario = "preview-redrawn";
     harness.qloo.respond = qlooWithBrands(WOMEN);
     const browser = await signedInUser();
@@ -736,19 +645,20 @@ describe("the fake Stylist's Preview scenarios", () => {
     const shown = (await readConsultation(harness.context(browser), consultationId))!;
     expect(shown.outfits.map((o) => o.preview)).toEqual([
       { state: "ready", url: expect.stringContaining("-redraw.webp") },
-      { state: "ready", url: expect.not.stringContaining("-redraw") },
+      { state: "ready", url: expect.stringContaining("-redraw.webp") },
     ]);
-    expect(harness.ai.previewRequests.map(({ correction }) => correction)).toEqual([undefined, undefined, "Never add a face or a head where the photo shows none."]);
+    expect(harness.ai.previewRequests.map(({ correction }) => correction).toSorted()).toEqual([
+      "Draw each garment exactly as its seller's photo shows it.",
+      "Draw each garment exactly as its seller's photo shows it.",
+      undefined,
+      undefined,
+    ]);
     const notes = shown.stylistNotes[0]!.notes.map(({ text }) => text);
-    expect(notes.slice(notes.indexOf("Redrew Outfit 1's Preview") - 1, notes.indexOf("Redrew Outfit 1's Preview") + 3)).toEqual([
-      "Outfit 1's Preview doesn't show you as you are in your photo, so I'm drawing it again.",
-      "Redrew Outfit 1's Preview",
-      "The redrawn Preview of Outfit 1 shows you as you are, so I'm keeping it.",
-      "Kept Outfit 1's redrawn Preview",
-    ]);
+    expect(notes.filter((text) => text === "Each Piece should look just as its seller's photo shows it.")).toHaveLength(2);
+    expect(notes).toEqual(expect.arrayContaining(["Kept Outfit 1's redrawn Preview", "Kept Outfit 2's redrawn Preview"]));
   });
 
-  it("leave the first Outfit without a Preview in preview-unfixable, its redraw no better", async () => {
+  it("find each first draw and its redraw both breaking a hard rule in preview-unfixable, leaving every Outfit without a Preview", async () => {
     harness.ai.scenario = "preview-unfixable";
     const browser = await signedInUser();
     const consultationId = await start(browser);
@@ -758,16 +668,17 @@ describe("the fake Stylist's Preview scenarios", () => {
     const shown = (await readConsultation(harness.context(browser), consultationId))!;
     expect(shown.outfits.map((o) => o.preview)).toEqual([
       { state: "refused", by: "stylist" },
-      { state: "ready", url: expect.any(String) },
+      { state: "refused", by: "stylist" },
     ]);
-    expect(harness.ai.previewRequests.map(({ correction }) => correction)).toEqual([undefined, undefined, "Keep the person's face exactly as it is in their photo."]);
-    expect(shown.stylistNotes[0]!.notes.map(({ text }) => text)).toEqual(
-      expect.arrayContaining([
-        "Redrew Outfit 1's Preview",
-        "Neither Preview of Outfit 1 shows you as you are, so I'm leaving it without one.",
-        "Left Outfit 1 without a Preview",
-      ]),
-    );
+    expect(harness.ai.previewRequests.map(({ correction }) => correction).toSorted()).toEqual([
+      "Keep the person's face exactly as it is in their photo.",
+      "Keep the person's face exactly as it is in their photo.",
+      undefined,
+      undefined,
+    ]);
+    const notes = shown.stylistNotes[0]!.notes.map(({ text }) => text);
+    expect(notes.filter((text) => text === "Neither Preview showed you as you are in your photo, so this Outfit has none.")).toHaveLength(2);
+    expect(notes).toEqual(expect.arrayContaining(["Left Outfit 1 without a Preview", "Left Outfit 2 without a Preview"]));
   });
 });
 
@@ -1026,7 +937,7 @@ describe("a body photo's Stylist", () => {
     ]);
   });
 
-  it("finishes the Styling with the Outfits it saved once its 30 turns are used up, however often it gets another wrong", async () => {
+  it("finishes the Styling with the Outfits it saved once its 30 turns are used up, however often it gets another wrong, with their Previews", async () => {
     harness.qloo.respond = qlooWithBrands(WOMEN);
     harness.ai.styleIconScenarios = { "Bea Marsh": "tailoring-fails" };
     const browser = await signedInUser();
@@ -1038,7 +949,7 @@ describe("a body photo's Stylist", () => {
     expect(saveResults().filter(({ error }) => error !== null).length).toBeGreaterThan(20);
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       state: "ready",
-      outfits: [{ position: 1, styleIconName: "Ava Stone", preview: { state: "failed" } }],
+      outfits: [{ position: 1, styleIconName: "Ava Stone", preview: { state: "ready" } }],
     });
     expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1 })]);
     expect(await styleIconStatusesOf(consultationId)).toEqual(["used", "unused", "unused"]);
@@ -1061,7 +972,6 @@ describe("the Stylist's Notes", () => {
       { kind: "note", text: "I'm saving an Outfit inspired by Ava Stone, whose style suits your casual Photo Style." },
       { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
       { kind: "note", text: "That's every Outfit for this Styling, so next come the Previews." },
-      { kind: "note", text: "I'm drawing the Preview of Outfit 1." },
       { kind: "step", text: "Drew Outfit 1's Preview" },
     ]);
   });
@@ -1105,21 +1015,16 @@ describe("the Stylist's Notes", () => {
     harness.stylings.previewRetries = 1;
     const browser = await signedInUser();
     const consultationId = await start(browser);
-    const notes = watchNotes(browser, consultationId);
-    harness.ai.duringCall = () => notes.poll();
 
-    try {
-      await harness.stylings.runPending();
-    } finally {
-      harness.stylings.previewRetries = 0;
-    }
+    await harness.stylings.runPending();
 
-    expect(notes.seen.slice(-3).toSorted((a, b) => a.text.localeCompare(b.text))).toEqual([
+    // The Previews are drawn at once, once the Stylist has finished.
+    const { notes } = (await readConsultation(harness.context(browser), consultationId))!.stylistNotes[0]!;
+    expect(notes.at(-3)).toEqual({ kind: "note", text: "That's every Outfit for this Styling, so next come the Previews." });
+    expect(notes.slice(-2).toSorted((a, b) => a.text.localeCompare(b.text))).toEqual([
       { kind: "step", text: "Couldn't draw Outfit 2's Preview" },
-      { kind: "note", text: "I'm drawing the Previews of Outfits 1 and 2." },
       { kind: "step", text: "The image model declined to draw Outfit 1's Preview" },
     ]);
-    expect(notes.seen.at(-3)).toEqual({ kind: "note", text: "I'm drawing the Previews of Outfits 1 and 2." });
   });
 
   it("drop, silently, a note that states a price, is empty, or runs too long, keeping the turn's others", async () => {
@@ -1254,11 +1159,10 @@ describe("the Stylist's Notes", () => {
 
     await harness.stylings.runPending();
 
-    expect(asked[0]).toHaveLength(6);
+    expect(asked[0]).toHaveLength(5);
     expect(asked[3]).toEqual([
       { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
       { kind: "note", text: "That's every Outfit for this Styling, so next come the Previews." },
-      { kind: "note", text: "I'm drawing the Preview of Outfit 1." },
     ]);
     expect(asked[6]).toEqual([]);
     expect(asked[9]).toEqual([]);
@@ -1328,9 +1232,7 @@ describe("the Stylist's Notes once Outfits appear", () => {
           { kind: "note", text: "I'm saving an Outfit inspired by Ava Stone, whose style suits your casual Photo Style." },
           { kind: "step", text: "Saved Outfit 1, inspired by Ava Stone" },
           { kind: "note", text: "That's every Outfit for this Styling, so next come the Previews." },
-          { kind: "note", text: "I'm drawing the Preview of Outfit 1." },
           { kind: "step", text: "Drew Outfit 1's Preview" },
-          { kind: "note", text: "Your Outfits are ready." },
         ],
       },
     ]);
@@ -1480,302 +1382,295 @@ describe("the Stylist's Notes once Outfits appear", () => {
   });
 });
 
-describe("checking each Preview", () => {
-  it("sends the Stylist's model each Preview it drew as its image, read from Blob, and its Products' seller photos only by their links", async () => {
-    harness.qloo.respond = qlooWithBrands([WOMEN[0]!]);
-    const browser = await signedInUser();
-    const consultationId = await start(browser, "body_only");
-
-    await harness.stylings.runPending();
-
-    const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
-    const [drawn] = await harness.db.select().from(outfit).where(eq(outfit.consultationId, consultationId));
-    const photo = { mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) };
-    const preview = { mediaType: "image/webp", sha256: sha256(harness.blob.objects.get(drawn!.previewPathname!)!.bytes) };
-    const sellerPhotos = (await harness.db.select().from(piece).where(eq(piece.outfitId, drawn!.id)))
-      .toSorted((a, b) => ["top", "bottom", "shoes"].indexOf(a.category) - ["top", "bottom", "shoes"].indexOf(b.category))
-      .map(({ productPhotoUrl }) => productPhotoUrl);
-    const afterDrawing = harness.ai.stylistRequests.find(({ toolResults }) => toolResults.at(-1)?.toolName === "renderPreview")!;
-    expect(afterDrawing.images).toEqual([photo, preview]);
-    expect(afterDrawing.links).toEqual(sellerPhotos.map((url) => ({ mediaType: "image", url })));
-    expect(sellerPhotos).toHaveLength(3);
-    // Only the Preview's own step fetched them, to draw it.
-    expect(harness.productPhotos.requests.map(String).toSorted()).toEqual(sellerPhotos.toSorted());
-  });
-
-  it("sends a model that can't read a link each seller photo itself, fetched within its own call, and goes on without one that can't be fetched", async () => {
-    harness.ai.stylistReadsLinks = false;
-    harness.qloo.respond = qlooWithBrands([WOMEN[0]!]);
-    const [top, bottom, shoes] = ["c3-bolt-top-1", "c3-jeanery-bottom-1", "c3-stride-shoes-1"].map((id) => `https://cdn.channel3.test/${id}-cleaned.png`);
-    harness.productPhotos.respond = (url) => (String(url) === shoes ? new Response("Gone", { status: 404 }) : productPhoto(url));
-    const browser = await signedInUser();
-    const consultationId = await start(browser, "body_only");
-
-    await harness.stylings.runPending();
-
-    const afterDrawing = harness.ai.stylistRequests.find(({ toolResults }) => toolResults.at(-1)?.toolName === "renderPreview")!;
-    const sellerPhoto = (url: string) => ({ mediaType: "image/png", sha256: sha256(productPhotoBytes(url)) });
-    expect(afterDrawing.links).toEqual([]);
-    expect(afterDrawing.images.slice(2)).toEqual([sellerPhoto(top!), sellerPhoto(bottom!)]);
-    expect(harness.ai.stylistRequests.at(-1)!.images.slice(2)).toEqual([sellerPhoto(top!), sellerPhoto(bottom!)]);
-    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({ state: "ready", outfits: [{ preview: { state: "ready" } }] });
-    // Fetched again for each turn that's sent them, and kept nowhere.
-    const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
-    const [drawn] = await harness.db.select().from(outfit).where(eq(outfit.consultationId, consultationId));
-    expect([...harness.blob.objects.keys()].toSorted()).toEqual([stored!.photoPathname, drawn!.previewPathname].toSorted());
-  });
-
-  it("redraws an Outfit's Preview once, adding the Stylist's correction to the Preview's instruction, and refuses a second redraw", async () => {
+describe("the Preview phase", () => {
+  it("draws and judges each Outfit's Preview once the Stylist finishes, keeping one judged right as it was drawn, with no redraw and no note of its verdict's", async () => {
     harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
-    harness.ai.stylistTurn = ({ toolResults }) => {
-      const last = toolResults.at(-1);
-      if (last?.toolName === "renderPreview") return call("redrawPreview", { outfit: 1, correction: CORRECTION });
-      if (last?.toolName === "redrawPreview" && last.error === null) return call("redrawPreview", { outfit: 1, correction: "Try once more." });
-      return undefined;
-    };
-    await start(await signedInUser());
-
-    await harness.stylings.runPending();
-
-    const redraws = harness.ai.stylistRequests.at(-1)!.toolResults.filter(({ toolName }) => toolName === "redrawPreview");
-    expect(redraws.map(({ output, error }) => [output, error])).toEqual([
-      [{ outfit: 1, redraw: "drawn" }, null],
-      [null, "Refused: Outfit 1's Preview has been redrawn once already, as often as it may be."],
-    ]);
-    expect(harness.ai.previewRequests.map(({ correction }) => correction)).toEqual([undefined, CORRECTION]);
-  });
-
-  it("makes the redraw the Outfit's Preview once the Stylist keeps it, having checked it, deleting the first, with a step for each in the Stylist's Notes", async () => {
-    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
-    harness.ai.stylistTurn = redrawThenKeep("redraw");
+    harness.ai.previewVerdicts = [{ right: true }];
     const browser = await signedInUser();
     const consultationId = await start(browser);
+    const turnsBefore: [string, number][] = [];
+    harness.ai.duringCall = async (made) => {
+      if (made !== "stylistModel") turnsBefore.push([made, harness.ai.stylistRequests.length]);
+    };
 
     await harness.stylings.runPending();
 
+    // Both once the Stylist's last turn, its finish, is done.
+    const turns = harness.ai.stylistRequests.length;
+    expect(turnsBefore).toEqual([
+      ["renderPreview", turns],
+      ["judgePreview", turns],
+    ]);
     const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
     const [drawn] = await harness.db.select().from(outfit).where(eq(outfit.consultationId, consultationId));
-    expect(drawn).toMatchObject({ previewState: "ready", previewPathname: `consultations/${consultationId}/previews/${drawn!.id}-redraw.webp` });
-    expect([...harness.blob.objects.keys()].toSorted()).toEqual([stored!.photoPathname, drawn!.previewPathname].toSorted());
-    const afterRedraw = harness.ai.stylistRequests.find(({ toolResults }) => toolResults.at(-1)?.toolName === "redrawPreview")!;
-    expect(afterRedraw.images.at(-1)).toEqual({ mediaType: "image/webp", sha256: sha256(harness.blob.objects.get(drawn!.previewPathname!)!.bytes) });
+    const [hairstyle] = await harness.db.select().from(piece).where(eq(piece.outfitId, drawn!.id));
+    expect(harness.ai.verdictRequests).toEqual([
+      {
+        draw: "first",
+        photo: { mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) },
+        photoType: "face",
+        hairCovered: false,
+        pieces: [{ category: "hairstyle", details: hairstyle!.details }],
+        preview: { mediaType: "image/webp", sha256: sha256(harness.blob.objects.get(drawn!.previewPathname!)!.bytes) },
+      },
+    ]);
+    expect(harness.ai.previewRequests.map(({ correction }) => correction)).toEqual([undefined]);
     const shown = (await readConsultation(harness.context(browser), consultationId))!;
-    expect(shown.outfits).toMatchObject([{ preview: { state: "ready", url: expect.stringContaining("-redraw.webp") } }]);
-    expect(shown.stylistNotes[0]!.notes.flatMap(({ kind, text }) => (kind === "step" && /Preview/.test(text) ? [text] : []))).toEqual([
-      "Drew Outfit 1's Preview",
-      "Redrew Outfit 1's Preview",
-      "Kept Outfit 1's redrawn Preview",
+    expect(shown.outfits).toMatchObject([{ preview: { state: "ready", url: expect.not.stringContaining("-redraw") } }]);
+    expect(shown.stylistNotes[0]!.notes.slice(-2)).toEqual([
+      { kind: "note", text: "That's every Outfit for this Styling, so next come the Previews." },
+      { kind: "step", text: "Drew Outfit 1's Preview" },
     ]);
   });
 
-  it("leaves the Outfit with no Preview, as a refusal does, once the Stylist keeps neither image, and only after a redraw", async () => {
+  it.each([
+    ["redraw", "redrawn"],
+    ["first", "first"],
+  ] as const)("redraws a Preview judged wrong once, with its verdict's correction and note, and keeps the image the redraw's verdict calls better: the %s", async (better, keptAs) => {
     harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
-    harness.ai.stylistTurn = ({ toolResults }) => {
-      const last = toolResults.at(-1);
-      if (last?.toolName === "renderPreview") return call("keepPreview", { outfit: 1, keep: "none" });
-      if (last?.toolName === "keepPreview" && last.error !== null) return call("redrawPreview", { outfit: 1, correction: CORRECTION });
-      if (last?.toolName === "redrawPreview") return call("keepPreview", { outfit: 1, keep: "none" });
-      return undefined;
-    };
+    harness.ai.previewVerdicts = [WRONG, { breaksHardRule: false, better, note: "The redraw shows your cut as its details describe it." }];
     const browser = await signedInUser();
     const consultationId = await start(browser);
 
     await harness.stylings.runPending();
 
-    const keeps = harness.ai.stylistRequests.at(-1)!.toolResults.filter(({ toolName }) => toolName === "keepPreview");
-    expect(keeps.map(({ output, error }) => [output, error])).toEqual([
-      [null, "Refused: Keep none only once Outfit 1's Preview and its redraw both break a hard rule: redraw it first, with redrawPreview."],
-      [{ outfit: 1, kept: "none" }, null],
-    ]);
-    expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
-      state: "ready",
-      everyPreviewRefused: false,
-      outfits: [{ styleIconName: "Ava Stone", preview: { state: "refused", by: "stylist" } }],
+    expect(harness.ai.previewRequests.map(({ correction }) => correction)).toEqual([undefined, WRONG.correction]);
+    const [firstVerdict, redrawVerdict] = harness.ai.verdictRequests;
+    expect(harness.ai.verdictRequests).toHaveLength(2);
+    expect(redrawVerdict).toEqual({
+      ...firstVerdict,
+      draw: "redraw",
+      preview: undefined,
+      first: firstVerdict!.draw === "first" && firstVerdict!.preview,
+      redraw: expect.objectContaining({ mediaType: "image/webp" }),
+      firstVerdict: WRONG,
     });
+    const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+    const [drawn] = await harness.db.select().from(outfit).where(eq(outfit.consultationId, consultationId));
+    const keptImage = { mediaType: "image/webp", sha256: sha256(harness.blob.objects.get(drawn!.previewPathname!)!.bytes) };
+    expect(keptImage).toEqual(redrawVerdict!.draw === "redraw" && redrawVerdict![better]);
+    // The image not kept goes.
+    expect([...harness.blob.objects.keys()].toSorted()).toEqual([stored!.photoPathname, drawn!.previewPathname].toSorted());
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown.outfits).toMatchObject([{ preview: { state: "ready", url: better === "redraw" ? expect.stringContaining("-redraw.webp") : expect.not.stringContaining("-redraw") } }]);
+    expect(shown.stylistNotes[0]!.notes.slice(-4)).toEqual([
+      { kind: "step", text: "Drew Outfit 1's Preview" },
+      { kind: "note", text: WRONG.note },
+      { kind: "step", text: "Redrew Outfit 1's Preview" },
+      { kind: "step", text: `Kept Outfit 1's ${keptAs} Preview` },
+    ]);
+  });
+
+  it("leaves an Outfit with no Preview, as a refusal does, when both its images break a hard rule, with the redraw's verdict's note", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    const neither = "Neither Preview showed your face as it is in your photo, so this Outfit has none.";
+    harness.ai.previewVerdicts = [BREAKS_A_HARD_RULE, { breaksHardRule: true, better: "redraw", note: neither }];
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    // Redrawn once only, however the redraw came out.
+    expect(harness.ai.previewRequests.map(({ correction }) => correction)).toEqual([undefined, BREAKS_A_HARD_RULE.correction]);
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown).toMatchObject({ state: "ready", everyPreviewRefused: false, outfits: [{ preview: { state: "refused", by: "stylist" } }] });
     const [drawn] = await harness.db.select().from(outfit).where(eq(outfit.consultationId, consultationId));
     expect(drawn).toMatchObject({ previewState: "refused", previewPathname: null, previewRefusalReason: "not_kept" });
     const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
     expect([...harness.blob.objects.keys()]).toEqual([stored!.photoPathname]);
+    expect(shown.stylistNotes[0]!.notes.slice(-5)).toEqual([
+      { kind: "step", text: "Drew Outfit 1's Preview" },
+      { kind: "note", text: BREAKS_A_HARD_RULE.note },
+      { kind: "step", text: "Redrew Outfit 1's Preview" },
+      { kind: "note", text: neither },
+      { kind: "step", text: "Left Outfit 1 without a Preview" },
+    ]);
     expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1 })]);
   });
 
-  it("refuses a redraw before the Previews start, before its Preview is drawn, and without a correction of one sentence", async () => {
-    harness.qloo.respond = qlooAnswering(WOMEN.slice(0, 2));
-    harness.ai.stylistTurn = ({ turn, toolResults }) => {
-      if (turn === 2) return call("redrawPreview", { outfit: 1, correction: CORRECTION });
-      if (toolResults.at(-1)?.toolName !== "startPreviews") return undefined;
-      return call(
-        "redrawPreview",
-        { outfit: 1, correction: CORRECTION },
-        { outfit: 2, correction: " \n " },
-        { outfit: 2, correction: `Keep the face ${"exactly ".repeat(40)}as it is.` },
-        { outfit: 3, correction: CORRECTION },
-      );
-    };
-    const browser = await signedInUser();
-    const consultationId = await start(browser);
-
-    await harness.stylings.runPending();
-
-    expect(harness.ai.stylistRequests.at(-1)!.toolResults.filter(({ toolName }) => toolName === "redrawPreview").map(({ error }) => error)).toEqual([
-      "Refused: Say you've saved every Outfit first, with startPreviews.",
-      "Refused: Draw Outfit 1's Preview first, with renderPreview.",
-      "Refused: Say what to put right in Outfit 2's Preview, in one sentence.",
-      "Refused: Your correction for Outfit 2's Preview is too long: keep it to one sentence.",
-      "Refused: You haven't saved an Outfit 3.",
-    ]);
-    expect(harness.ai.previewRequests.map(({ correction }) => correction)).toEqual([undefined, undefined]);
-    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.preview.state)).toEqual(["ready", "ready"]);
-  });
-
-  it("refuses to redraw a Preview the image model declined, and to keep a redraw it declined, keeping the first instead", async () => {
-    harness.qloo.respond = qlooAnswering(WOMEN.slice(0, 2));
-    harness.ai.previewScenarios = ["preview-refused", "pass", "preview-refused"];
-    harness.ai.stylistTurn = ({ toolResults }) => {
-      const last = toolResults.at(-1);
-      if (last?.toolName === "startPreviews") return call("renderPreview", { outfit: 1 });
-      if (last?.toolName === "renderPreview" && isDeepStrictEqual(last.input, { outfit: 1 })) return call("renderPreview", { outfit: 2 });
-      if (last?.toolName === "renderPreview") return call("redrawPreview", { outfit: 1, correction: CORRECTION }, { outfit: 2, correction: CORRECTION });
-      if (last?.toolName === "redrawPreview") return call("keepPreview", { outfit: 2, keep: "redraw" });
-      if (last?.toolName === "keepPreview" && last.error !== null) return call("keepPreview", { outfit: 2, keep: "first" });
-      return undefined;
-    };
-    const browser = await signedInUser();
-    const consultationId = await start(browser);
-
-    await harness.stylings.runPending();
-
-    const results = harness.ai.stylistRequests.at(-1)!.toolResults.filter(({ toolName }) => toolName === "redrawPreview" || toolName === "keepPreview");
-    expect(results.map(({ output, error }) => [output, error])).toEqual([
-      [null, "Refused: The image model didn't draw Outfit 1's Preview, so there's nothing to redraw."],
-      [{ outfit: 2, redraw: "declined" }, null],
-      [null, "Refused: Outfit 2's redraw wasn't drawn: keep its first Preview, or none."],
-      [{ outfit: 2, kept: "first" }, null],
-    ]);
-    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.preview)).toEqual([
-      { state: "refused", by: "image-model" },
-      { state: "ready", url: expect.not.stringContaining("-redraw") },
-    ]);
-  });
-
-  it("refuses to keep one of a Preview's images while it's being redrawn, or another once it has kept one", async () => {
+  it.each([
+    ["only the first breaks a hard rule", BREAKS_A_HARD_RULE, false, "first", "redrawn"],
+    ["only the redraw breaks a hard rule", WRONG, true, "redraw", "first"],
+  ] as const)("keeps the image that breaks no hard rule when %s, even when the redraw's verdict calls the other better", async (_name, firstVerdict, redrawBreaksHardRule, better, keptAs) => {
     harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
-    const turns: FakeStylistTurn[] = [
-      { calls: [{ tool: "redrawPreview", input: { outfit: 1, correction: CORRECTION } }, { tool: "keepPreview", input: { outfit: 1, keep: "redraw" } }] },
-      call("keepPreview", { outfit: 1, keep: "redraw" }),
-      call("keepPreview", { outfit: 1, keep: "first" }),
-      call("keepPreview", { outfit: 1, keep: "redraw" }),
-    ];
-    harness.ai.stylistTurn = ({ toolResults }) => (toolResults.some(({ toolName }) => toolName === "renderPreview") ? turns.shift() : undefined);
+    const note = "The other Preview shows your cut better.";
+    harness.ai.previewVerdicts = [firstVerdict, { breaksHardRule: redrawBreaksHardRule, better, note }];
     const browser = await signedInUser();
     const consultationId = await start(browser);
 
     await harness.stylings.runPending();
 
-    const keeps = harness.ai.stylistRequests.at(-1)!.toolResults.filter(({ toolName }) => toolName === "keepPreview");
-    expect(keeps.map(({ output, error }) => [output, error])).toEqual([
-      [null, "Refused: Outfit 1's Preview is still being redrawn: keep one once you've seen it."],
-      [{ outfit: 1, kept: "redraw" }, null],
-      [null, "Refused: You've kept Outfit 1's redrawn Preview already."],
-      [{ outfit: 1, kept: "redraw" }, null],
-    ]);
-    expect((await readConsultation(harness.context(browser), consultationId))!.outfits).toMatchObject([{ preview: { state: "ready", url: expect.stringContaining("-redraw") } }]);
-  });
-
-  it('counts the Previews kept, refused or failed in "Generating Previews", so a redraw doesn\'t move it', async () => {
-    harness.qloo.respond = qlooAnswering(WOMEN.slice(0, 2));
-    harness.ai.stylistTurn = ({ toolResults }) => {
-      const last = toolResults.at(-1);
-      if (last?.toolName === "startPreviews") return call("renderPreview", { outfit: 1 });
-      if (last?.toolName === "renderPreview" && isDeepStrictEqual(last.input, { outfit: 1 })) return call("redrawPreview", { outfit: 1, correction: CORRECTION });
-      if (last?.toolName === "redrawPreview") return call("keepPreview", { outfit: 1, keep: "redraw" });
-      if (last?.toolName === "keepPreview") return call("renderPreview", { outfit: 2 });
-      return undefined;
-    };
-    const browser = await signedInUser();
-    const consultationId = await start(browser);
-    const counts: [string, string][] = [];
-    harness.ai.duringCall = async (made) => {
-      const progress = (await readStylingStatus(harness.context(browser), consultationId))?.progress;
-      if (progress?.stage === "previews") counts.push([made, `${progress.previews.done} of ${progress.previews.of}`]);
-    };
-
-    await harness.stylings.runPending();
-
-    expect(counts).toEqual([
-      ["stylistModel", "0 of 2"],
-      ["renderPreview", "0 of 2"],
-      ["stylistModel", "1 of 2"],
-      // The redraw.
-      ["renderPreview", "1 of 2"],
-      ["stylistModel", "1 of 2"],
-      ["stylistModel", "1 of 2"],
-      ["renderPreview", "1 of 2"],
-      ["stylistModel", "2 of 2"],
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown.outfits).toMatchObject([{ preview: { state: "ready", url: keptAs === "redrawn" ? expect.stringContaining("-redraw.webp") : expect.not.stringContaining("-redraw") } }]);
+    // The redraw's verdict's note leaves no Outfit without a Preview, so it isn't shown.
+    expect(shown.stylistNotes[0]!.notes.slice(-2)).toEqual([
+      { kind: "step", text: "Redrew Outfit 1's Preview" },
+      { kind: "step", text: `Kept Outfit 1's ${keptAs} Preview` },
     ]);
   });
 
-  it("refuses to finish while a redrawn Preview's images wait for the Stylist to keep one", async () => {
-    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
-    harness.ai.stylistTurn = ({ toolResults }) => {
-      const last = toolResults.at(-1);
-      if (last?.toolName === "renderPreview") return call("redrawPreview", { outfit: 1, correction: CORRECTION });
-      if (last?.toolName === "redrawPreview") return call("finish", {});
-      if (last?.toolName === "finish" && last.error !== null) return call("keepPreview", { outfit: 1, keep: "first" });
-      return undefined;
-    };
+  it("goes ahead once the Stylist calls finish in the same turn as its last saveOutfit, with that Outfit's Preview", async () => {
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? { calls: [...save(hairstyleOutfit(1), hairstyleOutfit(2)).calls, { tool: "finish", input: {} }] } : undefined);
     const browser = await signedInUser();
     const consultationId = await start(browser);
 
     await harness.stylings.runPending();
 
-    const finishes = harness.ai.stylistRequests.at(-1)!.toolResults.filter(({ toolName }) => toolName === "finish");
-    expect(finishes.map(({ error }) => error)).toEqual(["Refused: Keep one of Outfit 1's redrawn Previews first, with keepPreview."]);
+    expect(harness.ai.stylistRequests).toHaveLength(2);
     expect(await readConsultation(harness.context(browser), consultationId)).toMatchObject({
       state: "ready",
-      outfits: [{ preview: { state: "ready", url: expect.not.stringContaining("-redraw") } }],
+      outfits: [
+        { styleIconName: "Ava Stone", preview: { state: "ready" } },
+        { styleIconName: "Bea Marsh", preview: { state: "ready" } },
+      ],
     });
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 2 })]);
   });
 
-  it("leaves an Outfit with no Preview, saying so, when its Styling ends before the Stylist keeps one of its redrawn images", async () => {
+  it("never sends the Stylist's model a Preview or a seller photo: each verdict is sent its Products' seller photos, fetched within its own step", async () => {
+    harness.qloo.respond = qlooWithBrands([WOMEN[0]!]);
+    const browser = await signedInUser();
+    const consultationId = await start(browser, "body_only");
+
+    await harness.stylings.runPending();
+
+    const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+    const photo = { mediaType: "image/jpeg", sha256: sha256(harness.blob.objects.get(stored!.photoPathname)!.bytes) };
+    for (const { images, links } of harness.ai.stylistRequests) {
+      expect(images).toEqual([photo]);
+      expect(links).toEqual([]);
+    }
+    const [drawn] = await harness.db.select().from(outfit).where(eq(outfit.consultationId, consultationId));
+    const sellerPhotos = (await harness.db.select().from(piece).where(eq(piece.outfitId, drawn!.id)))
+      .toSorted((a, b) => ["top", "bottom", "shoes"].indexOf(a.category) - ["top", "bottom", "shoes"].indexOf(b.category))
+      .map(({ item, category, productPhotoUrl }) => ({ category, title: item, url: productPhotoUrl! }));
+    expect(harness.ai.verdictRequests).toEqual([
+      expect.objectContaining({
+        photoType: "body_only",
+        pieces: sellerPhotos.map(({ category, title, url }) => ({ category, title, photo: { mediaType: "image/png", sha256: sha256(productPhotoBytes(url)) } })),
+      }),
+    ]);
+    // Fetched once to draw the Preview and once to judge it, and never for the Stylist's model.
+    const urls = sellerPhotos.map(({ url }) => url);
+    expect(harness.productPhotos.requests.map(String).toSorted()).toEqual([...urls, ...urls].toSorted());
+  });
+
+  it("leaves an Outfit with no Preview when its Styling ends before either of its redrawn images is kept, deleting both", async () => {
     harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
-    harness.ai.stylistTurn = ({ toolResults }) => (toolResults.at(-1)?.toolName === "renderPreview" ? call("redrawPreview", { outfit: 1, correction: CORRECTION }) : undefined);
-    // The model goes down once the redraw is drawn.
-    harness.ai.duringCall = async (made) => {
-      if (made === "stylistModel" && harness.ai.stylistRequests.at(-1)?.toolResults.at(-1)?.toolName === "redrawPreview") throw new Error("The model is down.");
-    };
+    harness.ai.previewVerdicts = [WRONG];
     const browser = await signedInUser();
     const consultationId = await start(browser);
+    // The Styling is finished as stuck while its redraw is drawn.
+    harness.ai.duringCall = async (made) => {
+      if (made !== "renderPreview" || harness.ai.previewRequests.length !== 2) return;
+      harness.clock.set("2026-10-16T12:11:00Z");
+      await readStylingStatus(harness.context(browser), consultationId);
+    };
 
     await harness.stylings.runPending();
 
     const shown = (await readConsultation(harness.context(browser), consultationId))!;
     expect(shown).toMatchObject({ state: "ready", outfits: [{ preview: { state: "failed" } }] });
-    expect(shown.stylistNotes[0]!.notes.at(-1)).toEqual({
-      kind: "step",
-      text: "Left Outfit 1 without a Preview, as the Styling ended before one of its two was kept",
-    });
+    expect(shown.stylistNotes[0]!.notes.slice(-2)).toEqual([
+      { kind: "step", text: "Drew Outfit 1's Preview" },
+      { kind: "note", text: WRONG.note },
+    ]);
     const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
     expect([...harness.blob.objects.keys()]).toEqual([stored!.photoPathname]);
   });
+
+  it("drops, silently, a verdict's note that states a price, as it drops any note that does, keeping the Preview's steps", async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    harness.ai.previewVerdicts = [
+      { ...BREAKS_A_HARD_RULE, note: "A cut like this one costs about $40 at most salons." },
+      { breaksHardRule: true, better: "first", note: "Neither Preview was worth the £25 it would cost." },
+    ];
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    const { notes } = (await readConsultation(harness.context(browser), consultationId))!.stylistNotes[0]!;
+    expect(notes.slice(-3)).toEqual([
+      { kind: "step", text: "Drew Outfit 1's Preview" },
+      { kind: "step", text: "Redrew Outfit 1's Preview" },
+      { kind: "step", text: "Left Outfit 1 without a Preview" },
+    ]);
+    expect(JSON.stringify(notes)).not.toMatch(/[$£]/);
+  });
+
+  it('moves the Styling on to "Generating Previews" as it starts, counting the Previews kept, refused or failed, so a redraw doesn\'t move the count', async () => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    harness.ai.previewVerdicts = [WRONG];
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    const seen: [string, string, string][] = [];
+    harness.ai.duringCall = async (made) => {
+      const progress = (await readStylingStatus(harness.context(browser), consultationId))!.progress!;
+      seen.push([made, progress.stage, `${progress.previews.done} of ${progress.previews.of}`]);
+    };
+
+    await harness.stylings.runPending();
+
+    expect(seen.slice(-5)).toEqual([
+      // The Stylist's last turn, its finish, of the 2 Outfits it may make.
+      ["stylistModel", "building_outfits", "0 of 2"],
+      ["renderPreview", "previews", "0 of 1"],
+      ["judgePreview", "previews", "1 of 1"],
+      // The redraw.
+      ["renderPreview", "previews", "1 of 1"],
+      ["judgePreview", "previews", "1 of 1"],
+    ]);
+  });
+
+  it.each([
+    ["declined", "preview-refused", "The image model declined to redraw Outfit 1's Preview", WRONG, { state: "ready", url: expect.not.stringContaining("-redraw") }, "Kept Outfit 1's first Preview"],
+    ["declined", "preview-refused", "The image model declined to redraw Outfit 1's Preview", BREAKS_A_HARD_RULE, { state: "refused", by: "stylist" }, "Left Outfit 1 without a Preview"],
+    ["couldn't draw", "preview-fails", "Couldn't redraw Outfit 1's Preview", WRONG, { state: "ready", url: expect.not.stringContaining("-redraw") }, "Kept Outfit 1's first Preview"],
+    ["couldn't draw", "preview-fails", "Couldn't redraw Outfit 1's Preview", BREAKS_A_HARD_RULE, { state: "refused", by: "stylist" }, "Left Outfit 1 without a Preview"],
+  ] as const)("keeps the first image when the image model %s the redraw, or none when the first breaks a hard rule", async (_how, redrawScenario, redrawStep, firstVerdict, preview, keptStep) => {
+    harness.qloo.respond = qlooAnswering([WOMEN[0]!]);
+    harness.ai.previewScenarios = ["pass", redrawScenario];
+    harness.ai.previewVerdicts = [firstVerdict];
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    // No redraw to judge.
+    expect(harness.ai.verdictRequests.map(({ draw }) => draw)).toEqual(["first"]);
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown.outfits.map((o) => o.preview)).toEqual([preview]);
+    expect(shown.stylistNotes[0]!.notes.slice(-4)).toEqual([
+      { kind: "step", text: "Drew Outfit 1's Preview" },
+      { kind: "note", text: firstVerdict.note },
+      { kind: "step", text: redrawStep },
+      { kind: "step", text: keptStep },
+    ]);
+    const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
+    const [drawn] = await harness.db.select().from(outfit).where(eq(outfit.consultationId, consultationId));
+    expect([...harness.blob.objects.keys()].toSorted()).toEqual([stored!.photoPathname, ...(drawn!.previewPathname ? [drawn!.previewPathname] : [])].toSorted());
+  });
 });
 
-/** Turns that redraw each Preview the Stylist draws, then keep `keep` of its images. */
-function redrawThenKeep(keep: KeptPreview) {
-  return ({ toolResults }: FakeStylistRequest): FakeStylistTurn | undefined => {
-    const last = toolResults.at(-1);
-    const outfit = (last?.input as { outfit?: number } | undefined)?.outfit;
-    if (last?.toolName === "renderPreview") return call("redrawPreview", { outfit, correction: CORRECTION });
-    if (last?.toolName === "redrawPreview") return call("keepPreview", { outfit, keep });
-    return undefined;
-  };
-}
+/** A first draw's verdict that finds it wrong, breaking no hard rule. */
+const WRONG = {
+  right: false,
+  breaksHardRule: false,
+  correction: "The cut should have the soft layers its details describe.",
+  note: "Your cut was drawn without the soft layers it should have.",
+} as const;
 
-/** A correction the Stylist sends with a redraw. */
-const CORRECTION = "Keep the face exactly as it is in the photo.";
+/** A first draw's verdict that finds it breaks a hard rule. */
+const BREAKS_A_HARD_RULE = {
+  right: false,
+  breaksHardRule: true,
+  correction: "Keep the face exactly as it is in the photo.",
+  note: "Your Preview didn't show your face as it is in your photo.",
+} as const;
 
 describe("a Styling the Stylist can't carry out", () => {
-  it("breaks when a turn still fails, keeping the Outfits saved before it", async () => {
+  it("breaks when a turn still fails, keeping the Outfits saved before it, with no Preview drawn", async () => {
     harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? save(hairstyleOutfit(1)) : undefined);
     harness.ai.duringCall = async (made) => {
       if (made === "stylistModel" && harness.ai.stylistRequests.at(-1)?.turn === 3) throw new Error("The model is down.");
@@ -1790,6 +1685,9 @@ describe("a Styling the Stylist can't carry out", () => {
       state: "ready",
       outfits: [{ styleIconName: "Ava Stone", preview: { state: "failed" } }],
     });
+    expect(harness.ai.previewRequests).toEqual([]);
+    expect(harness.ai.verdictRequests).toEqual([]);
+    expect((await stylingsOf(consultationId))[0]!.stage).toBe("building_outfits");
   });
 
   it("breaks when the model refuses a turn part-way, keeping the earlier Outfits and offering Try again", async () => {
@@ -1817,8 +1715,8 @@ describe("a Styling the Stylist can't carry out", () => {
   });
 
   it("breaks, for Try again, when the model refuses its last turn, the 30th, rather than finishing at the turn cap", async () => {
-    // Having found the Style Icons, it keeps asking for a Preview before saving anything, then refuses its 30th turn.
-    harness.ai.stylistTurn = ({ turn }) => (turn === 30 ? { refused: true } : turn > 1 ? call("renderPreview", { outfit: 1 }) : undefined);
+    // Having found the Style Icons, it keeps asking for them again rather than saving anything, then refuses its 30th turn.
+    harness.ai.stylistTurn = ({ turn }) => (turn === 30 ? { refused: true } : turn > 1 ? call("findStyleIcons", {}) : undefined);
     const browser = await signedInUser();
     const consultationId = await start(browser);
 

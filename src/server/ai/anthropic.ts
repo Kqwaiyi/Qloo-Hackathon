@@ -156,8 +156,7 @@ const STYLIST_OPTIONS = {
  * is an UnretryableAiError. A turn Claude refuses comes back as a refusal, its finish reason
  * content-filter, with none of the tool calls it had written so far, so nothing it asked for runs.
  * Turns are whole: nothing streams one, which couldn't take back a refused turn's tool calls. Every
- * image goes inline, as its own bytes: it reads none by its link, so a seller photo sent by its link
- * is fetched before Claude is asked, by whatever calls it.
+ * image goes inline, as its own bytes: it reads none by its link.
  */
 const STYLIST_MIDDLEWARE: LanguageModelMiddleware = {
   overrideSupportedUrls: () => ({}),
@@ -335,8 +334,8 @@ Everything else you report, except explicit, is about the main person alone, nev
 
 Never guess the person's age. Never infer their ethnicity, skin tone, body measurements or health, and never mention them.`;
 
-// The verdict's rules are the Stylist's "Checking each Preview" rules and hard rules (ADR-0012),
-// with today's rules for corrections and notes. They ask for nothing that describes the
+// The verdict's rules are the "Checking each Preview" rules and hard rules the Stylist's prompt
+// carried before ADR-0012, with today's rules for corrections and notes. They ask for nothing that describes the
 // person beyond whether a Preview changed their face, their head covering or anyone else
 // (ADR-0005), and name only the most prominent person as the one styled (ADR-0009). They never
 // change, so every verdict reads them from cache.

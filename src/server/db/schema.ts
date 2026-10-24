@@ -363,10 +363,10 @@ export const outfit = pgTable(
     previewState: previewStateEnum("preview_state").notNull(),
     // The WebP in the private Blob store, once it's ready.
     previewPathname: text("preview_pathname"),
-    // Why it was refused, when it was: by the image model, or by the Stylist, which kept neither image.
+    // Why it was refused, when it was: by the image model, or by the Preview phase, which kept neither image.
     previewRefusalReason: previewRefusalReasonEnum("preview_refusal_reason"),
-    // Where the Stylist's one redraw of the Preview is, once it asks for one. The redraw is kept in
-    // the private Blob store beside the Preview until the Stylist keeps one of them.
+    // Where the one redraw of the Preview is, once its verdict calls for one. The redraw is kept in
+    // the private Blob store beside the Preview until the Preview phase keeps one of them.
     previewRedraw: previewRedrawStateEnum("preview_redraw"),
     // Body photos only: the Qloo entity ID of the Brand picked for each Brand Category, fixed as the
     // Outfit is saved and kept apart from the Pieces, so a Brand stays reserved even if no Piece shows
@@ -531,12 +531,13 @@ export const stylistNote = pgTable(
     position: integer("position").notNull(),
     kind: stylistNoteKindEnum("kind").notNull(),
     text: text("text").notNull(),
-    // A note only: the Stylist's turn it was written in, from 1, so a retried save adds it once.
+    // A note only: the Stylist's turn it was written in, from 1, so a retried save adds it once. A
+    // note of a Preview's verdict, written once the Stylist's turns are done, has none.
     turn: integer("turn"),
   },
   (table) => [
     primaryKey({ name: "stylist_note_pk", columns: [table.stylingId, table.position] }),
-    check("stylist_note_turn_for_notes", sql`(${table.kind} = 'note') = (${table.turn} is not null)`),
+    check("stylist_note_turn_only_for_notes", sql`${table.kind} = 'note' or ${table.turn} is null`),
   ],
 );
 

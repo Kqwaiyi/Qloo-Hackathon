@@ -7,7 +7,7 @@ import { STYLIST_CHECK_BIRTH_DATE, STYLIST_CHECK_COUNTRY_CODE, type StylePrefere
 import { CLAUDE_PRICES, type ClaudeModel } from "@/config/ai";
 import { byCategoryOrder, type PhotoType, type PieceCategory } from "@/config/consultations";
 import { KEPT_PREVIEWS, stylingLimitsFor } from "@/config/stylings";
-import type { AiProvider, PhotoCheckInput, PhotoCheckResult, PreviewInput, PreviewResult } from "@/server/ai/provider";
+import type { AiProvider, PhotoCheckInput, PhotoCheckResult, PreviewInput, PreviewPiece, PreviewResult } from "@/server/ai/provider";
 import type { BlobStore, StoredBlob } from "@/server/blob/store";
 import { previewPathnameFor, previewRedrawPathnameFor } from "@/server/consultations/blob-pathnames";
 import type { PhotoRejection } from "@/server/consultations/photo-check";
@@ -17,7 +17,6 @@ import type { OperationContext } from "@/server/operations/context";
 import { signUp } from "@/server/operations/sign-up";
 import { browserRequests } from "@/server/operations/team";
 import type { StylingRunner } from "@/server/stylings/runner";
-import { redrawPreviewInputSchema } from "@/server/stylings/stylist";
 import { type StylistNoteEntry, STEPS } from "@/server/stylings/stylist-notes";
 
 // The Stylist check (spec: "Fakes and the check"), the Haiku check: the team's script runs the real
@@ -58,13 +57,22 @@ export interface StylistTurn {
   refusedBefore: string[];
 }
 
+/** A redraw of a Preview, as the check sees it asked for: the Pieces it's drawn with, and the verdict's correction. */
+export interface RedrawAskedFor {
+  pieces: readonly PreviewPiece[];
+  correction: string;
+}
+
 /**
  * The AI a Stylist check runs on: the app's own, watched. It keeps each of the Stylist's turns, and
- * draws each Preview as the check says: on the image model unless the check draws them itself.
+ * each redraw asked for, and draws each Preview as the check says: on the image model unless the
+ * check draws them itself.
  */
 export class StylistCheckAi implements AiProvider {
   /** Every turn of the Stylist's, oldest first, across every Styling the check runs on it. */
   readonly turns: StylistTurn[] = [];
+  /** Every redraw asked for, oldest first, across every Styling the check runs on it. */
+  readonly redraws: RedrawAskedFor[] = [];
   /** Judges each Preview on the app's own AI, as it is. */
   readonly judgePreview: AiProvider["judgePreview"];
   private drawer: (input: PreviewInput) => Promise<PreviewResult>;
@@ -110,6 +118,7 @@ export class StylistCheckAi implements AiProvider {
   }
 
   renderPreview(input: PreviewInput): Promise<PreviewResult> {
+    if (input.correction) this.redraws.push({ pieces: input.pieces, correction: input.correction });
     return this.drawer(input);
   }
 }
@@ -175,8 +184,8 @@ export interface StylistCheckPhoto {
 export type StylistEnding = "finished" | "turn-cap" | "refused" | "stopped";
 
 /**
- * What came of an Outfit's Preview: the Stylist kept it as it was first drawn, or redrew it and kept
- * one of its images, or neither; or the image model declined to draw it, or it couldn't be drawn.
+ * What came of an Outfit's Preview: it was kept as it was first drawn, or redrawn and one of its
+ * images kept, or neither; or the image model declined to draw it, or it couldn't be drawn.
  */
 export type PreviewHandling = "kept" | "redrawn-kept-first" | "redrawn-kept-redraw" | "redrawn-kept-none" | "declined" | "failed";
 
@@ -187,7 +196,7 @@ export interface CheckedOutfit {
   /** Its Pieces, in Category order: a Product by its title, the Hairstyle by its cut, and the Brand each is built on. */
   pieces: { category: PieceCategory; item: string; brand: string | null }[];
   preview: PreviewHandling;
-  /** The correction the Stylist redrew its Preview with, or null when it didn't. */
+  /** The correction its Preview was redrawn with, its first draw's verdict's, or null when it wasn't. */
   correction: string | null;
   /** Each image drawn for its Preview, as it was stored, in order: the first, then any redraw. */
   images: Uint8Array[];
@@ -253,6 +262,7 @@ export async function checkStylist(
     }
   }
   const turnsBefore = app.ai.turns.length;
+  const redrawsBefore = app.ai.redraws.length;
   const consultationId = started.consultationId;
   await app.ai.drawingWith(drawPreview && (async (input) => drawPreview(input, await outfitDrawn(app, consultationId, input))), () => app.stylings.runPending());
   const turns = app.ai.turns.slice(turnsBefore);
@@ -267,7 +277,7 @@ export async function checkStylist(
   const turnCap = stylingLimitsFor(false).turns;
   const ending = endingOf(turns, turnCap);
   const notes = view.stylistNotes[0]?.notes ?? view.failedStyling?.notes ?? [];
-  const corrections = correctionsOf(turns);
+  const corrections = await correctionsOf(app, consultationId, app.ai.redraws.slice(redrawsBefore));
   const outfits = view.outfits.map((shown) => {
     const images = [previewPathnameFor(view.id, shown.id), previewRedrawPathnameFor(view.id, shown.id)].flatMap((pathname) => app.blob.lastPut(pathname) ?? []);
     return checkedOutfit(shown, notes, corrections.get(shown.position) ?? null, images);
@@ -313,7 +323,7 @@ async function signUpCheckAccount(app: StylistCheckApp, request: () => Operation
   return email;
 }
 
-/** One of the Outfits made, with what the Stylist did with its Preview, as its steps in the notes say, and the images drawn for it. */
+/** One of the Outfits made, with what came of its Preview, as its steps in the notes say, and the images drawn for it. */
 function checkedOutfit(shown: OutfitView, notes: readonly StylistNoteEntry[], correction: string | null, images: Uint8Array[]): CheckedOutfit {
   const steps = new Set(notes.flatMap(({ kind, text }) => (kind === "step" ? [text] : [])));
   const kept = KEPT_PREVIEWS.find((which) => steps.has(STEPS.previewKept(shown.position, which)));
@@ -332,7 +342,7 @@ function checkedOutfit(shown: OutfitView, notes: readonly StylistNoteEntry[], co
  * Pieces alone, each Product by its title and the Hairstyle by its details, so the Pieces it's drawn
  * with say whose it is, unless two Outfits' are alike.
  */
-async function outfitDrawn(app: StylistCheckApp, consultationId: string, { pieces }: PreviewInput): Promise<OutfitDrawn | null> {
+async function outfitDrawn(app: StylistCheckApp, consultationId: string, { pieces }: Pick<PreviewInput, "pieces">): Promise<OutfitDrawn | null> {
   const rows = await app.db
     .select({ outfitId: outfit.id, position: outfit.position, styleIconName: styleIcon.name, category: piece.category, item: piece.item, details: piece.details })
     .from(outfit)
@@ -355,21 +365,19 @@ function piecesKey(pieces: readonly [PieceCategory, string][]): string {
 }
 
 /**
- * The correction each Outfit's Preview was redrawn with, by the Outfit's number: the one the Stylist
- * gave in the redraw call of its that wasn't refused.
+ * The correction each Outfit's Preview was redrawn with, by the Outfit's number, from the redraws
+ * asked for: none for an Outfit whose Pieces are like another's, as `outfitDrawn` says.
  */
-function correctionsOf(turns: readonly StylistTurn[]): Map<number, string> {
-  const refused = new Set(turns.flatMap(({ refusedBefore }) => refusedBefore));
+async function correctionsOf(app: StylistCheckApp, consultationId: string, redraws: readonly RedrawAskedFor[]): Promise<Map<number, string>> {
   const corrections = new Map<number, string>();
-  for (const { id, tool, input } of turns.flatMap(({ calls }) => calls)) {
-    if (tool !== "redrawPreview" || refused.has(id)) continue;
-    const redraw = redrawPreviewInputSchema.safeParse(input);
-    if (redraw.success && !corrections.has(redraw.data.outfit)) corrections.set(redraw.data.outfit, redraw.data.correction.trim());
+  for (const { pieces, correction } of redraws) {
+    const drawnFor = await outfitDrawn(app, consultationId, { pieces });
+    if (drawnFor && !corrections.has(drawnFor.position)) corrections.set(drawnFor.position, correction.trim());
   }
   return corrections;
 }
 
-/** What came of a Preview the Stylist never redrew, as the user is shown it. */
+/** What came of a Preview never redrawn, as the user is shown it. */
 function previewShown(preview: PreviewView): PreviewHandling {
   if (preview.state === "ready") return "kept";
   if (preview.state === "refused") return preview.by === "image-model" ? "declined" : "redrawn-kept-none";

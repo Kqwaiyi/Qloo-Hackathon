@@ -23,7 +23,7 @@ export const CLAUDE_PHOTO_CHECK_EFFORT = "medium";
  */
 export const CLAUDE_STYLIST_MODEL: ClaudeModel = CLAUDE_MODELS.sonnet55;
 
-/** How hard Claude works at each of the Stylist's turns, as it judges what suits the photo and checks each Preview. */
+/** How hard Claude works at each of the Stylist's turns, as it judges what suits the photo. */
 export const CLAUDE_STYLIST_EFFORT = "medium";
 
 /**

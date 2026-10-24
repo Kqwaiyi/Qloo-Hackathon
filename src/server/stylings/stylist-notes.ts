@@ -10,8 +10,8 @@ import { readLatestFailedStyling } from "./failed";
 import { statesAPrice } from "./prices-in-text";
 
 // The Stylist's Notes (spec: "Storage" and "The loop"): what the Stylist tells the user as it carries
-// out a Styling. Each entry is a note the Stylist wrote, checked like a "why" line, or a step our code
-// wrote for one of its tool calls and what came of it. Steps are written here from the data (Qloo's
+// out a Styling. Each entry is a note the Stylist wrote, or a Preview's verdict did, checked like a
+// "why" line, or a step our code wrote for one of its tool calls or Preview steps and what came of it. Steps are written here from the data (Qloo's
 // names, the Brand, the Category and counts), so no name in one comes from the model, and neither
 // the product search nor the image model is named by its provider. Like everything the Stylist
 // writes, nothing here describes the user's body, skin, ethnicity or age (ADR-0005).
@@ -23,7 +23,7 @@ export interface StylistNoteEntry {
 }
 
 /**
- * Adds entries after the Styling's last, in order: a turn's notes, given its number, or steps. Only
+ * Adds entries after the Styling's last, in order: notes, a turn's given its number, or steps. Only
  * ever inside a transaction that holds the running Styling's row (`whileRunning`), so entries are
  * numbered one after another and commit in that order: a page that has seen one has seen every one
  * before it.
@@ -137,6 +137,12 @@ export function noteFault(note: string): NoteFault | null {
   return note.length > STYLIST_NOTE_MAX_LENGTH ? "too long" : null;
 }
 
+/** Text written for the user as one note, as `asOneNote` makes it, or null when it can't be kept, as `noteFault` says. */
+export function checkedNote(text: string): string | null {
+  const note = asOneNote(text);
+  return noteFault(note) === null ? note : null;
+}
+
 /**
  * What a search for each kind of Product finds, as a step names it: garments as plain words, as the
  * spec's "Searched Uniqlo's tops" has them, and One-Pieces by their own name, which no plain word covers.
@@ -148,7 +154,7 @@ const SEARCHED_FOR: Record<ProductCategory, string> = {
   shoes: "shoes",
 };
 
-/** The steps our code writes, each for one of the Stylist's tool calls and what came of it. */
+/** The steps our code writes, each for one of the Stylist's tool calls or Preview steps and what came of it. */
 export const STEPS = {
   /** Finding Style Icons: Qloo's person calls, for the Consultation's Country and the Photo Style the Styling builds for. */
   styleIconsFound: ({ countryCode, photoStyle, found }: { countryCode: string; photoStyle: PhotoStyleWords; found: number }) => {
@@ -170,16 +176,14 @@ export const STEPS = {
   previewDrawn: (outfit: number, drawn: boolean) => (drawn ? `Drew Outfit ${outfit}'s Preview` : `The image model declined to draw Outfit ${outfit}'s Preview`),
   /** One Preview not drawn by the time its Styling finished, as when the image model kept failing. */
   previewFailed: (outfit: number) => `Couldn't draw Outfit ${outfit}'s Preview`,
-  /** The Stylist's one redraw of a Preview: drawn, declined by the image model, or still failing after its retries. */
+  /** A Preview's one redraw: drawn, declined by the image model, or still failing after its retries. */
   previewRedrawn: (outfit: number, outcome: PreviewRedrawOutcome) =>
     outcome === "ready"
       ? `Redrew Outfit ${outfit}'s Preview`
       : outcome === "refused"
         ? `The image model declined to redraw Outfit ${outfit}'s Preview`
         : `Couldn't redraw Outfit ${outfit}'s Preview`,
-  /** Which of a redrawn Preview's images the Stylist kept: its first, its redraw, or neither. */
+  /** Which of a redrawn Preview's images the Preview phase kept: its first, its redraw, or neither. */
   previewKept: (outfit: number, kept: KeptPreview) =>
     kept === "none" ? `Left Outfit ${outfit} without a Preview` : `Kept Outfit ${outfit}'s ${kept === "first" ? "first" : "redrawn"} Preview`,
-  /** A redrawn Preview none of whose images the Stylist kept before its Styling ended. */
-  previewLeftUnkept: (outfit: number) => `Left Outfit ${outfit} without a Preview, as the Styling ended before one of its two was kept`,
 };

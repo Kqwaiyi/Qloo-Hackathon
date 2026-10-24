@@ -279,7 +279,8 @@ export type OutfitCardContent = Pick<OutfitView, "position" | "styleIconName" | 
 
 /**
  * The Outfit's Preview: a signed link to it, valid for 1 hour from now, or why there's none: refused,
- * by the image model or by the AI Stylist, which kept neither of its images, or failed.
+ * by the image model or by the AI Stylist, which kept neither of its images as both broke a hard
+ * rule, or failed.
  */
 export type PreviewView = { state: "ready"; url: string } | { state: "refused"; by: "image-model" | "stylist" } | { state: "failed" };
 

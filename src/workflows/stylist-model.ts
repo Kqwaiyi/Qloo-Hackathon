@@ -1,8 +1,6 @@
 import type { LanguageModelV4, LanguageModelV4CallOptions, LanguageModelV4GenerateResult, LanguageModelV4StreamResult } from "@ai-sdk/provider";
 import { WORKFLOW_DESERIALIZE, WORKFLOW_SERIALIZE } from "@workflow/serde";
 
-import { PHOTO_LINKS } from "@/server/stylings/stylist";
-
 // The Stylist's model as the Styling Workflow hands it to the Workflow agent. The agent passes its
 // model into each of its model steps, so it must cross the step boundary: this one serializes to
 // nothing, and inside the step calls the app's own Stylist's model, which the app's AI supplies.
@@ -14,10 +12,8 @@ class WorkflowStylistModel implements LanguageModelV4 {
   readonly specificationVersion = "v4";
   readonly provider = "app";
   readonly modelId = "stylist";
-  // Photos given by their links, a Preview's Products' seller photos, are left as links for the app's
-  // Stylist's model, which fetches those it doesn't read by their links inside the model step, so
-  // the run's data only ever holds the links.
-  readonly supportedUrls = PHOTO_LINKS;
+  // The conversation gives no image by its link: its one image, the photo, is in it as its bytes.
+  readonly supportedUrls = {};
 
   static [WORKFLOW_SERIALIZE](_model: WorkflowStylistModel): Record<string, never> {
     return {};

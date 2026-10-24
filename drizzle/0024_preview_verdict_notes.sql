@@ -1,0 +1,2 @@
+ALTER TABLE "stylist_note" DROP CONSTRAINT "stylist_note_turn_for_notes";--> statement-breakpoint
+ALTER TABLE "stylist_note" ADD CONSTRAINT "stylist_note_turn_only_for_notes" CHECK ("stylist_note"."kind" = 'note' or "stylist_note"."turn" is null);

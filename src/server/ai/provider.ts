@@ -165,9 +165,9 @@ export interface AiProvider {
    *
    * It answers whole turns, through `doGenerate`, and is configured for the Stylist: the prompt,
    * the tools and the conversation's first message, the brief and the photo, never change within a
-   * Styling, so a real model caches them. Each Preview the Stylist checks comes back from its tool as
-   * its image, and its Products' seller photos by their links: a model whose `supportedUrls` don't
-   * cover a link is sent the photo itself, fetched inside its model step (`stylistModelOn`).
+   * Styling, so a real model caches them. The conversation holds no image but the photo: the
+   * Stylist never sees a Preview or a seller photo, as each Preview is judged by `judgePreview` once
+   * its loop ends (ADR-0012).
    * Nothing of its thinking comes back but what the model needs given back. A turn it refuses comes
    * back with finish reason content-filter and no tool calls. A turn that fails throws an error with
    * nothing of the request in it: one worth retrying for the AI SDK's retries, or an

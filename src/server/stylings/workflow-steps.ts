@@ -9,7 +9,6 @@ import { NoExchangeRateError } from "@/server/outfit-assembly/products";
 import { ProductSearchRateLimitedError, UnretryableProductSearchError } from "@/server/product-search/provider";
 import { QlooError, QlooRateLimitedError } from "@/server/qloo/client";
 
-import { stylistModelOn } from "./stylist-model";
 import { ProductSearchDownError, StylingNotRunningError } from "./steps";
 import type { StylistSteps } from "./stylist";
 import { allStylingSteps } from "./stylist-steps";
@@ -49,10 +48,7 @@ function asWorkflowError(error: unknown): unknown {
   return error;
 }
 
-/**
- * The Stylist's model, as the app's AI supplies it, for one of the Workflow agent's model steps, sent
- * the seller photos the conversation gives by their links as `stylistModelOn` says.
- */
+/** The Stylist's model, as the app's AI supplies it, for one of the Workflow agent's model steps. */
 export async function appStylistModel(): Promise<LanguageModelV4> {
-  return stylistModelOn(await getServices());
+  return (await getServices()).ai.stylistModel();
 }

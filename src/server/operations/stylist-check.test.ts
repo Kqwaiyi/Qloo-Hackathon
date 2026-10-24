@@ -48,6 +48,9 @@ beforeEach(async () => {
   harness.ai.scenario = "pass";
   harness.ai.stylistRequests.length = 0;
   harness.ai.previewRequests.length = 0;
+  harness.ai.previewScenarios = [];
+  harness.ai.previewVerdicts = [];
+  harness.ai.verdictRequests.length = 0;
   harness.ai.stylistTurn = undefined;
   harness.ai.duringCall = undefined;
   harness.ai.styleIconScenarios = {};
@@ -97,14 +100,14 @@ describe("the Stylist check", () => {
   });
 
   it("reports how long the Styling took, the product searches it made and the Stylist's Notes", async () => {
-    // Each of the Stylist's turns and each Preview takes a second.
+    // Each of the Stylist's turns, each Preview and each verdict takes a second.
     harness.ai.duringCall = async (call) => {
       if (call !== "checkPhoto") harness.clock.set(new Date(harness.clock.now().getTime() + 1000));
     };
 
     const result = await checkStylist(checkApp(), { photoType: "body_only", photo: await jpegPhoto(), stylePreference: "menswear" });
 
-    const calls = harness.ai.stylistRequests.length + harness.ai.previewRequests.length;
+    const calls = harness.ai.stylistRequests.length + harness.ai.previewRequests.length + harness.ai.verdictRequests.length;
     const searches = harness.channel3.requests.filter(({ url }) => url.pathname === "/v1/browse");
     expect(searches.length).toBeGreaterThan(0);
     expect(result).toMatchObject({ styled: true, durationMs: calls * 1000, productSearches: searches.length });
@@ -211,25 +214,29 @@ describe("the Stylist check's turns", () => {
 });
 
 describe("the Stylist check's Previews", () => {
-  it("shows the Stylist the Previews the run draws, in place of the image model's, and reports which it redrew, with what correction, and which it kept", async () => {
-    harness.ai.styleIconScenarios = { "Ava Stone": "preview-redrawn" };
+  it("has the Previews the run draws judged, in place of the image model's, and reports which were redrawn, with what correction, and which image was kept", async () => {
+    harness.ai.scenario = "preview-redrawn";
 
     const result = await checkStylist(checkApp(), { photoType: "full_body", photo: await jpegPhoto(), stylePreference: "menswear", drawPreview: drawnIn(GREEN, PURPLE) });
 
+    const correction = "Draw each garment exactly as its seller's photo shows it.";
     expect(result).toMatchObject({
       styled: true,
       outfits: [
-        { position: 1, preview: "redrawn-kept-redraw", correction: "Keep the person's face exactly as it is in their photo." },
-        { position: 2, preview: "kept", correction: null },
+        { position: 1, preview: "redrawn-kept-redraw", correction },
+        { position: 2, preview: "redrawn-kept-redraw", correction },
       ],
     });
-    expect(await coloursOf(result)).toEqual([[GREEN, PURPLE], [GREEN]]);
+    expect(await coloursOf(result)).toEqual([
+      [GREEN, PURPLE],
+      [GREEN, PURPLE],
+    ]);
     // The image model was never asked.
     expect(harness.ai.previewRequests).toEqual([]);
   });
 
   it("tells the check's drawer which Outfit each Preview is for, by its number and Style Icon", async () => {
-    harness.ai.styleIconScenarios = { "Ava Stone": "preview-redrawn" };
+    harness.ai.scenario = "preview-redrawn";
     const drawn: { outfit: unknown; redraw: boolean }[] = [];
 
     await checkStylist(checkApp(), {
@@ -242,19 +249,20 @@ describe("the Stylist check's Previews", () => {
       },
     });
 
-    expect(drawn).toHaveLength(3);
+    expect(drawn).toHaveLength(4);
     expect(drawn).toEqual(
       expect.arrayContaining([
         { outfit: { position: 1, styleIconName: "Ava Stone" }, redraw: false },
         { outfit: { position: 1, styleIconName: "Ava Stone" }, redraw: true },
         { outfit: { position: 2, styleIconName: "Bea Marsh" }, redraw: false },
+        { outfit: { position: 2, styleIconName: "Bea Marsh" }, redraw: true },
       ]),
     );
   });
 
   it("gives each Outfit the images drawn for it, even when two Outfits' Pieces are alike", async () => {
     // The fake's Face Photo Outfits have the same Hairstyle. Each first try is drawn in a colour of its own.
-    harness.ai.styleIconScenarios = { "Ava Stone": "preview-redrawn" };
+    harness.ai.scenario = "preview-redrawn";
     const firstColours = [GREEN, BLUE];
 
     const result = await checkStylist(checkApp(), {
@@ -264,25 +272,29 @@ describe("the Stylist check's Previews", () => {
       drawPreview: async ({ correction }) => ({ refused: false, image: await png(correction ? PURPLE : firstColours.shift()!) }),
     });
 
-    const [redrawn, kept] = await coloursOf(result);
-    expect(redrawn).toEqual([expect.any(String), PURPLE]);
-    expect(kept).toEqual([expect.any(String)]);
-    expect([redrawn![0], kept![0]].toSorted()).toEqual([GREEN, BLUE].toSorted());
+    const [first, second] = await coloursOf(result);
+    expect(first).toEqual([expect.any(String), PURPLE]);
+    expect(second).toEqual([expect.any(String), PURPLE]);
+    expect([first![0], second![0]].toSorted()).toEqual([GREEN, BLUE].toSorted());
   });
 
-  it("reports an Outfit left with no Preview when the Stylist kept neither of its images", async () => {
-    harness.ai.styleIconScenarios = { "Ava Stone": "preview-unfixable" };
+  it("reports an Outfit left with no Preview when neither of its images was kept", async () => {
+    harness.ai.scenario = "preview-unfixable";
 
     const result = await checkStylist(checkApp(), { photoType: "body_only", photo: await jpegPhoto(), stylePreference: "menswear", drawPreview: drawnIn(GREEN, PURPLE) });
 
+    const correction = "Never add a face or a head where the photo shows none.";
     expect(result).toMatchObject({
       styled: true,
       outfits: [
-        { position: 1, preview: "redrawn-kept-none", correction: "Never add a face or a head where the photo shows none." },
-        { position: 2, preview: "kept" },
+        { position: 1, preview: "redrawn-kept-none", correction },
+        { position: 2, preview: "redrawn-kept-none", correction },
       ],
     });
-    expect(await coloursOf(result)).toEqual([[GREEN, PURPLE], [GREEN]]);
+    expect(await coloursOf(result)).toEqual([
+      [GREEN, PURPLE],
+      [GREEN, PURPLE],
+    ]);
   });
 
   it("reports a Preview the image model declined, or that couldn't be drawn", async () => {

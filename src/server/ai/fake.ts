@@ -62,17 +62,18 @@ import type {
  *   once it has fetched its Brands for a body photo, and builds on the rest as usual.
  * - `second-brand`: each Outfit takes each Category's second Brand still in play, where it has one,
  *   rather than the first.
- * - `preview-redrawn`: the Stylist finds its first Outfit's Preview wrong, redraws it with a
- *   correction, and keeps the redraw, its banner saying so.
- * - `preview-unfixable`: the Stylist finds its first Outfit's Preview wrong, redraws it, and finds
- *   the redraw wrong too, so it keeps neither, leaving that Outfit with no Preview.
  *
  * A Preview is the user's own photo with a "Fake Preview" banner across its foot, or "Fake Preview,
  * redrawn" for a redraw. Its scenarios pass every photo and style as usual:
  * - `preview-refused`: the image model refuses every Preview, for image safety.
  * - `preview-fails`: every Preview throws, as a model that keeps erroring without refusing does.
  *
- * Every Preview's verdict judges it right, unless a test scripts the verdicts (`previewVerdicts`).
+ * Every Preview's verdict judges it right, and a redraw better than its first image, unless a test
+ * scripts the verdicts (`previewVerdicts`). Its scenarios pass every photo and style as usual:
+ * - `preview-redrawn`: each Preview as first drawn is wrong, breaking no hard rule, and its redraw,
+ *   its banner saying so, is better, so it's kept.
+ * - `preview-unfixable`: each Preview and its redraw both break a hard rule, so neither is kept,
+ *   leaving every Outfit with no Preview.
  */
 export const FAKE_AI_SCENARIOS = [
   "pass",
@@ -160,17 +161,12 @@ export class FakeAiProvider implements AiProvider {
   previewScenarios: FakePreviewScenario[] = [];
   /** Every Preview it has been asked for, oldest first. */
   readonly previewRequests: FakePreviewRequest[] = [];
-  /** Verdicts for the next Previews judged, in the order they're asked for. Once they run out, every Preview is judged right. */
+  /** Verdicts for the next Previews judged, in the order they're asked for, in place of `scenario`'s. */
   previewVerdicts: FakeScriptedVerdict[] = [];
   /** Every verdict it has been asked for, oldest first, with what each was sent. */
   readonly verdictRequests: FakeVerdictRequest[] = [];
   /** Every turn its Stylist has been asked for, oldest first, with what each was sent. */
   readonly stylistRequests: FakeStylistRequest[] = [];
-  /**
-   * Whether its Stylist reads an image sent by its link as the link, as Claude could, rather than
-   * being sent the image itself. Claude's adapter takes every image inline, as a test may make it.
-   */
-  stylistReadsLinks = true;
   /** Plays the Stylist's turns a test scripts, in place of `scenario`'s: any it leaves undefined play as usual. */
   stylistTurn?: (request: FakeStylistRequest) => FakeStylistTurn | undefined;
   /** Runs during every call, as if the model were still working, so a test can look at a Styling part-way. */
@@ -198,7 +194,7 @@ export class FakeAiProvider implements AiProvider {
       // The conversation's first image is the photo.
       const scenario = this.scenarioOf(request.images[0]?.sha256);
       return this.stylistTurn?.(request) ?? fakeStylistTurn(request, (styleIcon) => this.styleIconScenarios[styleIcon.name] ?? stylistScenario(scenario, styleIcon));
-    }, { readsLinks: this.stylistReadsLinks });
+    });
   }
 
   async renderPreview(input: PreviewInput): Promise<PreviewResult> {
@@ -217,8 +213,9 @@ export class FakeAiProvider implements AiProvider {
   async judgePreview(input: FirstDrawToJudge | RedrawToJudge): Promise<VerdictResult<FirstDrawVerdict | RedrawVerdict>> {
     this.verdictRequests.push(fingerprintedVerdict(input));
     const scripted = this.previewVerdicts.shift();
+    const scenario = this.scenarioOf(fingerprint(input.photo).sha256);
     await this.wait("judgePreview");
-    if (!scripted) return { refused: false, verdict: input.draw === "first" ? { right: true } : UNSCRIPTED_REDRAW_VERDICT };
+    if (!scripted) return { refused: false, verdict: input.draw === "first" ? firstDrawVerdict(scenario, input) : redrawVerdict(scenario) };
     if ("refused" in scripted) return scripted;
     const scriptedFor = "better" in scripted ? "redraw" : "first";
     if (scriptedFor !== input.draw) throw new Error(`The test scripted a ${scriptedFor} draw's verdict, but a ${input.draw} draw's was asked for.`);
@@ -251,8 +248,41 @@ function fingerprintedVerdict(input: FirstDrawToJudge | RedrawToJudge): FakeVerd
   return { ...input, ...drawnFrom, first: fingerprint(input.first), redraw: fingerprint(input.redraw) };
 }
 
-/** The fake's verdict on a redraw nothing scripted: it breaks no hard rule, and shows the Outfit better than the first. */
-const UNSCRIPTED_REDRAW_VERDICT: RedrawVerdict = { breaksHardRule: false, better: "redraw", note: "The redraw shows your Outfit as it should." };
+/**
+ * The fake's verdict on a Preview as first drawn, as its scenario plays it: wrong in `preview-redrawn`,
+ * its Pieces not drawn as described; breaking a hard rule in `preview-unfixable`, a face added to a
+ * Body-Only Photo or changed on any other; and otherwise right.
+ */
+function firstDrawVerdict(scenario: FakeAiScenario, { photoType, pieces }: FirstDrawToJudge): FirstDrawVerdict {
+  const onlyHair = pieces.every(({ category }) => category === "hairstyle");
+  switch (scenario) {
+    case "preview-redrawn":
+      return {
+        right: false,
+        breaksHardRule: false,
+        ...(onlyHair
+          ? { correction: "Draw the cut exactly as its details describe it.", note: "Your cut should be just as its details describe it." }
+          : { correction: "Draw each garment exactly as its seller's photo shows it.", note: "Each Piece should look just as its seller's photo shows it." }),
+      };
+    case "preview-unfixable":
+      return {
+        right: false,
+        breaksHardRule: true,
+        ...(photoType === "body_only"
+          ? { correction: "Never add a face or a head where the photo shows none.", note: "Your Preview added a face where your photo shows none." }
+          : { correction: "Keep the person's face exactly as it is in their photo.", note: "Your Preview changed your face from your photo." }),
+      };
+    default:
+      return { right: true };
+  }
+}
+
+/** The fake's verdict on a redraw, as its scenario plays it: breaking a hard rule again in `preview-unfixable`, and otherwise better than the first. */
+function redrawVerdict(scenario: FakeAiScenario): RedrawVerdict {
+  return scenario === "preview-unfixable"
+    ? { breaksHardRule: true, better: "first", note: "Neither Preview showed you as you are in your photo, so this Outfit has none." }
+    : { breaksHardRule: false, better: "redraw", note: "The redraw shows your Outfit as it should." };
+}
 
 /** The photo with a banner across its foot saying it's a fake Preview, as a PNG, as image models send. */
 async function withFakePreviewBanner(photo: Photo, label: string): Promise<Uint8Array> {
@@ -329,9 +359,6 @@ function stylistScenario(scenario: FakeAiScenario, styleIcon: FakeScenarioStyleI
       return scenario;
     case "style-icon-passed-over":
       return styleIcon.first ? "passed-over" : "pass";
-    case "preview-redrawn":
-    case "preview-unfixable":
-      return styleIcon.first ? scenario : "pass";
     default:
       return "pass";
   }

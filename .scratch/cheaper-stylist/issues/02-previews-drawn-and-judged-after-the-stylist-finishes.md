@@ -47,3 +47,33 @@ Our code, not either model, decides which image is kept. Users see the same chec
   - finish called in the same turn as saveOutfit goes through.
 - [ ] Today's tests of the single redraw and of keeping none move to the Preview phase. The tests of rendering before every Outfit is saved, and of finish refused while a redraw waits, go with their tools.
 - [ ] The end-to-end tests pass on the fake AI, with their scenarios picked through the existing environment variable.
+
+## Comments
+
+- 2026-10-24: Previews are drawn and judged by our code once the Stylist's loop ends.
+  - **The Preview phase** (`src/server/stylings/preview-phase.ts`). `runStylist` runs it only when the loop ended with finish or at the turn cap, then finishes the Styling. `startPreviews` moves the stage to "previews" and gives the saved Outfits' IDs. Each Outfit, at most `PREVIEWS_AT_ONCE` at once, goes through these durable steps:
+    1. `renderPreview` draws the Preview.
+    2. `judgeFirstDraw` asks for its verdict.
+    3. `redrawPreview` opens the one redraw, adding the verdict's note, then redraws with its correction.
+    4. `judgeRedraw` asks for the redraw's verdict.
+    5. `keepPreview` keeps an image.
+
+    `kept()` decides which: none if both images break a hard rule, the one that doesn't if only one does, and otherwise the image the verdict calls better. A declined or failed redraw keeps the first, or none when the first breaks a hard rule. Each step returns only a state or a verdict, and each verdict step reads the photo and the Previews from Blob and fetches the seller photos itself. Verdict steps get `PREVIEW_STEP_MAX_RETRIES`, and seller photos follow the draw's last-try rule.
+  - **The Stylist** (`stylist.ts`). Its tools are findStyleIcons, fetchBrands, searchProducts, passOverStyleIcon, saveOutfit, writeNote and finish. finish is never refused.
+    - The prompt's steps end at finish, and its "Checking each Preview" section is gone.
+    - The conversation holds no image but the photo. `stylistModelOn`, which fetched seller photos for the model step, is deleted. `PHOTO_LINKS` and the link plumbing in the fakes go with it.
+  - **The Stylist's Notes.** A verdict's note is added, checked by `checkedNote`, as the redraw opens, or before "Left Outfit N without a Preview" when both images break a hard rule. `STEPS.previewLeftUnkept` is gone.
+  - **The fakes.** The fake Stylist saves its Outfits, then calls finish, its note now "That's every Outfit for this Styling, so next come the Previews." The fake verdict plays "preview-redrawn" and "preview-unfixable".
+- 2026-10-24: Choices the ticket left open:
+  - **A verdict's note has no Stylist turn.** The `stylist_note` check required a turn on every note. Migration `0024_preview_verdict_notes` relaxes it: steps never have a turn, and a note may have none.
+  - **The scenarios play on every Outfit's Preview,** not only the first Outfit's as the fake Stylist's did. A verdict isn't told which Outfit it's judging. So "preview-unfixable" leaves every Outfit without a Preview.
+  - **The finish still fails a redraw left unkept,** deleting both images, but adds no step. That covers a Styling finished as stuck mid-phase. Until 03, it also covers a redraw's verdict that fails.
+  - **Verdict text is in the run data:** the first verdict passes between steps, and each verdict comes back from its step. No image or seller photo does.
+  - **The Stylist check** (`stylist-check.ts`) took the correction from the Stylist's redrawPreview calls. It now takes it from the redraws its AI is asked for, matched to an Outfit by their Pieces, as its drawer is. So an Outfit whose Pieces are like another's gets none. Ticket 06 may replace this.
+- 2026-10-24: **Results.** Typecheck is clean and all 1,071 tests pass.
+  - Operations tests in `stylist.test.ts` ("the Preview phase" and "the fake verdict's scenarios") cover:
+    - every case on the ticket's list;
+    - what each verdict call was sent;
+    - a redraw left unkept when the Styling is finished as stuck.
+  - The tests of the Preview tools are removed. Notes, counts and fetch counts elsewhere follow the new order: the verdict fetches each seller photo once more.
+  - **Left for 03:** a verdict that fails or is refused is logged, and the other Outfits carry on. A first draw whose verdict failed stays as drawn, unchecked, and so does one whose Styling is finished as stuck before its verdict. 03 needs a fallback and probably a marker for "not yet judged".

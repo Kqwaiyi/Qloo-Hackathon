@@ -322,9 +322,10 @@ describe("Stylings on the Demo Account", () => {
 });
 
 describe("the Demo Account's Stylist", () => {
-  it("has 60 turns on each Styling, not 30, and finishes with the Outfits it saved once they're used up", async () => {
-    // It saves Ava Stone's Outfit, then keeps asking for a Preview before starting the Previews.
-    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? save(hairstyleOutfit(1)) : turn > 2 ? call("renderPreview", { outfit: 1 }) : undefined);
+  it("has 60 turns on each Styling, not 30, and finishes with the Outfits it saved once they're used up, each Preview judged as everyone's is", async () => {
+    // It saves Ava Stone's Outfit, then keeps asking for its Style Icons again, never finishing.
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? save(hairstyleOutfit(1)) : turn > 2 ? call("findStyleIcons", {}) : undefined);
+    const verdictsBefore = harness.ai.verdictRequests.length;
     const judge = await signedInJudge();
     const consultationId = await start(judge);
 
@@ -333,8 +334,9 @@ describe("the Demo Account's Stylist", () => {
     expect(harness.ai.stylistRequests.map(({ turn }) => turn)).toEqual(Array.from({ length: 60 }, (_, index) => index + 1));
     expect(await readConsultation(harness.context(judge), consultationId)).toMatchObject({
       state: "ready",
-      outfits: [{ position: 1, styleIconName: "Ava Stone", preview: { state: "failed" } }],
+      outfits: [{ position: 1, styleIconName: "Ava Stone", preview: { state: "ready" } }],
     });
+    expect(harness.ai.verdictRequests.slice(verdictsBefore).map(({ draw }) => draw)).toEqual(["first"]);
     expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "succeeded", outfitsMade: 1 })]);
   });
 

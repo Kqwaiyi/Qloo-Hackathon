@@ -3,7 +3,6 @@ import { NoExchangeRateError } from "@/server/outfit-assembly/products";
 import { UnretryableProductSearchError } from "@/server/product-search/provider";
 
 import type { StylingRunner } from "./runner";
-import { stylistModelOn } from "./stylist-model";
 import { ProductSearchDownError, type StylingContext, StylingNotRunningError } from "./steps";
 import { runStylist, type StylistSteps } from "./stylist";
 import { allStylingSteps } from "./stylist-steps";
@@ -11,18 +10,18 @@ import { allStylingSteps } from "./stylist-steps";
 /**
  * Stylings in tests, and in the team's landing sample script: the Styling Workflow's own steps, run
  * through the Stylist in this process, with no retries unless a test (or the script) asks for the
- * Preview step's or the product search step's. Outside the Workflow compiler its directives do
+ * Preview steps' or the product search step's. Outside the Workflow compiler its directives do
  * nothing, so the Workflow agent's own steps, each call to the Stylist's model, run here too, on the
- * context's AI, as the Workflow's model steps call it (`stylistModelOn`). A started Styling waits
- * until `runPending()`, so a test can look at it running.
+ * context's AI, as the Workflow's model steps call it. A started Styling waits until
+ * `runPending()`, so a test can look at it running.
  */
 export class InlineStylingRunner implements StylingRunner {
   /** The Stylings started and not yet run, oldest first. */
   readonly pending: string[] = [];
   /**
-   * How many times a Preview step, or a redraw's, that throws is tried again, as the Workflow retries
-   * it, each try knowing whether it's the last: one of the steps whose last try behaves differently.
-   * None unless a test (or the script) says.
+   * How many times a Preview step, a redraw's or a verdict's, that throws is tried again, as the
+   * Workflow retries it, each try knowing whether it's the last: some of the steps whose last try
+   * behaves differently. None unless a test (or the script) says.
    */
   previewRetries = 0;
   /**
@@ -65,7 +64,7 @@ export class InlineStylingRunner implements StylingRunner {
   /** Runs every pending Styling to its finish, one after another. */
   async runPending(): Promise<void> {
     for (let stylingId = this.pending.shift(); stylingId !== undefined; stylingId = this.pending.shift()) {
-      await runStylist(stylingId, this.steps(), stylistModelOn(this.ctx));
+      await runStylist(stylingId, this.steps(), this.ctx.ai.stylistModel());
     }
   }
 
@@ -75,8 +74,11 @@ export class InlineStylingRunner implements StylingRunner {
       ...allStylingSteps(this.ctx),
       searchProducts: (stylingId, input) => this.retried(this.searchRetries, (steps) => steps.searchProducts(stylingId, input)),
       renderPreview: (stylingId, outfitId) => this.retried(this.previewRetries, (steps) => steps.renderPreview(stylingId, outfitId)),
-      redrawPreview: (stylingId, outfitId, correction) =>
-        this.retried(this.previewRetries, (steps) => steps.redrawPreview(stylingId, outfitId, correction)),
+      judgeFirstDraw: (stylingId, outfitId) => this.retried(this.previewRetries, (steps) => steps.judgeFirstDraw(stylingId, outfitId)),
+      redrawPreview: (stylingId, outfitId, firstVerdict) =>
+        this.retried(this.previewRetries, (steps) => steps.redrawPreview(stylingId, outfitId, firstVerdict)),
+      judgeRedraw: (stylingId, outfitId, firstVerdict) =>
+        this.retried(this.previewRetries, (steps) => steps.judgeRedraw(stylingId, outfitId, firstVerdict)),
     };
   }
 

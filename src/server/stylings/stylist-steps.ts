@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -10,8 +10,7 @@ import {
   PHOTO_TYPE_LABELS,
   type ProductCategory,
 } from "@/config/consultations";
-import { addsToCurrentOutfits, type KeptPreview, PREVIEW_CORRECTION_MAX_LENGTH, type StylingKind } from "@/config/stylings";
-import { previewPathnameFor, previewRedrawPathnameFor } from "@/server/consultations/blob-pathnames";
+import { addsToCurrentOutfits, type StylingKind } from "@/config/stylings";
 import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
 import { brandCategoryOf, needsBrands } from "@/server/outfit-assembly/brands";
 import { outfitCategories } from "@/server/outfit-assembly/categories";
@@ -33,16 +32,7 @@ import {
   stylingSteps,
   whileRunning,
 } from "./steps";
-import {
-  keepPreviewInputSchema,
-  onlyOneRedraw,
-  passOverStyleIconInputSchema,
-  redrawPreviewInputSchema,
-  type SaveOutfitInput,
-  saveOutfitInputSchema,
-  type StylistSteps,
-  writeNoteInputSchema,
-} from "./stylist";
+import { passOverStyleIconInputSchema, type SaveOutfitInput, saveOutfitInputSchema, type StylistSteps, writeNoteInputSchema } from "./stylist";
 import type { StylistBrief, StylistStyleIcon } from "./stylist-brief";
 import { addSteps, addStylistNotes, asOneNote, hasNoteFromTurn, hasNotesFromTurn, type NoteFault, noteFault, notesIn, STEPS } from "./stylist-notes";
 
@@ -60,7 +50,7 @@ const STYLING_KINDS_BRIEFED: Record<StylingKind, string> = {
   try_again: "Try again",
 };
 
-/** The Stylist's own steps for its Style Icons, its Outfits, its Previews and its notes, running on `ctx`. */
+/** The Stylist's own steps for its Style Icons, its Outfits and its notes, running on `ctx`. */
 function stylistSteps(
   ctx: StylingContext,
 ): Pick<
@@ -71,10 +61,6 @@ function stylistSteps(
   | "readStyleIcons"
   | "passOverStyleIcon"
   | "saveOutfit"
-  | "startPreviews"
-  | "openPreview"
-  | "openRedraw"
-  | "keepPreview"
   | "saveNotes"
   | "writeNote"
 > {
@@ -161,7 +147,6 @@ function stylistSteps(
       return whileRunning(ctx.db, stylingId, async (tx) => {
         const building = await readBuilding(tx, stylingId);
         if (building.stage === "style_icons") return refused("Find this Styling's Style Icons first, with findStyleIcons.");
-        if (building.stage === "previews") return refused("You've started the Previews, so no Style Icon can be passed over now.");
         const icon = (await readStyleIconList(tx, building.styleIconList)).find((listed) => listed.number === asked.styleIcon);
         if (!icon) return refused(`There's no Style Icon ${asked.styleIcon} on your list.`);
         if (icon.status === "used") return refused(`${icon.name} has already inspired an Outfit.`);
@@ -189,10 +174,9 @@ function stylistSteps(
       return whileRunning(ctx.db, stylingId, async (tx, running) => {
         const saving = await readBuilding(tx, stylingId);
         if (saving.stage === "style_icons") return refused("Find this Styling's Style Icons first, with findStyleIcons.");
-        if (saving.stage === "previews") return refused("You've started the Previews, so no more Outfits can be saved.");
         const made = await tx.select({ id: outfit.id }).from(outfit).where(eq(outfit.stylingId, stylingId));
         if (made.length >= running.outfitsWanted) {
-          return refused(`This Styling makes at most ${running.outfitsWanted} Outfits, and you've saved them all: start the Previews.`);
+          return refused(`This Styling makes at most ${running.outfitsWanted} Outfits, and you've saved them all: finish.`);
         }
         const categories = outfitCategories(saving);
         const onBrands = needsBrands(categories);
@@ -285,140 +269,8 @@ function stylistSteps(
         return { ok: true, outfit: position };
       });
     },
-
-    async startPreviews(stylingId) {
-      return whileRunning(ctx.db, stylingId, async (tx) => {
-        const { stage } = await readBuilding(tx, stylingId);
-        const made = await tx.select({ position: outfit.position }).from(outfit).where(eq(outfit.stylingId, stylingId)).orderBy(asc(outfit.position));
-        if (made.length === 0) return refused("You haven't saved an Outfit yet: save one first, or finish if you can't make any.");
-        // A retry after the move went through has nothing left to move.
-        if (stage !== "previews") await moveStage(tx, ctx.clock, stylingId, "previews");
-        return { ok: true, outfits: made.map(({ position }) => position) };
-      });
-    },
-
-    async openPreview(stylingId, outfitNumber) {
-      const { stage } = await readRunningStyling(ctx.db, stylingId);
-      if (stage !== "previews") return refused("Say you've saved every Outfit first, with startPreviews.");
-      const [saved] = await ctx.db
-        .select({ id: outfit.id, previewState: outfit.previewState })
-        .from(outfit)
-        .where(and(eq(outfit.stylingId, stylingId), eq(outfit.position, outfitNumber)));
-      if (!saved) return refused(`You haven't saved an Outfit ${outfitNumber}.`);
-      if (saved.previewState !== "pending") return refused(`Outfit ${outfitNumber}'s Preview is already done.`);
-      return { ok: true, outfitId: saved.id };
-    },
-
-    // Each Outfit's Preview may be redrawn once (ADR-0010), so one Styling's cost stays bounded. The
-    // redraw tool holds the Stylist to that across its calls; here, a redraw opened already is
-    // opened again, so that a retry after the opening went through gets what the first try did.
-    async openRedraw(stylingId, input) {
-      const parsed = redrawPreviewInputSchema.safeParse(input);
-      if (!parsed.success) return refused("Give the number of the Outfit whose Preview to redraw, and your correction: one sentence on what to put right.");
-      const { outfit: outfitNumber } = parsed.data;
-      const correction = asOneNote(parsed.data.correction);
-      if (!correction) return refused(`Say what to put right in Outfit ${outfitNumber}'s Preview, in one sentence.`);
-      if (correction.length > PREVIEW_CORRECTION_MAX_LENGTH) return refused(`Your correction for Outfit ${outfitNumber}'s Preview is too long: keep it to one sentence.`);
-      return whileRunning(ctx.db, stylingId, async (tx) => {
-        const { stage } = await readBuilding(tx, stylingId);
-        if (stage !== "previews") return refused("Say you've saved every Outfit first, with startPreviews.");
-        const [saved] = await tx
-          .select({ id: outfit.id, previewState: outfit.previewState, previewRedraw: outfit.previewRedraw })
-          .from(outfit)
-          .where(and(eq(outfit.stylingId, stylingId), eq(outfit.position, outfitNumber)));
-        if (!saved) return refused(`You haven't saved an Outfit ${outfitNumber}.`);
-        if (saved.previewRedraw === "pending") return { ok: true, outfitId: saved.id, correction };
-        if (saved.previewRedraw !== null) return refused(onlyOneRedraw(outfitNumber));
-        if (saved.previewState === "pending") return refused(`Draw Outfit ${outfitNumber}'s Preview first, with renderPreview.`);
-        if (saved.previewState !== "ready") return refused(`The image model didn't draw Outfit ${outfitNumber}'s Preview, so there's nothing to redraw.`);
-        await tx.update(outfit).set({ previewRedraw: "pending" }).where(eq(outfit.id, saved.id));
-        return { ok: true, outfitId: saved.id, correction };
-      });
-    },
-
-    // The Stylist keeps whichever image of a redrawn Preview is better, or neither when both break a
-    // hard rule, so the user never sees a Preview that misrepresents them.
-    async keepPreview(stylingId, input) {
-      const parsed = keepPreviewInputSchema.safeParse(input);
-      if (!parsed.success) return refused('Give the number of the Outfit whose Preview to keep, and which: "first", "redraw" or "none".');
-      const { outfit: outfitNumber, keep } = parsed.data;
-      const kept = await whileRunning(ctx.db, stylingId, async (tx) => {
-        const { stage } = await readBuilding(tx, stylingId);
-        if (stage !== "previews") return refused("Say you've saved every Outfit first, with startPreviews.");
-        const [saved] = await tx
-          .select({
-            id: outfit.id,
-            consultationId: outfit.consultationId,
-            previewState: outfit.previewState,
-            previewPathname: outfit.previewPathname,
-            previewRefusalReason: outfit.previewRefusalReason,
-            previewRedraw: outfit.previewRedraw,
-          })
-          .from(outfit)
-          .where(and(eq(outfit.stylingId, stylingId), eq(outfit.position, outfitNumber)));
-        if (!saved) return refused(`You haven't saved an Outfit ${outfitNumber}.`);
-        const first = previewPathnameFor(saved.consultationId, saved.id);
-        const redraw = previewRedrawPathnameFor(saved.consultationId, saved.id);
-        const images = { first, redraw };
-        // A retry after the keep went through has nothing left to keep, but the images not kept to delete.
-        if (saved.previewRedraw === "kept") {
-          const keptAlready: KeptPreview = saved.previewRefusalReason === "not_kept" ? "none" : saved.previewPathname === redraw ? "redraw" : "first";
-          if (keptAlready !== keep) return refused(`You've kept ${KEEPS[keptAlready].described(outfitNumber)} already.`);
-          return { ok: true as const, outfit: outfitNumber, kept: keep, toDelete: KEEPS[keep].notKept(images) };
-        }
-        if (saved.previewState === "pending") return refused(`Draw Outfit ${outfitNumber}'s Preview first, with renderPreview.`);
-        if (saved.previewState !== "ready") return refused(`The image model didn't draw Outfit ${outfitNumber}'s Preview, so there's none to keep.`);
-        if (saved.previewRedraw === null) {
-          // A Preview never redrawn is the Outfit's as it was drawn.
-          if (keep === "first") return { ok: true as const, outfit: outfitNumber, kept: keep, toDelete: [] };
-          if (keep === "redraw") return refused(`Outfit ${outfitNumber}'s Preview hasn't been redrawn, so there's no redraw to keep.`);
-          return refused(`Keep none only once Outfit ${outfitNumber}'s Preview and its redraw both break a hard rule: redraw it first, with redrawPreview.`);
-        }
-        if (keep === "redraw" && saved.previewRedraw !== "ready") return refused(`Outfit ${outfitNumber}'s redraw wasn't drawn: keep its first Preview, or none.`);
-        await tx.update(outfit).set(KEEPS[keep].saved(images)).where(eq(outfit.id, saved.id));
-        await addSteps(tx, stylingId, STEPS.previewKept(outfitNumber, keep));
-        return { ok: true as const, outfit: outfitNumber, kept: keep, toDelete: KEEPS[keep].notKept(images) };
-      });
-      if (!kept.ok) return kept;
-      // Once the keep is saved, the images not kept go, as no Outfit shows them.
-      const { toDelete, ...result } = kept;
-      await Promise.all(toDelete.map((pathname) => ctx.blob.delete(pathname)));
-      return result;
-    },
   };
 }
-
-/** Where a redrawn Preview's two images are in the private Blob store. */
-interface RedrawnPreviewImages {
-  first: string;
-  redraw: string;
-}
-
-/**
- * What keeping each of a redrawn Preview's images comes to: how a refusal names it, what its Outfit
- * saves, and which of the images then go, as no Outfit shows them. Keeping neither leaves the Outfit
- * with no Preview, as a refusal does.
- */
-const KEEPS: Record<
-  KeptPreview,
-  { described: (outfit: number) => string; saved: (images: RedrawnPreviewImages) => Partial<typeof outfit.$inferInsert>; notKept: (images: RedrawnPreviewImages) => string[] }
-> = {
-  first: {
-    described: (outfitNumber) => `Outfit ${outfitNumber}'s first Preview`,
-    saved: () => ({ previewRedraw: "kept" }),
-    notKept: ({ redraw }) => [redraw],
-  },
-  redraw: {
-    described: (outfitNumber) => `Outfit ${outfitNumber}'s redrawn Preview`,
-    saved: ({ redraw }) => ({ previewRedraw: "kept", previewPathname: redraw }),
-    notKept: ({ first }) => [first],
-  },
-  none: {
-    described: (outfitNumber) => `no Preview for Outfit ${outfitNumber}`,
-    saved: () => ({ previewRedraw: "kept", previewState: "refused", previewPathname: null, previewRefusalReason: "not_kept" }),
-    notKept: ({ first, redraw }) => [first, redraw],
-  },
-};
 
 /** Why a reason for passing over a Style Icon is refused, by what's wrong with it as a note. */
 const REASON_REFUSALS: Record<NoteFault, (styleIconName: string) => string> = {

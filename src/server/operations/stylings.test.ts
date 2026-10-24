@@ -83,6 +83,8 @@ beforeEach(async () => {
   harness.ai.styleIconScenarios = {};
   harness.ai.previewRequests.length = 0;
   harness.ai.previewScenarios = [];
+  harness.ai.verdictRequests.length = 0;
+  harness.ai.previewVerdicts = [];
   harness.ai.stylistRequests.length = 0;
   harness.ai.stylistTurn = undefined;
   harness.ai.duringCall = undefined;
@@ -1897,7 +1899,8 @@ describe("each Outfit's Preview", () => {
     await start(await signedInUser({ stylePreference: "womenswear" }), "body_only");
     await harness.stylings.runPending();
 
-    expect(topTries).toBe(2);
+    // Twice to draw the Preview, then once to judge it.
+    expect(topTries).toBe(3);
     expect(harness.ai.previewRequests.map(({ pieces }) => pieces)).toEqual([
       [
         { category: "top", title: "Product c3-bolt-top-1", photo: productPhotoFingerprint(topPhoto) },
@@ -1907,7 +1910,7 @@ describe("each Outfit's Preview", () => {
     ]);
   });
 
-  it("draws a Product from its title only once the step's last try still can't fetch its photo", async () => {
+  it("draws and judges a Product from its title only once the step's last try still can't fetch its photo", async () => {
     harness.qloo.respond = qlooAnswering({ female: [WOMEN[0]!] });
     harness.stylings.previewRetries = 3;
     const topPhoto = "https://cdn.channel3.test/c3-bolt-top-1-cleaned.png";
@@ -1917,8 +1920,10 @@ describe("each Outfit's Preview", () => {
     const consultationId = await start(await signedInUser({ stylePreference: "womenswear" }), "body_only");
     await harness.stylings.runPending();
 
-    expect(topTries).toBe(4);
+    // Each of the Preview's 4 tries, then each of its verdict's.
+    expect(topTries).toBe(8);
     expect(harness.ai.previewRequests.map(({ pieces }) => pieces[0])).toEqual([{ category: "top", title: "Product c3-bolt-top-1", photo: null }]);
+    expect(harness.ai.verdictRequests.map(({ pieces }) => pieces[0])).toEqual([{ category: "top", title: "Product c3-bolt-top-1", photo: null }]);
     expect(await previewsOf(consultationId)).toEqual([expect.objectContaining({ previewState: "ready" })]);
   });
 
@@ -1952,7 +1957,8 @@ describe("each Outfit's Preview", () => {
     await harness.stylings.runPending();
 
     const photos = harness.productPhotos.requests.map((url) => productPhotoBytes(url));
-    expect(photos).toHaveLength(6);
+    // For the Preview's failed try, its next, and its verdict.
+    expect(photos).toHaveLength(9);
     const [stored] = await harness.db.select().from(consultation).where(eq(consultation.id, consultationId));
     const [preview] = await previewsOf(consultationId);
     expect(preview).toMatchObject({ previewState: "ready" });
@@ -1975,7 +1981,8 @@ describe("each Outfit's Preview", () => {
 
     const saved = (await productPiecesOf(consultationId)).map(({ productPhotoUrl }) => productPhotoUrl);
     expect(saved).toHaveLength(3);
-    expect(harness.productPhotos.requests.map(String).toSorted()).toEqual(saved.toSorted());
+    // To draw the Preview, then to judge it.
+    expect(harness.productPhotos.requests.map(String).toSorted()).toEqual([...saved, ...saved].toSorted());
   });
 
   it("is a placeholder when the image model declines, which is final, with every Piece still shown", async () => {

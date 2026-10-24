@@ -25,7 +25,7 @@ export function previewPathnameFor(consultationId: string, outfitId: string): st
   return `${consultationFolder(consultationId)}/previews/${outfitId}.webp`;
 }
 
-/** The Stylist's redraw of an Outfit's Preview, beside it: the Outfit's Preview once the Stylist keeps it. */
+/** The redraw of an Outfit's Preview, beside it: the Outfit's Preview once the Preview phase keeps it. */
 export function previewRedrawPathnameFor(consultationId: string, outfitId: string): string {
   return `${consultationFolder(consultationId)}/previews/${outfitId}-redraw.webp`;
 }

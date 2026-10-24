@@ -526,7 +526,7 @@ function handlingText(preview: PreviewHandling, correction: string | null): stri
     case "declined":
       return "the image model declined to draw its Preview";
     case "failed":
-      return "its Preview couldn't be drawn, or the Styling ended before the Stylist kept one";
+      return "its Preview couldn't be drawn, or the Styling ended before one of its images was kept";
   }
 }
 

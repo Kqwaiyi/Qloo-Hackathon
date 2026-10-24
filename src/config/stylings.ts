@@ -37,20 +37,20 @@ export type PreviewState = (typeof PREVIEW_STATES)[number];
 
 /**
  * Why a Preview was refused: the image model blocked the request, stopped for image safety, or
- * answered in text with no image; or the Stylist kept neither of its images (`not_kept`), as both
- * broke a hard rule.
+ * answered in text with no image; or neither of its images was kept (`not_kept`), as both broke a
+ * hard rule.
  */
 export const PREVIEW_REFUSAL_REASONS = ["blocked", "image_safety", "no_image", "not_kept"] as const;
 export type PreviewRefusalReason = (typeof PREVIEW_REFUSAL_REASONS)[number];
 
-/** Why the image model refused a Preview, as it says: never `not_kept`, which is the Stylist's. */
+/** Why the image model refused a Preview, as it says: never `not_kept`, which is the Preview phase's. */
 export type ImageModelRefusalReason = Exclude<PreviewRefusalReason, "not_kept">;
 
 /**
  * Where an Outfit's one redraw of its Preview is: drawing, drawn, refused by the image model, or
- * failed; then kept, once the Stylist keeps the first image, the redraw or neither. An Outfit never
- * redrawn has none. A redraw not kept by the time its Styling finishes leaves the Outfit with no
- * Preview, as nobody chose which of its images shows the user as they are.
+ * failed; then kept, once the Preview phase keeps the first image, the redraw or neither. An Outfit
+ * never redrawn has none. A redraw not kept by the time its Styling finishes leaves the Outfit with
+ * no Preview, as nothing chose which of its images shows the user as they are.
  */
 export const PREVIEW_REDRAW_STATES = ["pending", "ready", "refused", "failed", "kept"] as const;
 export type PreviewRedrawState = (typeof PREVIEW_REDRAW_STATES)[number];
@@ -58,12 +58,9 @@ export type PreviewRedrawState = (typeof PREVIEW_REDRAW_STATES)[number];
 /** How a redraw came out, as the step that drew it saves it. */
 export type PreviewRedrawOutcome = Extract<PreviewRedrawState, "ready" | "refused" | "failed">;
 
-/** Which of a redrawn Preview's images the Stylist keeps: the first, the redraw, or neither. */
+/** Which of a redrawn Preview's images the Preview phase keeps, by the hard rules: the first, the redraw, or neither. */
 export const KEPT_PREVIEWS = ["first", "redraw", "none"] as const;
 export type KeptPreview = (typeof KEPT_PREVIEWS)[number];
-
-/** A correction the Stylist sends with a redraw longer than this many characters is refused: it's one sentence. */
-export const PREVIEW_CORRECTION_MAX_LENGTH = 300;
 
 /**
  * Where a Piece's search in the product search is: under way, answered (with the Products that
@@ -72,12 +69,13 @@ export const PREVIEW_CORRECTION_MAX_LENGTH = 300;
 export const PIECE_SEARCH_STATES = ["searching", "answered", "unanswered"] as const;
 export type PieceSearchState = (typeof PIECE_SEARCH_STATES)[number];
 
-/** A Styling renders this many Previews at once, each its own step. */
+/** A Styling's Preview phase works on this many Outfits' Previews at once, each call its own step. */
 export const PREVIEWS_AT_ONCE = 2;
 
 /**
- * A Preview step that throws is tried again this many times, as the Workflow's default retries it.
- * A Product photo that still can't be fetched on its last try is drawn from its title instead.
+ * A Preview step, a redraw's or a verdict's, that throws is tried again this many times, as the
+ * Workflow's default retries it. A Product photo that still can't be fetched on its last try goes by
+ * its title instead.
  */
 export const PREVIEW_STEP_MAX_RETRIES = 3;
 
@@ -140,8 +138,8 @@ export const BUILDING_OUTFITS_STAGES: readonly StylingStage[] = ["brands", "buil
 export const SLOW_BUILDING_OUTFITS_MS = 3 * 60_000;
 
 /**
- * What an entry of the Stylist's Notes is: a note the Stylist wrote to the user, or a step our code
- * wrote for one of its tool calls and what came of it.
+ * What an entry of the Stylist's Notes is: a note to the user the Stylist wrote, or a Preview's
+ * verdict did, or a step our code wrote for one of its tool calls or Preview steps and what came of it.
  */
 export const STYLIST_NOTE_KINDS = ["note", "step"] as const;
 export type StylistNoteKind = (typeof STYLIST_NOTE_KINDS)[number];
