@@ -1,9 +1,8 @@
 // The AI provider's settings. Every model name lives here so it can change without hunting through code.
 
 /**
- * The Claude models the app can run on. Claude Haiku 5.5 runs the photo check and the Stylist;
- * Claude Sonnet 5.5 is where the Stylist moves if the Haiku check (`npm run check:stylist`) finds
- * Haiku falls short.
+ * The Claude models the app can run on. Claude Haiku 5.5 runs the photo check. Claude Sonnet 5.5 runs
+ * the Stylist, which the Haiku check (`npm run check:stylist`) found Haiku fell short at.
  */
 export const CLAUDE_MODELS = {
   haiku55: "claude-haiku-5-5",
@@ -21,10 +20,10 @@ export const CLAUDE_PHOTO_CHECK_EFFORT = "medium";
  * The Claude model the Stylist runs on (ADR-0011), one of CLAUDE_MODELS. Its prompt cache is the
  * model's own, so changing it part-way through a Styling would miss the cache.
  */
-export const CLAUDE_STYLIST_MODEL: ClaudeModel = CLAUDE_MODELS.haiku55;
+export const CLAUDE_STYLIST_MODEL: ClaudeModel = CLAUDE_MODELS.sonnet55;
 
-/** How hard Claude works at each of the Stylist's turns: it judges what suits the photo. */
-export const CLAUDE_STYLIST_EFFORT = "high";
+/** How hard Claude works at each of the Stylist's turns, as it judges what suits the photo and checks each Preview. */
+export const CLAUDE_STYLIST_EFFORT = "medium";
 
 /**
  * The most Claude writes in one of the Stylist's turns, thinking included: far more than a note and

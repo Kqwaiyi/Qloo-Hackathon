@@ -81,7 +81,7 @@ describe("switching real AI on", () => {
     const { text } = await generateText({ model: ai.stylistModel(), prompt: "This Styling's brief." });
 
     expect(text).toBe("Finding your Style Icons first.");
-    expect(anthropic.requests.map(({ headers, body }) => [headers.get("x-api-key"), body.model])).toEqual([["anthropic-key-from-the-environment", "claude-haiku-5-5"]]);
+    expect(anthropic.requests.map(({ headers, body }) => [headers.get("x-api-key"), body.model])).toEqual([["anthropic-key-from-the-environment", "claude-sonnet-5-5"]]);
     expect(gemini.requests).toEqual([]);
   });
 

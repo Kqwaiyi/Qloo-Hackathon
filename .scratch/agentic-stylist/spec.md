@@ -24,7 +24,7 @@ Qloo still decides which Style Icons and Brands are candidates. The tools still 
 **Afterwards**, the notes stay in a collapsed section under the Outfits, and a failed Styling's notes stay under its failure line.
 
 **Models and privacy:**
-- The photo check and the Stylist run on Claude Haiku 5.5. Previews stay on Gemini's Nano Banana 2.1.
+- The photo check runs on Claude Haiku 5.5, and the Stylist on Claude Sonnet 5.5, since the Haiku check found Haiku fell short (ticket 12). Previews stay on Gemini's Nano Banana 2.1.
 - Photos now also go to Anthropic. The photo notice says so and its version is raised, so every user sees the consent sheet again before their next Consultation.
 - Claude's thinking is never shown or stored.
 - While a Styling runs, its photo, Previews and the Stylist's conversation sit encrypted in the Workflow's run data. They're unreadable the moment it ends and gone within 36 days, and the Privacy Policy says so.
@@ -196,7 +196,7 @@ Qloo still decides which Style Icons and Brands are candidates. The tools still 
 
 ### Models and providers
 
-- **Models:** Claude Haiku 5.5 for both the photo check (medium effort) and the Stylist (high effort). Gemini's Nano Banana 2.1 for Previews. Every model name stays in the AI config. The Gemini photo-check and tailoring model settings go.
+- **Models:** Claude Haiku 5.5 for the photo check (medium effort), and Claude Sonnet 5.5 for the Stylist (medium effort), moved from Haiku 5.5 at high effort after the Haiku check (ticket 12). Gemini's Nano Banana 2.1 for Previews. Every model name stays in the AI config. The Gemini photo-check and tailoring model settings go.
 - **The new Anthropic adapter** implements the photo check and supplies the Stylist's model, both through the AI SDK's Anthropic provider at the version built for the app's AI SDK. The Gemini adapter keeps only the Preview.
   - **The photo check** keeps its prompt, its report and its rejection order, and our code still decides. It is asked for structured output. A refusal is reported as blocked.
   - **The Stylist** is never forced to call a tool, because Haiku skips thinking when forced.
