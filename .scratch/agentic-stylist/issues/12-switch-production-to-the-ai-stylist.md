@@ -99,3 +99,29 @@
   - **Fewer notes.** Sonnet wrote 29 notes in 50 turns, against Haiku's 55 in 68, and none in some of the turns where it searched and saved. Sonnet 5.5 can return a note longer than a sentence or two as a progress-update thinking block, empty under the "omitted" display the Stylist uses. So the Stylist's Notes may be losing some. Check the waiting screen in the live Stylings below.
   - **Cost:** $0.66 of Claude for the Stylist's 50 turns, against $0.056 for Haiku's 68: about 12 times as much per check, from about $0.01 to about $0.11 a Styling. Caching cut Sonnet's cost about threefold, against $1.99 with nothing cached. The photo checks stayed on Haiku and aren't counted. Gemini cost nothing, with 0 Previews drawn. 31 product searches came to about $0.22. Sonnet was also quicker: about 3.5 minutes for the six Stylings, against about 7.5 for Haiku.
   - **Still to do before switching:** run the check once more with real Nano Banana 2.1 Previews (`npm run check:stylist -- --go-ahead`), to see Sonnet with production's own Previews: whether it keeps good ones as drawn and redraws bad ones. That draws new images, about $0.52 of Gemini.
+- 2026-10-24: **The Stylist writes its notes with a tool now** (`writeNote`, commit 8dd558f), after the note loss above. Each note is checked as before and saved before the steps of its turn. Thinking display stays "omitted". The check ran once more on Sonnet, as before: `--image-model gemini-3.1-flash-lite-image --previews-from` Haiku's saved Previews, so no image model was called.
+  - **Notes:** 48 in 65 turns, against 29 in 50 before. 43 came through writeNote and none was refused. 3 were short text and 2 were pass-over reasons.
+  - **Turns with a note:** 45 of 65, against 26 of 50.
+    - Searches: 12 of the 13 turns that searched for Products wrote a note, against 1 of 6.
+    - Saves: 6 of the 7 turns that saved Outfits wrote a note, against 3 of 6.
+    - Full-Body Photo: before, turn 3 (six searches) and turn 4 (two saves) had no note. Now turn 3 (six searches) says "Searching each Brand's tops, bottoms and shoes so both looks stay cohesive and casual." Turn 6 (two saves) says "Saving two looks: an edgy light-denim outfit with slides, and a relaxed Fear Of God hoodie-and-sweatpants set with white chunky trainers that echo your sneakers."
+    - Of the 20 turns still silent, most only drew or kept Previews, or finished. Three working turns had no note: a search on the Full-Body Photo, and a Brand fetch and a save on the Body-Only Photo.
+  - **By Styling,** notes, then turns with a note, out of all turns:
+    - Full-Body Photo: 4 in 4 of 7 before; 7 in 7 of 12 now.
+    - Face Photo: 3 in 2 of 6 before; 5 in 4 of 5 now.
+    - Body-Only Photo: 3 in 3 of 7 before; 8 in 8 of 13 now.
+    - Full-Body Photo, first drawn as the photo unchanged: 7 in 6 of 13 before; 15 in 14 of 18 now.
+    - Face Photo, first drawn with the face pixelated: 6 in 5 of 8 before; 4 in 4 of 7 now.
+    - Body-Only Photo, drawn and redrawn with a face added: 6 in 6 of 9 before; 9 in 8 of 10 now.
+    - The Stylings differ more than the notes do. The photo check read the Full-Body Photo as "casual and streetwear" this time, which gave different Style Icons, and on the Face Photos Sonnet kept Post Malone, where it had passed him over.
+  - **Against the prompt's rules:**
+    - No note states a price.
+    - None mentions the person's body, skin, ethnicity or age.
+    - None names a service other than Qloo.
+    - Notes about the face only say whether a Preview changed it, such as "Both previews keep your face as it is" and "added a head".
+    - Points to tidy:
+      - Sonnet still wrote 3 short notes as plain text, which the text path keeps. One is shorthand that reads badly to the user: "Pass icon 3, take icon 4." Another repeats its turn's writeNote note in other words: "Both redraws still break the rules, so I'm keeping neither."
+      - "Saving two relaxed Outfits that echo your light, easy palette." means the white tee and light denim, but "your light palette" could be read as skin. Worth watching.
+  - **Finish refused:** in 3 Stylings Sonnet called finish in the same turn as its last keepPreview. finish refuses while a redrawn Preview waits for a keep, and the keep wasn't saved yet. Each cost 1 or 2 extra turns, and these are the report's 6 refused tool calls. This is older than the note tool: finish doesn't wait for a keep in the same turn.
+  - **Cost:** $0.93 of Claude for 65 turns, against $0.66 for 50: about $0.014 a turn, against $0.013. 36 product searches, about $0.25. Gemini cost nothing, with no Previews drawn. About $1.18 in all, besides the photo checks.
+  - Saved in C:\Users\steve\AppData\Local\Temp\stylist-check-2026-10-24T05-59-33, outside the repository.
