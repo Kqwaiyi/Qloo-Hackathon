@@ -61,10 +61,14 @@ export class InlineStylingRunner implements StylingRunner {
     if (index !== -1) this.pending.splice(index, 1);
   }
 
-  /** Runs every pending Styling to its finish, one after another. */
-  async runPending(): Promise<void> {
+  /**
+   * Runs every pending Styling to its finish, one after another, through its steps as `watched`
+   * gives them, once they're tried again as the test says: as they are, unless the Stylist check
+   * watches them.
+   */
+  async runPending(watched: (steps: StylistSteps) => StylistSteps = (steps) => steps): Promise<void> {
     for (let stylingId = this.pending.shift(); stylingId !== undefined; stylingId = this.pending.shift()) {
-      await runStylist(stylingId, this.steps(), this.ctx.ai.stylistModel());
+      await runStylist(stylingId, watched(this.steps()), this.ctx.ai.stylistModel());
     }
   }
 

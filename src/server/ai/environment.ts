@@ -1,4 +1,4 @@
-import { AnthropicAiProvider } from "./anthropic";
+import { type AnthropicAiOptions, AnthropicAiProvider } from "./anthropic";
 import { fakeAiFromEnvironment } from "./fake";
 import { GeminiAiProvider } from "./gemini";
 import type { AiProvider } from "./provider";
@@ -22,10 +22,10 @@ export function aiFromEnvironment(name = process.env.AI_PROVIDER || "fake"): AiP
 /**
  * Real AI, two adapters together (ADR-0011): the photo check, the Stylist and each Preview's verdict
  * on Claude, with ANTHROPIC_API_KEY, and Previews on Gemini, with GEMINI_API_KEY. It refuses to start
- * without either key.
+ * without either key. The Stylist check watches its verdicts with `verdictMiddleware`.
  */
-function realAiFromEnvironment(): AiProvider {
-  const claude = new AnthropicAiProvider({ apiKey: realAiKey("ANTHROPIC_API_KEY") });
+export function realAiFromEnvironment({ verdictMiddleware }: Pick<AnthropicAiOptions, "verdictMiddleware"> = {}): AiProvider {
+  const claude = new AnthropicAiProvider({ apiKey: realAiKey("ANTHROPIC_API_KEY"), verdictMiddleware });
   const gemini = new GeminiAiProvider({ apiKey: realAiKey("GEMINI_API_KEY") });
   return {
     checkPhoto: (input) => claude.checkPhoto(input),

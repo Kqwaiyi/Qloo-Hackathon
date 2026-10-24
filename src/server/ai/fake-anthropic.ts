@@ -41,16 +41,30 @@ export class FakeAnthropic {
 }
 
 /**
- * Claude's reply carrying `text`, as a model that finished normally sends it. Its thinking comes
- * first, with no text, as it does with thinking display omitted.
+ * The tokens a reply says its request used, as Anthropic reports them: its prompt's uncached input,
+ * what it wrote to the prompt cache and read from it, and its output.
  */
-export function anthropicText(text: string): Response {
-  return anthropicMessage([THINKING, { type: "text", text }], "end_turn");
+export interface AnthropicUsage {
+  input_tokens: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  output_tokens: number;
 }
 
-/** Claude's reply carrying `value` as JSON, as structured output sends it. */
-export function anthropicJson(value: unknown): Response {
-  return anthropicText(JSON.stringify(value));
+/** The usage a reply reports unless a test gives its own. */
+const SOME_USAGE: AnthropicUsage = { input_tokens: 1000, output_tokens: 100 };
+
+/**
+ * Claude's reply carrying `text`, as a model that finished normally sends it, with the tokens it
+ * used. Its thinking comes first, with no text, as it does with thinking display omitted.
+ */
+export function anthropicText(text: string, usage: AnthropicUsage = SOME_USAGE): Response {
+  return anthropicMessage([THINKING, { type: "text", text }], "end_turn", usage);
+}
+
+/** Claude's reply carrying `value` as JSON, as structured output sends it, with the tokens it used. */
+export function anthropicJson(value: unknown, usage?: AnthropicUsage): Response {
+  return anthropicText(JSON.stringify(value), usage);
 }
 
 /** One tool call Claude makes: its ID, the tool's name and its input. */
@@ -78,7 +92,7 @@ function textAndToolUse(text: string | undefined, calls: AnthropicToolCall[]): u
   return [...(text === undefined ? [] : [{ type: "text", text }]), ...calls.map(({ id, name, input }) => ({ type: "tool_use", id, name, input }))];
 }
 
-function anthropicMessage(content: unknown[], stopReason: string): Response {
+function anthropicMessage(content: unknown[], stopReason: string, usage: AnthropicUsage = SOME_USAGE): Response {
   return Response.json({
     type: "message",
     id: "msg_fake",
@@ -87,7 +101,7 @@ function anthropicMessage(content: unknown[], stopReason: string): Response {
     content,
     stop_reason: stopReason,
     stop_sequence: null,
-    usage: { input_tokens: 1000, output_tokens: 100 },
+    usage,
   });
 }
 

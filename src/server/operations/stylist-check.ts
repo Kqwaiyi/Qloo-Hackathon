@@ -1,29 +1,41 @@
 import type { LanguageModelV4, LanguageModelV4FinishReason, LanguageModelV4Prompt, LanguageModelV4Usage } from "@ai-sdk/provider";
-import { wrapLanguageModel } from "ai";
+import { type LanguageModelMiddleware, wrapLanguageModel } from "ai";
 import { eq } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 
 import { STYLIST_CHECK_BIRTH_DATE, STYLIST_CHECK_COUNTRY_CODE, type StylePreference } from "@/config/accounts";
 import { CLAUDE_PRICES, type ClaudeModel } from "@/config/ai";
 import { byCategoryOrder, type PhotoType, type PieceCategory } from "@/config/consultations";
-import { KEPT_PREVIEWS, stylingLimitsFor } from "@/config/stylings";
-import type { AiProvider, PhotoCheckInput, PhotoCheckResult, PreviewInput, PreviewPiece, PreviewResult } from "@/server/ai/provider";
+import { type KeptPreview, stylingLimitsFor } from "@/config/stylings";
+import type {
+  AiProvider,
+  FirstDrawVerdict,
+  PhotoCheckInput,
+  PhotoCheckResult,
+  PreviewInput,
+  PreviewResult,
+  RedrawVerdict,
+  VerdictResult,
+} from "@/server/ai/provider";
 import type { BlobStore, StoredBlob } from "@/server/blob/store";
 import { previewPathnameFor, previewRedrawPathnameFor } from "@/server/consultations/blob-pathnames";
 import type { PhotoRejection } from "@/server/consultations/photo-check";
 import { outfit, piece, styleIcon, styling } from "@/server/db/schema";
-import { type OutfitView, type PreviewView, readConsultation, startConsultation } from "@/server/operations/consultations";
+import { readConsultation, startConsultation } from "@/server/operations/consultations";
 import type { OperationContext } from "@/server/operations/context";
 import { signUp } from "@/server/operations/sign-up";
 import { browserRequests } from "@/server/operations/team";
+import type { PreviewDrawn } from "@/server/stylings/preview-phase";
 import type { StylingRunner } from "@/server/stylings/runner";
-import { type StylistNoteEntry, STEPS } from "@/server/stylings/stylist-notes";
+import { passOverStyleIconInputSchema, type StyleIconPassedOver, type StylistStepResult, type StylistSteps } from "@/server/stylings/stylist";
+import { asOneNote, type StylistNoteEntry } from "@/server/stylings/stylist-notes";
 
 // The Stylist check (spec: "Fakes and the check"), the Haiku check: the team's script runs the real
 // Stylist on fixed, AI-generated photos, each styled once as a new user would be, and reports whether
-// it made valid Outfits, its turns, time, cost and largest prompt, and what it did with each Preview,
-// some of them deliberately wrong. It runs on a fresh app of its own, which lives only while the
-// script runs, on an AI and a Blob store the check watches.
+// it made valid Outfits, its turns, time and largest prompt, what Claude cost across the Stylist's
+// model and the verdict's, the Style Icons it passed over for hair length, and what the Preview phase
+// did with each Preview, some of them deliberately wrong. It runs on a fresh app of its own, which
+// lives only while the script runs, on an AI, a Blob store and Styling steps the check watches.
 
 /** The Outfit a Preview is drawn for: its number, as the user sees it, and its Style Icon. */
 export interface OutfitDrawn {
@@ -57,27 +69,43 @@ export interface StylistTurn {
   refusedBefore: string[];
 }
 
-/** A redraw of a Preview, as the check sees it asked for: the Pieces it's drawn with, and the verdict's correction. */
-export interface RedrawAskedFor {
-  pieces: readonly PreviewPiece[];
-  correction: string;
+/** One call Claude answered for a Preview's verdict, as the check sees it: never what it was sent or said. */
+export interface VerdictCall {
+  /** The model that answered it, by its ID, such as "claude-sonnet-5-5". */
+  modelId: string;
+  /** Its tokens, as the model reports them: its prompt's, cached or not, and what it wrote. */
+  usage: LanguageModelV4Usage;
 }
 
 /**
- * The AI a Stylist check runs on: the app's own, watched. It keeps each of the Stylist's turns, and
- * each redraw asked for, and draws each Preview as the check says: on the image model unless the
- * check draws them itself.
+ * The AI a Stylist check runs on: the app's own, watched. It keeps each of the Stylist's turns and
+ * each call Claude answered for a Preview's verdict, and draws each Preview as the check says: on the
+ * image model unless the check draws them itself.
  */
 export class StylistCheckAi implements AiProvider {
   /** Every turn of the Stylist's, oldest first, across every Styling the check runs on it. */
   readonly turns: StylistTurn[] = [];
-  /** Every redraw asked for, oldest first, across every Styling the check runs on it. */
-  readonly redraws: RedrawAskedFor[] = [];
+  /** Every call Claude answered for a Preview's verdict, oldest first, across every Styling the check runs on it. */
+  readonly verdictCalls: VerdictCall[] = [];
   /** Judges each Preview on the app's own AI, as it is. */
   readonly judgePreview: AiProvider["judgePreview"];
+  private readonly ai: AiProvider;
   private drawer: (input: PreviewInput) => Promise<PreviewResult>;
 
-  constructor(private readonly ai: AiProvider) {
+  /**
+   * On the app's own AI, as `buildAi` builds it: it wraps the model each Preview's verdict is asked
+   * of in the middleware it's given, so the check sees each call's tokens. An AI whose verdicts ask
+   * no model, as the fake's, has no verdict calls.
+   */
+  constructor(buildAi: (verdictMiddleware: LanguageModelMiddleware) => AiProvider) {
+    const ai = buildAi({
+      wrapGenerate: async ({ doGenerate, model }) => {
+        const call = await doGenerate();
+        this.verdictCalls.push({ modelId: model.modelId, usage: call.usage });
+        return call;
+      },
+    });
+    this.ai = ai;
     this.drawer = (input) => ai.renderPreview(input);
     this.judgePreview = ai.judgePreview.bind(ai);
   }
@@ -118,7 +146,6 @@ export class StylistCheckAi implements AiProvider {
   }
 
   renderPreview(input: PreviewInput): Promise<PreviewResult> {
-    if (input.correction) this.redraws.push({ pieces: input.pieces, correction: input.correction });
     return this.drawer(input);
   }
 }
@@ -167,8 +194,11 @@ export class StylistCheckBlob implements BlobStore {
 export type StylistCheckApp = Omit<OperationContext, "requestHeaders" | "responseCookies" | "stylings" | "ai" | "blob"> & {
   ai: StylistCheckAi;
   blob: StylistCheckBlob;
-  /** Runs Stylings in this process: each one started runs to its end when `runPending()` is called. */
-  stylings: StylingRunner & { runPending(): Promise<void> };
+  /**
+   * Runs Stylings in this process: each one started runs to its end when `runPending()` is called,
+   * through its steps as `watched` gives them, so the check can watch them.
+   */
+  stylings: StylingRunner & { runPending(watched?: (steps: StylistSteps) => StylistSteps): Promise<void> };
 };
 
 /** One photo to style, as a new user with this Style Preference in the United States, at No Budget for a body photo. */
@@ -184,10 +214,25 @@ export interface StylistCheckPhoto {
 export type StylistEnding = "finished" | "turn-cap" | "refused" | "stopped";
 
 /**
- * What came of an Outfit's Preview: it was kept as it was first drawn, or redrawn and one of its
- * images kept, or neither; or the image model declined to draw it, or it couldn't be drawn.
+ * What the Preview phase did with an Outfit's Preview: judged it right as first drawn, and kept it;
+ * drew it, but had no verdict on it, so never showed it; or found it wrong, redrew it and kept one
+ * of its images, or neither. Or the image model declined to draw it, or it couldn't be drawn.
  */
-export type PreviewHandling = "kept" | "redrawn-kept-first" | "redrawn-kept-redraw" | "redrawn-kept-none" | "declined" | "failed";
+export type PreviewHandling = "kept" | "unchecked" | "redrawn-kept-first" | "redrawn-kept-redraw" | "redrawn-kept-none" | "declined" | "failed";
+
+/** A Preview the Preview phase redrew, as its first draw's verdict found it wrong, and how its redraw came out. */
+export interface PreviewRedrawn {
+  /** Whether its first image broke a hard rule, as its first draw's verdict found. */
+  firstBreaksHardRule: boolean;
+  /** The correction it was redrawn with, its first draw's verdict's. */
+  correction: string;
+  /**
+   * How its redraw came out: declined by the image model; never drawn, as it still failed after its
+   * retries; or drawn and judged: whether it broke a hard rule and which of the two images the
+   * verdict called better, or no verdict, as the model refused to judge it or it still failed.
+   */
+  redraw: "declined" | "failed" | { verdict: Pick<RedrawVerdict, "breaksHardRule" | "better"> | null };
+}
 
 /** One of the Outfits the Styling made, as the check reports it. */
 export interface CheckedOutfit {
@@ -195,9 +240,10 @@ export interface CheckedOutfit {
   styleIconName: string;
   /** Its Pieces, in Category order: a Product by its title, the Hairstyle by its cut, and the Brand each is built on. */
   pieces: { category: PieceCategory; item: string; brand: string | null }[];
+  /** What the Preview phase did with its Preview. */
   preview: PreviewHandling;
-  /** The correction its Preview was redrawn with, its first draw's verdict's, or null when it wasn't. */
-  correction: string | null;
+  /** What the Preview phase found and did, for a Preview it redrew; null for any other. */
+  redrawn: PreviewRedrawn | null;
   /** Each image drawn for its Preview, as it was stored, in order: the first, then any redraw. */
   images: Uint8Array[];
 }
@@ -216,10 +262,16 @@ export type StylistCheckResult =
       turns: StylistTurn[];
       /** The turns the Stylist had, as everyone but the Demo Account has. */
       turnCap: number;
+      /** The calls Claude answered for its Previews' verdicts, oldest first. */
+      verdictCalls: VerdictCall[];
       /** What its turns cost, in US dollars, at the prices of the model that ran them, or null when none are known for it. */
+      stylistCostUsd: number | null;
+      /** What its turns would have cost with nothing read from the prompt cache or written to it, or null as for `stylistCostUsd`. */
+      uncachedStylistCostUsd: number | null;
+      /** What its verdict calls cost, in US dollars, at the prices of the model that answered them, or null when none are known for it. */
+      verdictCostUsd: number | null;
+      /** What Claude cost in all, the Stylist's turns and the verdict calls together, or null when either is unknown. */
       costUsd: number | null;
-      /** What its turns would have cost with nothing read from the prompt cache or written to it, or null as for `costUsd`. */
-      uncachedCostUsd: number | null;
       /** The fewest prompt tokens a turn after the first read from the cache, which holds at least the photo; 0 for a single turn. */
       leastCacheReadAfterFirstTurn: number;
       /** The most tokens any one of its turns' prompts held, cached or not. */
@@ -230,6 +282,10 @@ export type StylistCheckResult =
       durationMs: number;
       /** The product searches it set going, each once however many tries it took. */
       productSearches: number;
+      /** The Style Icons the Stylist passed over for hair length, in the order it did, each by name, with the reason the user read. */
+      hairLengthPassOvers: { styleIconName: string; reason: string }[];
+      /** How many times the Stylist tried to pass over a Style Icon for hair length and its tool refused. */
+      hairLengthPassOversRefused: number;
       /** The Stylist's Notes, as the user reads them. */
       notes: StylistNoteEntry[];
       /** What keeps its Outfits from being valid: none when it made every Outfit it could, and finished. */
@@ -262,26 +318,41 @@ export async function checkStylist(
     }
   }
   const turnsBefore = app.ai.turns.length;
-  const redrawsBefore = app.ai.redraws.length;
+  const verdictCallsBefore = app.ai.verdictCalls.length;
   const consultationId = started.consultationId;
-  await app.ai.drawingWith(drawPreview && (async (input) => drawPreview(input, await outfitDrawn(app, consultationId, input))), () => app.stylings.runPending());
+  const watched: StepsWatched = { previews: new Map(), passOvers: [] };
+  await app.ai.drawingWith(drawPreview && (async (input) => drawPreview(input, await outfitDrawn(app, consultationId, input))), () =>
+    app.stylings.runPending((steps) => watchingSteps(steps, watched)),
+  );
   const turns = app.ai.turns.slice(turnsBefore);
+  const verdictCalls = app.ai.verdictCalls.slice(verdictCallsBefore);
 
   const view = await readConsultation(request(), started.consultationId);
   if (!view) throw new Error(`The check couldn't read ${email}'s Consultation.`);
   const [made] = await app.db
-    .select({ outfitsWanted: styling.outfitsWanted, productSearches: styling.productSearches, startedAt: styling.startedAt, finishedAt: styling.finishedAt })
+    .select({
+      id: styling.id,
+      outfitsWanted: styling.outfitsWanted,
+      productSearches: styling.productSearches,
+      hairLengthPassOvers: styling.hairLengthPassOvers,
+      startedAt: styling.startedAt,
+      finishedAt: styling.finishedAt,
+    })
     .from(styling)
     .where(eq(styling.consultationId, view.id));
-  const { outfitsWanted, productSearches, startedAt, finishedAt } = made!;
+  const { id: stylingId, outfitsWanted, productSearches, hairLengthPassOvers, startedAt, finishedAt } = made!;
   const turnCap = stylingLimitsFor(false).turns;
   const ending = endingOf(turns, turnCap);
   const notes = view.stylistNotes[0]?.notes ?? view.failedStyling?.notes ?? [];
-  const corrections = await correctionsOf(app, consultationId, app.ai.redraws.slice(redrawsBefore));
-  const outfits = view.outfits.map((shown) => {
-    const images = [previewPathnameFor(view.id, shown.id), previewRedrawPathnameFor(view.id, shown.id)].flatMap((pathname) => app.blob.lastPut(pathname) ?? []);
-    return checkedOutfit(shown, notes, corrections.get(shown.position) ?? null, images);
-  });
+  const outfits = view.outfits.map((shown) => ({
+    position: shown.position,
+    styleIconName: shown.styleIconName,
+    pieces: shown.pieces.map(({ category, item, brand }) => ({ category, item, brand: brand?.name ?? null })),
+    ...previewReported(watched.previews.get(shown.id)),
+    images: [previewPathnameFor(view.id, shown.id), previewRedrawPathnameFor(view.id, shown.id)].flatMap((pathname) => app.blob.lastPut(pathname) ?? []),
+  }));
+  const stylistCostUsd = costOf(turns);
+  const verdictCostUsd = costOf(verdictCalls);
   return {
     styled: true,
     outfitsWanted,
@@ -289,13 +360,17 @@ export async function checkStylist(
     ending,
     turns,
     turnCap,
-    costUsd: costOf(turns),
-    uncachedCostUsd: costOf(turns.map((turn) => ({ ...turn, usage: uncached(turn.usage) }))),
+    verdictCalls,
+    stylistCostUsd,
+    uncachedStylistCostUsd: costOf(turns.map((turn) => ({ ...turn, usage: uncached(turn.usage) }))),
+    verdictCostUsd,
+    costUsd: stylistCostUsd === null || verdictCostUsd === null ? null : stylistCostUsd + verdictCostUsd,
     leastCacheReadAfterFirstTurn: leastOf(turns.slice(1).map(({ usage }) => usage.inputTokens.cacheRead ?? 0)),
     largestPromptTokens: Math.max(0, ...turns.map(({ usage }) => usage.inputTokens.total ?? 0)),
     toolCallsRefused: turns.reduce((refused, { refusedBefore }) => refused + refusedBefore.length, 0),
     durationMs: (finishedAt ?? startedAt).getTime() - startedAt.getTime(),
     productSearches,
+    ...(await hairLengthPassOversOf(app, { stylingId, counted: hairLengthPassOvers }, watched.passOvers)),
     notes,
     problems: [...outfitProblems(view.outfits.length, outfitsWanted), ...(ending === "finished" ? [] : [ENDING_PROBLEMS[ending]])],
   };
@@ -323,17 +398,125 @@ async function signUpCheckAccount(app: StylistCheckApp, request: () => Operation
   return email;
 }
 
-/** One of the Outfits made, with what came of its Preview, as its steps in the notes say, and the images drawn for it. */
-function checkedOutfit(shown: OutfitView, notes: readonly StylistNoteEntry[], correction: string | null, images: Uint8Array[]): CheckedOutfit {
-  const steps = new Set(notes.flatMap(({ kind, text }) => (kind === "step" ? [text] : [])));
-  const kept = KEPT_PREVIEWS.find((which) => steps.has(STEPS.previewKept(shown.position, which)));
+/**
+ * What the Preview phase did with one Outfit's Preview, as the check watched its steps: how each step
+ * that drew or judged it ended, once its retries were done, and which image it kept. Each is unset
+ * until its step ends.
+ */
+interface PreviewWatched {
+  /** How its first draw came out: drawn, declined by the image model, or still failing after its retries. */
+  drawn?: PreviewDrawn | "failed";
+  /** Its first draw's verdict, or null when it had none, as the model refused it or it still failed. */
+  firstVerdict?: FirstDrawVerdict | null;
+  /** How its redraw came out, as `drawn` says. */
+  redrawn?: PreviewDrawn | "failed";
+  /** Its redraw's verdict, or null when it had none, as for `firstVerdict`. */
+  redrawVerdict?: RedrawVerdict | null;
+  /** Which of its images it kept, once it had redrawn it. */
+  kept?: KeptPreview;
+}
+
+/** One of the Stylist's calls to pass over a Style Icon, as the check watched its step. */
+interface PassOverWatched {
+  /** What it asked for, as the Stylist gave it. */
+  input: unknown;
+  /** What came of it: passed over, or refused, saying why; or "threw", when the step failed. */
+  result: StylistStepResult<StyleIconPassedOver> | "threw";
+}
+
+/** What the check watched of a Styling's steps. */
+interface StepsWatched {
+  /** What its Preview phase did with each Outfit's Preview, by the Outfit's ID. */
+  previews: Map<string, PreviewWatched>;
+  /** Its calls to pass over a Style Icon, in the order they ended. */
+  passOvers: PassOverWatched[];
+}
+
+/**
+ * The Styling's steps, watched: each of its Preview phase's that draws, judges or keeps an Outfit's
+ * Preview, so `watched` holds how each ended, by the Outfit's ID, and each pass-over, with what it
+ * asked. Each still does just what it did, throwing as it threw.
+ */
+function watchingSteps(steps: StylistSteps, { previews, passOvers }: StepsWatched): StylistSteps {
+  const watch = (outfitId: string, outcome: PreviewWatched) => previews.set(outfitId, { ...previews.get(outfitId), ...outcome });
+  const verdictOf = <Verdict>(result: VerdictResult<Verdict> | "threw") => (result === "threw" || result.refused ? null : result.verdict);
   return {
-    position: shown.position,
-    styleIconName: shown.styleIconName,
-    pieces: shown.pieces.map(({ category, item, brand }) => ({ category, item, brand: brand?.name ?? null })),
-    preview: kept ? `redrawn-kept-${kept}` : previewShown(shown.preview),
-    correction,
-    images,
+    ...steps,
+    renderPreview: (stylingId, outfitId) => recording(steps.renderPreview(stylingId, outfitId), (drawn) => watch(outfitId, { drawn: drawn === "threw" ? "failed" : drawn })),
+    judgeFirstDraw: (stylingId, outfitId) => recording(steps.judgeFirstDraw(stylingId, outfitId), (result) => watch(outfitId, { firstVerdict: verdictOf(result) })),
+    redrawPreview: (stylingId, outfitId, firstVerdict) =>
+      recording(steps.redrawPreview(stylingId, outfitId, firstVerdict), (redrawn) => watch(outfitId, { redrawn: redrawn === "threw" ? "failed" : redrawn })),
+    judgeRedraw: (stylingId, outfitId, firstVerdict) =>
+      recording(steps.judgeRedraw(stylingId, outfitId, firstVerdict), (result) => watch(outfitId, { redrawVerdict: verdictOf(result) })),
+    // Keeping that throws keeps nothing: the Styling's finish leaves the Outfit with no Preview.
+    keepPreview: (stylingId, outfitId, keep) => recording(steps.keepPreview(stylingId, outfitId, keep), (result) => result !== "threw" && watch(outfitId, { kept: keep.kept })),
+    passOverStyleIcon: (stylingId, turn, input) => recording(steps.passOverStyleIcon(stylingId, turn, input), (result) => passOvers.push({ input, result })),
+  };
+}
+
+/**
+ * The Style Icons the Stylist passed over for hair length, by name, with the reason the user read,
+ * and how many of its tries its tool refused, from its pass-overs as watched. A pass-over of a Style
+ * Icon passed over already, by the Stylist or as its Brands can't complete an Outfit, goes through
+ * with nothing done: so only the first to go through for each Style Icon passed it over, and there
+ * are no more for hair length than the Styling counted, which on a body photo is none.
+ */
+async function hairLengthPassOversOf(
+  app: StylistCheckApp,
+  { stylingId, counted }: { stylingId: string; counted: number },
+  passOvers: readonly PassOverWatched[],
+): Promise<Pick<Extract<StylistCheckResult, { styled: true }>, "hairLengthPassOvers" | "hairLengthPassOversRefused">> {
+  const tries = passOvers.flatMap(({ input, result }) => {
+    const asked = passOverStyleIconInputSchema.safeParse(input);
+    return asked.success && result !== "threw" ? [{ asked: asked.data, result }] : [];
+  });
+  const passedOverAlready = new Set<number>();
+  const forHairLength: { styleIcon: number; reason: string }[] = [];
+  for (const { asked, result } of tries) {
+    if (!result.ok || passedOverAlready.has(result.styleIcon)) continue;
+    passedOverAlready.add(result.styleIcon);
+    if (asked.reasonKind === "hairLength") forHairLength.push({ styleIcon: result.styleIcon, reason: asOneNote(asked.reason) });
+  }
+  // A first Styling passes over Style Icons on its own list, each by its number there.
+  const listed = await app.db.select({ number: styleIcon.position, name: styleIcon.name }).from(styleIcon).where(eq(styleIcon.stylingId, stylingId));
+  const nameOf = (number: number) => listed.find((icon) => icon.number === number)?.name ?? `Style Icon ${number}`;
+  return {
+    hairLengthPassOvers: forHairLength.slice(0, counted).map(({ styleIcon: number, reason }) => ({ styleIconName: nameOf(number), reason })),
+    hairLengthPassOversRefused: tries.filter(({ asked, result }) => asked.reasonKind === "hairLength" && !result.ok).length,
+  };
+}
+
+/** What `step` gives, once `record` is told it, or "threw" when it throws, which it then throws on. */
+async function recording<T>(step: Promise<T>, record: (result: T | "threw") => void): Promise<T> {
+  try {
+    const result = await step;
+    record(result);
+    return result;
+  } catch (error) {
+    record("threw");
+    throw error;
+  }
+}
+
+/**
+ * What the Preview phase did with an Outfit's Preview, as the check watched it. One never drawn, as
+ * when the Styling broke before its Preview phase, couldn't be drawn; and a redrawn one whose
+ * keeping never went through is left with none, as the Styling's finish leaves it.
+ */
+function previewReported(seen: PreviewWatched | undefined): Pick<CheckedOutfit, "preview" | "redrawn"> {
+  if (seen?.drawn === "refused") return { preview: "declined", redrawn: null };
+  if (seen?.drawn !== "ready") return { preview: "failed", redrawn: null };
+  const first = seen.firstVerdict;
+  if (!first) return { preview: "unchecked", redrawn: null };
+  if (first.right) return { preview: "kept", redrawn: null };
+  const verdict = seen.redrawVerdict ? { breaksHardRule: seen.redrawVerdict.breaksHardRule, better: seen.redrawVerdict.better } : null;
+  return {
+    preview: `redrawn-kept-${seen.kept ?? "none"}`,
+    redrawn: {
+      firstBreaksHardRule: first.breaksHardRule,
+      correction: first.correction,
+      redraw: seen.redrawn === "ready" ? { verdict } : seen.redrawn === "refused" ? "declined" : "failed",
+    },
   };
 }
 
@@ -362,26 +545,6 @@ async function outfitDrawn(app: StylistCheckApp, consultationId: string, { piece
 /** Pieces as a Preview draws them, each by its Category and what it's drawn from, as one key, whatever their order. */
 function piecesKey(pieces: readonly [PieceCategory, string][]): string {
   return JSON.stringify(pieces.map(([category, drawnFrom]) => ({ category, drawnFrom })).toSorted(byCategoryOrder));
-}
-
-/**
- * The correction each Outfit's Preview was redrawn with, by the Outfit's number, from the redraws
- * asked for: none for an Outfit whose Pieces are like another's, as `outfitDrawn` says.
- */
-async function correctionsOf(app: StylistCheckApp, consultationId: string, redraws: readonly RedrawAskedFor[]): Promise<Map<number, string>> {
-  const corrections = new Map<number, string>();
-  for (const { pieces, correction } of redraws) {
-    const drawnFor = await outfitDrawn(app, consultationId, { pieces });
-    if (drawnFor && !corrections.has(drawnFor.position)) corrections.set(drawnFor.position, correction.trim());
-  }
-  return corrections;
-}
-
-/** What came of a Preview never redrawn, as the user is shown it. */
-function previewShown(preview: PreviewView): PreviewHandling {
-  if (preview.state === "ready") return "kept";
-  if (preview.state === "refused") return preview.by === "image-model" ? "declined" : "redrawn-kept-none";
-  return "failed";
 }
 
 /** What keeps a Styling's Outfits from being valid when it made fewer than it could. */
@@ -415,13 +578,13 @@ function parsed(input: string): unknown {
   }
 }
 
-/** What the turns cost, in US dollars, or null when no price is known for a model that ran one. */
-function costOf(turns: readonly StylistTurn[]): number | null {
+/** What the calls to Claude cost, in US dollars, each at its own model's prices, or null when no price is known for a model that answered one. */
+function costOf(calls: readonly { modelId: string; usage: LanguageModelV4Usage }[]): number | null {
   let cost = 0;
-  for (const { modelId, usage } of turns) {
-    const turnCost = claudeCostUsd(modelId, usage);
-    if (turnCost === null) return null;
-    cost += turnCost;
+  for (const { modelId, usage } of calls) {
+    const callCost = claudeCostUsd(modelId, usage);
+    if (callCost === null) return null;
+    cost += callCost;
   }
   return cost;
 }

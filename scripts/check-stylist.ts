@@ -1,24 +1,26 @@
 // A live check, opt-in and never run in CI, which costs money: the Haiku check (spec: "Fakes and the
-// check"). Is the Stylist's model, CLAUDE_STYLIST_MODEL (Claude Haiku 5.5), good enough before
-// production switches to it? It runs the real Stylist, on real Claude, with live Qloo and Channel3, on
+// check"). Is the Stylist good enough for production, its model, CLAUDE_STYLIST_MODEL (Claude Haiku
+// 5.5), driving it, and the verdict's, CLAUDE_PREVIEW_VERDICT_MODEL (Claude Sonnet 5.5), judging each
+// Preview (ADR-0012)? It runs the real Stylist, on real Claude, with live Qloo and Channel3, on
 // fixed, AI-generated photos: the landing page's Full-Body sample photo, and a Face Photo and a
 // Body-Only Photo cut from it, one of each Photo Type. Each is styled once as a new user in the
 // United States would be, on an app of its own that lives only while it runs. Drawn on Nano Banana
-// 2.1, as in production, each Preview should be kept as it was drawn.
+// 2.1, as in production, each Preview should be judged right, and kept as it was drawn.
 //
-// Then it shows the Stylist deliberately bad Previews. The bake-off's were never kept, so it makes its
-// own: Nano Banana 2 Lite on the Body-Only Photo, which has no face, where Lite invented one in the
+// Then it shows the verdicts deliberately bad Previews. The bake-off's were never kept, so it makes
+// its own: Nano Banana 2 Lite on the Body-Only Photo, which has no face, where Lite invented one in the
 // bake-off; and Previews with known faults, made from the photos themselves: the photo unchanged,
 // wearing none of the Outfit; the Face Photo with its face pixelated; and the Body-Only Photo zoomed
-// out to show the head it leaves out. The Stylist should redraw each fault, then keep the redraw, or
-// keep neither when both break a hard rule, as a face added twice does. Whether Lite invented a face
-// this time only the eye can tell, so the report leaves its Previews to the eye.
+// out to show the head it leaves out. The Preview phase should redraw each fault, then keep the
+// redraw, or keep neither when both break a hard rule, as a face added twice does. Whether Lite
+// invented a face this time only the eye can tell, so the report leaves its Previews to the eye.
 //
 // For each Styling it reports whether its Outfits are valid, the Stylist's turns, the time it took,
-// what its turns cost, against what they'd cost with nothing cached, its largest prompt, and what the
-// Stylist did with each Preview: a report to paste into ticket 12. It saves no photo or Preview to the
-// repository: they go, with each Styling's Stylist's Notes and turns, to a folder of the system's
-// temporary files, to check by eye.
+// what Claude cost, the Stylist's turns and the verdicts each on its own model's prices, the turns
+// against what they'd cost with nothing cached, its largest prompt, the Style Icons passed over for
+// hair length, and what the Preview phase did with each Preview: a report to paste into the
+// cheaper-stylist spec's ticket 07. It saves no photo or Preview to the repository: they go, with each
+// Styling's Stylist's Notes and turns, to a folder of the system's temporary files, to check by eye.
 //
 // It says first roughly what a run costs, and spends it only with --go-ahead, once the team has
 // agreed to the cost. --image-model draws every Preview that Nano Banana 2.1 would on another image
@@ -45,6 +47,8 @@ import sharp, { type Sharp } from "sharp";
 import { STYLE_PREFERENCE_LABELS, type StylePreference } from "@/config/accounts";
 import {
   CLAUDE_PHOTO_CHECK_MODEL,
+  CLAUDE_PREVIEW_VERDICT_EFFORT,
+  CLAUDE_PREVIEW_VERDICT_MODEL,
   CLAUDE_STYLIST_EFFORT,
   CLAUDE_STYLIST_MODEL,
   GEMINI_PREVIEW_MODEL,
@@ -54,7 +58,7 @@ import {
 } from "@/config/ai";
 import { CATEGORY_LABELS, type PhotoType } from "@/config/consultations";
 import { EVERYONES_STYLING_LIMITS, OUTFITS_PER_STYLING } from "@/config/stylings";
-import { aiFromEnvironment } from "@/server/ai/environment";
+import { realAiFromEnvironment } from "@/server/ai/environment";
 import { GeminiAiProvider } from "@/server/ai/gemini";
 import type { AiProvider } from "@/server/ai/provider";
 import { MemoryBlobStore } from "@/server/blob/memory";
@@ -66,6 +70,7 @@ import {
   claudeCostUsd,
   type PreviewDrawer,
   type PreviewHandling,
+  type PreviewRedrawn,
   StylistCheckAi,
   StylistCheckBlob,
   type StylistCheckResult,
@@ -101,6 +106,12 @@ const ROUGH_STYLIST_TURNS = 20;
 const ROUGH_STYLIST_TURN_TOKENS = { noCache: 250, cacheWrite: 1_750, cacheRead: 17_500, output: 1_500 };
 /** A photo check, as the estimate has it. */
 const ROUGH_PHOTO_CHECK_TOKENS = { noCache: 2_000, cacheWrite: 0, cacheRead: 0, output: 1_000 };
+/**
+ * One Preview's verdict, as the estimate has it: its rules and the photo read from cache, then the
+ * Outfit's Pieces, their seller photos and the images to judge, and its verdict and thinking. On
+ * Claude Sonnet 5.5 that's about $0.017, as the cheaper-stylist spec estimates a verdict.
+ */
+const ROUGH_VERDICT_TOKENS = { noCache: 4_000, cacheWrite: 0, cacheRead: 3_000, output: 800 };
 /** A body photo's Styling makes about this many product searches (spec: "Cost", real Products). */
 const ROUGH_PRODUCT_SEARCHES = 8;
 /** One Channel3 credit, past its free credits, as the real-products spec prices them: one search each. */
@@ -117,10 +128,10 @@ interface FixedPhoto {
   bytes: Uint8Array<ArrayBuffer>;
 }
 
-/** What the Stylist should do with a Preview: keep it as drawn, or redraw it and keep the redraw, or neither. */
+/** What the Preview phase should do with a Preview: keep it as drawn, or redraw it and keep the redraw, or neither. */
 type ExpectedHandling = Extract<PreviewHandling, "kept" | "redrawn-kept-redraw" | "redrawn-kept-none">;
 
-/** What the report says the Stylist should have done instead, for each thing it should do. */
+/** What the report says the Preview phase should have done instead, for each thing it should do. */
 const SHOULD_HAVE: Record<ExpectedHandling, string> = {
   kept: "kept it as drawn",
   "redrawn-kept-redraw": "redrawn it and kept the redraw",
@@ -129,7 +140,7 @@ const SHOULD_HAVE: Record<ExpectedHandling, string> = {
 
 /**
  * One Styling the check runs: a fixed photo, how its Previews are drawn, first tries and redraws, and
- * what the Stylist should do with each, or null when only the eye can tell.
+ * what the Preview phase should do with each, or null when only the eye can tell.
  */
 interface CheckCase {
   name: string;
@@ -146,7 +157,7 @@ const NANO_BANANA_2_LITE: Drawing = { model: GEMINI_PREVIEW_MODELS.nanoBanana2Li
 const { goAhead, imageModel, previewsFrom } = readOptions();
 /** Previews drawn as production draws them: on production's image model, unless --image-model names another. */
 const AS_IN_PRODUCTION: Drawing = { model: imageModel };
-/** Whether those are production's own, which the Stylist should keep as drawn. Another model's are left to the eye. */
+/** Whether those are production's own, which the Preview phase should keep as drawn. Another model's are left to the eye. */
 const onProductionsModel = imageModel === GEMINI_PREVIEW_MODEL;
 const photos = await fixedPhotos();
 const asInProduction = (name: string, photo: FixedPhoto): CheckCase => ({
@@ -156,7 +167,7 @@ const asInProduction = (name: string, photo: FixedPhoto): CheckCase => ({
   redraw: AS_IN_PRODUCTION,
   ...(onProductionsModel
     ? { expected: "kept" }
-    : { expected: null, note: `Drawn on ${imageModel}, not production's ${GEMINI_PREVIEW_MODEL}: check its Previews by eye, to see whether the Stylist was right to keep or redraw each one.` }),
+    : { expected: null, note: `Drawn on ${imageModel}, not production's ${GEMINI_PREVIEW_MODEL}: check its Previews by eye, to see whether each verdict on them was right.` }),
 });
 const CASES: CheckCase[] = [
   asInProduction("Full-Body Photo", photos.fullBody),
@@ -172,7 +183,7 @@ const CASES: CheckCase[] = [
           first: NANO_BANANA_2_LITE,
           redraw: AS_IN_PRODUCTION,
           expected: null,
-          note: "Lite invented a face on a Body-Only Photo in the bake-off, but may not have this time: check its first Previews by eye, to see whether the Stylist was right to redraw or keep each one.",
+          note: "Lite invented a face on a Body-Only Photo in the bake-off, but may not have this time: check its first Previews by eye, to see whether each verdict on them was right.",
         },
       ]),
   { name: "Full-Body Photo, first drawn as the photo unchanged", photo: photos.fullBody, first: { fault: "unchanged" }, redraw: AS_IN_PRODUCTION, expected: "redrawn-kept-redraw" },
@@ -198,7 +209,13 @@ const imageModels = new Map(
   Object.values(GEMINI_PREVIEW_MODELS).map((model) => [model, new GeminiAiProvider({ apiKey: process.env.GEMINI_API_KEY!, model })]),
 );
 const previewsDrawn = new Map<GeminiPreviewModel, number>();
-const app = await createFreshApp({ ai: new StylistCheckAi(previewsFrom ? neverDrawing(aiFromEnvironment("real")) : aiFromEnvironment("real")), blob: new StylistCheckBlob(new MemoryBlobStore()) });
+const app = await createFreshApp({
+  ai: new StylistCheckAi((verdictMiddleware) => {
+    const ai = realAiFromEnvironment({ verdictMiddleware });
+    return previewsFrom ? neverDrawing(ai) : ai;
+  }),
+  blob: new StylistCheckBlob(new MemoryBlobStore()),
+});
 const checked: { checkCase: CheckCase; result: StylistCheckResult | { error: string } }[] = [];
 try {
   for (const [index, checkCase] of CASES.entries()) {
@@ -222,7 +239,7 @@ try {
 } finally {
   await closeDatabase(app.db);
 }
-console.log(`\nThe report, for ticket 12:\n\n${reportText()}`);
+console.log(`\nThe report, for the cheaper-stylist spec's ticket 07:\n\n${reportText()}`);
 
 function readOptions(): { goAhead: boolean; imageModel: GeminiPreviewModel; previewsFrom: string | undefined } {
   try {
@@ -350,12 +367,18 @@ function servedFrom({ name }: CheckCase, { caseFolder, numberOf }: { caseFolder:
 /** What the check will do and roughly what it costs, before anything is spent. */
 function planText(): string {
   const stylings = CASES.length;
-  const stylistUsd = ROUGH_STYLIST_TURNS * (claudeCostUsd(CLAUDE_STYLIST_MODEL, usage(ROUGH_STYLIST_TURN_TOKENS)) ?? 0);
-  const claudeUsd = stylings * (stylistUsd + (claudeCostUsd(CLAUDE_PHOTO_CHECK_MODEL, usage(ROUGH_PHOTO_CHECK_TOKENS)) ?? 0));
+  const stylistUsd = stylings * ROUGH_STYLIST_TURNS * (claudeCostUsd(CLAUDE_STYLIST_MODEL, usage(ROUGH_STYLIST_TURN_TOKENS)) ?? 0);
+  const photoChecksUsd = stylings * (claudeCostUsd(CLAUDE_PHOTO_CHECK_MODEL, usage(ROUGH_PHOTO_CHECK_TOKENS)) ?? 0);
   const previewUsd = (how: Drawing) => ("model" in how && !previewsFrom ? GEMINI_PREVIEW_PRICES_USD[how.model] : 0);
   const onGemini = (how: Drawing) => ("model" in how && !previewsFrom ? 1 : 0);
   // Previews drawn as in production aren't expected to be redrawn; every bad one is.
   const redraws = ({ first, redraw }: CheckCase) => (first === AS_IN_PRODUCTION && redraw === AS_IN_PRODUCTION ? 0 : OUTFITS_PER_STYLING);
+  // Each Preview drawn is judged once, and each redraw once more.
+  const verdictUsd = claudeCostUsd(CLAUDE_PREVIEW_VERDICT_MODEL, usage(ROUGH_VERDICT_TOKENS)) ?? 0;
+  const verdicts = sum(CASES.map((checkCase) => OUTFITS_PER_STYLING + redraws(checkCase)));
+  // At most, each Preview is judged, then its one redraw.
+  const verdictsAtMost = stylings * OUTFITS_PER_STYLING * 2;
+  const claudeUsd = stylistUsd + verdicts * verdictUsd + photoChecksUsd;
   const previews = sum(CASES.map((checkCase) => OUTFITS_PER_STYLING * onGemini(checkCase.first) + redraws(checkCase) * onGemini(checkCase.redraw)));
   const geminiUsd = sum(CASES.map((checkCase) => OUTFITS_PER_STYLING * previewUsd(checkCase.first) + redraws(checkCase) * previewUsd(checkCase.redraw)));
   const geminiAtMostUsd = sum(CASES.map((checkCase) => OUTFITS_PER_STYLING * (previewUsd(checkCase.first) + previewUsd(checkCase.redraw))));
@@ -363,7 +386,7 @@ function planText(): string {
   const searches = bodyStylings * ROUGH_PRODUCT_SEARCHES;
   const searchesAtMost = bodyStylings * EVERYONES_STYLING_LIMITS.productSearches;
   return [
-    `The Haiku check runs ${stylings} Stylings on ${CLAUDE_STYLIST_MODEL} at ${CLAUDE_STYLIST_EFFORT} effort, with live Qloo and Channel3, each a new user's first, in the United States, at No Budget.`,
+    `The Haiku check runs ${stylings} Stylings on ${CLAUDE_STYLIST_MODEL} at ${CLAUDE_STYLIST_EFFORT} effort, each Preview judged by ${CLAUDE_PREVIEW_VERDICT_MODEL} at ${CLAUDE_PREVIEW_VERDICT_EFFORT} effort, with live Qloo and Channel3, each a new user's first, in the United States, at No Budget.`,
     previewsFrom
       ? `Previews production would draw on ${GEMINI_PREVIEW_MODEL} are served from ${previewsFrom}, which an earlier run drew on ${imageModel}: no image model is asked for any.`
       : `Previews production would draw on ${GEMINI_PREVIEW_MODEL} are drawn on ${imageModel}${onProductionsModel ? ", as in production" : ", which is cheaper, so the report leaves them to the eye"}.`,
@@ -371,7 +394,8 @@ function planText(): string {
     ...CASES.map(({ name, first, redraw }, index) => `  ${index + 1}. ${name}: ${previewsText(first, redraw)}.`),
     "",
     `It costs roughly ${dollars(claudeUsd + geminiUsd + searches * PRODUCT_SEARCH_CREDIT_USD)}: about ${dollars(claudeUsd)} of Claude, ${dollars(geminiUsd)} of Gemini for about ${previews} Previews, and ${dollars(searches * PRODUCT_SEARCH_CREDIT_USD)} for about ${searches} product searches, one Channel3 credit each.`,
-    `If the Stylist redraws every Preview and every Styling makes all the searches it may, Gemini comes to about ${dollars(geminiAtMostUsd)} and Channel3 to about ${dollars(searchesAtMost * PRODUCT_SEARCH_CREDIT_USD)}.`,
+    `Claude's is about ${dollars(stylistUsd)} for the Stylist's turns on ${CLAUDE_STYLIST_MODEL}, ${dollars(verdicts * verdictUsd)} for about ${verdicts} verdicts on ${CLAUDE_PREVIEW_VERDICT_MODEL}, and ${dollars(photoChecksUsd)} for the photo checks.`,
+    `If the Preview phase redraws every Preview and every Styling makes all the searches it may, the verdicts come to about ${dollars(verdictsAtMost * verdictUsd)}, Gemini to about ${dollars(geminiAtMostUsd)} and Channel3 to about ${dollars(searchesAtMost * PRODUCT_SEARCH_CREDIT_USD)}.`,
   ].join("\n");
 }
 
@@ -387,7 +411,7 @@ function previewsText(first: Drawing, redraw: Drawing): string {
   return `each Preview first drawn ${drawn(first)}, and redrawn ${drawn(redraw)}`;
 }
 
-/** Saves a case's photo, every Preview drawn for each Outfit, and its Styling's notes and turns, outside the repository. */
+/** Saves a case's photo, every Preview drawn for each Outfit, and its Styling's notes, turns and verdict calls, outside the repository. */
 async function saveCase(caseFolder: string, photo: FixedPhoto, result: StylistCheckResult): Promise<void> {
   await mkdir(caseFolder, { recursive: true });
   await writeFile(path.join(caseFolder, "photo.jpg"), photo.bytes);
@@ -409,6 +433,8 @@ async function saveCase(caseFolder: string, photo: FixedPhoto, result: StylistCh
     outputTokens,
   }));
   await writeFile(path.join(caseFolder, "turns.json"), `${JSON.stringify(turns, null, 2)}\n`);
+  const verdictCalls = result.verdictCalls.map(({ modelId, usage: { inputTokens, outputTokens } }, index) => ({ call: index + 1, modelId, inputTokens, outputTokens }));
+  await writeFile(path.join(caseFolder, "verdicts.json"), `${JSON.stringify(verdictCalls, null, 2)}\n`);
 }
 
 /** One line on how a case's Styling went, as it finishes. */
@@ -418,14 +444,13 @@ function progressLine(result: StylistCheckResult | { error: string }): string {
   return `${validityText(result)} ${turnsText(result)}`;
 }
 
-/** The report to paste into ticket 12's Comments. */
+/** The report to paste into the cheaper-stylist spec's ticket 07's Comments. */
 function reportText(): string {
   const styled = checked.flatMap(({ checkCase, result }) => ("styled" in result && result.styled ? [{ checkCase, result }] : []));
   const valid = styled.filter(({ result }) => result.problems.length === 0);
-  const claudeUsd = totalUsd(styled.map(({ result }) => result.costUsd));
-  const uncachedUsd = totalUsd(styled.map(({ result }) => result.uncachedCostUsd));
   const searches = sum(styled.map(({ result }) => result.productSearches));
   const geminiUsd = sum([...previewsDrawn].map(([model, drawn]) => drawn * GEMINI_PREVIEW_PRICES_USD[model]));
+  const unchecked = styled.flatMap(({ result }) => result.outfits).filter(({ preview }) => preview === "unchecked");
   // Only Previews the image model drew, for cases whose right answer is known, are counted.
   const judged = styled.flatMap(({ checkCase: { expected }, result }) =>
     expected === null ? [] : result.outfits.filter(({ preview }) => preview !== "declined" && preview !== "failed").map(({ preview }) => ({ expected, preview })),
@@ -437,8 +462,8 @@ function reportText(): string {
   const byEye = styled.filter(({ checkCase }) => checkCase.expected === null).flatMap(({ result }) => result.outfits);
   const date = new Date().toISOString().slice(0, 10);
   return [
-    `- ${date}: **The Haiku check** (\`npm run check:stylist\`) on ${CLAUDE_STYLIST_MODEL} at ${CLAUDE_STYLIST_EFFORT} effort, with live Qloo and Channel3. Each Styling was a new user's first, in the United States, at No Budget, with everyone's limits.`,
-    `  - Previews production would draw on ${GEMINI_PREVIEW_MODEL} were ${previewsFrom ? `served from an earlier run's, saved in ${previewsFrom}, which it drew on` : "drawn on"} ${imageModel}${onProductionsModel ? ", as in production." : `, which is cheaper. So the "good" Previews here are ${imageModel}'s, which may have faults of their own, and only the eye can judge what the Stylist did with them.`}`,
+    `- ${date}: **The Haiku check** (\`npm run check:stylist\`) on ${CLAUDE_STYLIST_MODEL} at ${CLAUDE_STYLIST_EFFORT} effort, each Preview judged by ${CLAUDE_PREVIEW_VERDICT_MODEL} at ${CLAUDE_PREVIEW_VERDICT_EFFORT} effort, with live Qloo and Channel3. Each Styling was a new user's first, in the United States, at No Budget, with everyone's limits.`,
+    `  - Previews production would draw on ${GEMINI_PREVIEW_MODEL} were ${previewsFrom ? `served from an earlier run's, saved in ${previewsFrom}, which it drew on` : "drawn on"} ${imageModel}${onProductionsModel ? ", as in production." : `, which is cheaper. So the "good" Previews here are ${imageModel}'s, which may have faults of their own, and only the eye can judge whether the verdicts on them were right.`}`,
     ...(previewsFrom
       ? [
           "  - No image model was asked for any Preview. Each was the earlier run's image for the Outfit of the same Style Icon, so its garments are that Outfit's, which may not be this one's. A Preview with no saved image was declined, as the image model can decline.",
@@ -447,40 +472,56 @@ function reportText(): string {
     ...checked.flatMap(({ checkCase, result }) => caseLines(checkCase, result)),
     [
       `  - **Totals:** valid Outfits in ${valid.length} of ${checked.length} Stylings.`,
-      `${sum(styled.map(({ result }) => result.turns.length))} turns, ${claudeUsd === null ? "at an unknown cost" : `${dollars(claudeUsd)} of Claude, against ${uncachedUsd === null ? "an unknown cost" : dollars(uncachedUsd)} with nothing cached`}, for the Stylist's turns (photo checks aside).`,
+      `${sum(styled.map(({ result }) => result.turns.length))} turns.`,
+      `${claudeCostText(
+        {
+          costUsd: totalUsd(styled.map(({ result }) => result.costUsd)),
+          stylistCostUsd: totalUsd(styled.map(({ result }) => result.stylistCostUsd)),
+          uncachedStylistCostUsd: totalUsd(styled.map(({ result }) => result.uncachedStylistCostUsd)),
+          verdictCostUsd: totalUsd(styled.map(({ result }) => result.verdictCostUsd)),
+          verdictCalls: sum(styled.map(({ result }) => result.verdictCalls.length)),
+        },
+        { withModels: true },
+      )} (photo checks aside).`,
       `Largest prompt ${tokens(Math.max(0, ...styled.map(({ result }) => result.largestPromptTokens)))}.`,
       `${sum([...previewsDrawn.values()])} Previews on Gemini, about ${dollars(geminiUsd)}. ${searches} product searches, about ${dollars(searches * PRODUCT_SEARCH_CREDIT_USD)}.`,
     ].join(" "),
     [
-      `  - **The Preview check:** kept ${count(bad, keptFromTheUser)} of ${bad.length} bad Previews from the user, redrawing each and keeping a redraw that put it right, or neither.`,
+      `  - **The Preview check:** the Preview phase kept ${count(bad, keptFromTheUser)} of ${bad.length} bad Previews from the user, redrawing each on its verdict and keeping a redraw that put it right, or neither.`,
       `Kept the redraw for ${count(fixable, ({ preview }) => preview === "redrawn-kept-redraw")} of the ${fixable.length} a redraw could put right,`,
       `and rightly kept neither image for ${count(unfixable, ({ preview }) => preview === "redrawn-kept-none")} of the ${unfixable.length} whose redraws broke a hard rule too.`,
       ...(good.length > 0 ? [`Kept ${count(good, ({ preview }) => preview === "kept")} of ${good.length} good Previews as drawn.`] : []),
       ...(byEye.length > 0 ? [`Of the ${byEye.length} Previews left to the eye, it redrew ${count(byEye, ({ preview }) => preview.startsWith("redrawn"))}.`] : []),
+      ...(unchecked.length > 0 ? [`${unchecked.length === 1 ? "1 Preview" : `${unchecked.length} Previews`} drawn had no verdict, as it was refused or failed, so none was shown.`] : []),
       ...(judged.length < sum(styled.filter(({ checkCase }) => checkCase.expected !== null).map(({ result }) => result.outfits.length))
         ? ["Previews the image model declined, or that couldn't be drawn, aren't counted."]
         : []),
     ].join(" "),
-    `  - The photos, every Preview drawn, and each Styling's Stylist's Notes and turns are in ${folder}, outside the repository.`,
+    `  - The photos, every Preview drawn, and each Styling's Stylist's Notes, turns and verdict calls are in ${folder}, outside the repository.`,
   ].join("\n");
 }
 
 /**
- * Whether a bad Preview never reached the user: redrawn, and the redraw kept where a redraw could put
- * it right, or neither image kept.
+ * Whether the verdicts kept a bad Preview from the user: redrawn, and the redraw kept where a redraw
+ * could put it right, or neither image kept. One never shown as it had no verdict isn't counted: the
+ * report says how many had none.
  */
 function keptFromTheUser({ expected, preview }: { expected: ExpectedHandling; preview: PreviewHandling }): boolean {
   return preview === "redrawn-kept-none" || (expected === "redrawn-kept-redraw" && preview === "redrawn-kept-redraw");
 }
 
-/** A case's lines in the report: how its Styling went, then what the Stylist did with each Outfit's Preview. */
+/**
+ * A case's lines in the report: how its Styling went, then what the Preview phase did with each
+ * Outfit's Preview, and the Style Icons passed over for hair length.
+ */
 function caseLines({ name, photo, expected, note }: CheckCase, result: StylistCheckResult | { error: string }): string[] {
   const heading = `  - **${name}** (${STYLE_PREFERENCE_LABELS[photo.stylePreference]}):`;
   if ("error" in result) return [`${heading} errored: ${result.error}`];
   if (!result.styled) return [`${heading} ${refusalText(result)}`];
   return [
     `${heading} ${validityText(result)} ${turnsText(result)}${note ? ` ${note}` : ""}`,
-    ...result.outfits.map((outfit) => `    - ${outfitText(outfit)}: ${handlingText(outfit.preview, outfit.correction)}${expectationText(outfit.preview, expected)}.`),
+    ...result.outfits.map((outfit) => `    - ${outfitText(outfit)}: ${handlingText(outfit)}${expectationText(outfit.preview, expected)}.`),
+    `    - ${passOversText(result)}`,
     ...(served.has(name) ? [`    - Previews served: ${served.get(name)!.join(" ")}`] : []),
   ];
 }
@@ -499,9 +540,9 @@ function turnsText(result: Extract<StylistCheckResult, { styled: true }>): strin
   const refused = result.toolCallsRefused === 1 ? "1 tool call refused" : `${result.toolCallsRefused} tool calls refused`;
   const capped = result.turns.filter(({ finishReason }) => finishReason === "length").length;
   const written = result.notes.filter(({ kind }) => kind === "note").length;
-  const cost = result.costUsd === null ? "cost unknown" : `${dollars(result.costUsd)}, against ${result.uncachedCostUsd === null ? "an unknown cost" : dollars(result.uncachedCostUsd)} with nothing cached`;
   return [
-    `${result.turns.length} of ${result.turnCap} turns, ${duration(result.durationMs)}, ${cost}.`,
+    `${result.turns.length} of ${result.turnCap} turns, ${duration(result.durationMs)}.`,
+    `${claudeCostText({ ...result, verdictCalls: result.verdictCalls.length })}.`,
     `Largest prompt ${tokens(result.largestPromptTokens)}; each turn after the first read at least ${tokens(result.leastCacheReadAfterFirstTurn)} from the cache.`,
     `${result.productSearches} product searches, ${refused}, ${written === 1 ? "1 note" : `${written} notes`} written to the user.${capped > 0 ? ` ${capped} turns stopped at their output cap.` : ""}`,
   ].join(" ");
@@ -512,22 +553,60 @@ function outfitText({ position, styleIconName, pieces }: CheckedOutfit): string 
   return `Outfit ${position}, inspired by ${styleIconName} (${piecesText})`;
 }
 
-function handlingText(preview: PreviewHandling, correction: string | null): string {
-  const redrew = `redrew its Preview ("${correction ?? ""}"), then kept`;
+/**
+ * What Claude cost: the Stylist's turns, against what they'd cost with nothing cached, and the
+ * verdict calls, each on its own model's prices, and the two in all. With models, it names them.
+ */
+function claudeCostText(
+  cost: Pick<Extract<StylistCheckResult, { styled: true }>, "costUsd" | "stylistCostUsd" | "uncachedStylistCostUsd" | "verdictCostUsd"> & { verdictCalls: number },
+  { withModels = false } = {},
+): string {
+  const known = (usd: number | null) => (usd === null ? "an unknown cost" : dollars(usd));
+  const calls = cost.verdictCalls === 1 ? "1 verdict call" : `${cost.verdictCalls} verdict calls`;
+  return [
+    `${known(cost.costUsd)} of Claude:`,
+    `${known(cost.stylistCostUsd)} for the Stylist's turns${withModels ? ` on ${CLAUDE_STYLIST_MODEL}` : ""}, against ${known(cost.uncachedStylistCostUsd)} with nothing cached,`,
+    `and ${known(cost.verdictCostUsd)} for ${calls}${withModels ? ` on ${CLAUDE_PREVIEW_VERDICT_MODEL}` : ""}`,
+  ].join(" ");
+}
+
+/** The Style Icons the Stylist passed over for hair length, each with its reason, and how many more tries its tool refused. */
+function passOversText({ hairLengthPassOvers, hairLengthPassOversRefused }: Extract<StylistCheckResult, { styled: true }>): string {
+  const passedOver = hairLengthPassOvers.length === 0 ? "none" : hairLengthPassOvers.map(({ styleIconName, reason }) => `${styleIconName} ("${reason}")`).join(", ");
+  const refused = hairLengthPassOversRefused === 0 ? "" : ` ${hairLengthPassOversRefused === 1 ? "1 more try was" : `${hairLengthPassOversRefused} more tries were`} refused.`;
+  return `Passed over for hair length: ${passedOver}.${refused}`;
+}
+
+/** What the Preview phase did with an Outfit's Preview. */
+function handlingText({ preview, redrawn }: CheckedOutfit): string {
   switch (preview) {
     case "kept":
-      return "kept its Preview as drawn";
-    case "redrawn-kept-first":
-      return `${redrew} the first`;
-    case "redrawn-kept-redraw":
-      return `${redrew} the redraw`;
-    case "redrawn-kept-none":
-      return `${redrew} neither, so it has no Preview`;
+      return "its Preview was judged right, and kept as drawn";
+    case "unchecked":
+      return "its Preview was drawn, but its verdict was refused or failed, so it has none";
     case "declined":
       return "the image model declined to draw its Preview";
     case "failed":
-      return "its Preview couldn't be drawn, or the Styling ended before one of its images was kept";
+      return "its Preview couldn't be drawn";
+    case "redrawn-kept-first":
+    case "redrawn-kept-redraw":
+    case "redrawn-kept-none":
+      return redrawnText(preview, redrawn!);
   }
+}
+
+/** What the Preview phase found of a Preview it redrew, and which image it kept. */
+function redrawnText(preview: Extract<PreviewHandling, `redrawn-${string}`>, { firstBreaksHardRule, correction, redraw }: PreviewRedrawn): string {
+  const kept = { "redrawn-kept-first": "the first was kept", "redrawn-kept-redraw": "the redraw was kept", "redrawn-kept-none": "neither was kept, and it has no Preview" }[preview];
+  const redrawn =
+    redraw === "declined"
+      ? "the image model declined the redraw"
+      : redraw === "failed"
+        ? "the redraw couldn't be drawn"
+        : redraw.verdict === null
+          ? "the redraw's verdict was refused or failed"
+          : `the redraw was judged ${redraw.verdict.breaksHardRule ? "to break a hard rule" : "within the hard rules"}, and the ${redraw.verdict.better} better`;
+  return `its Preview was judged wrong${firstBreaksHardRule ? ", breaking a hard rule" : ""}, and redrawn ("${correction}"): ${redrawn}, so ${kept}`;
 }
 
 function expectationText(preview: PreviewHandling, expected: ExpectedHandling | null): string {

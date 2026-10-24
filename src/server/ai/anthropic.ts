@@ -42,6 +42,11 @@ export interface AnthropicAiOptions {
   apiKey: string;
   /** Tests send Anthropic's requests to a fake. */
   fetch?: typeof globalThis.fetch;
+  /**
+   * Wraps the model each Preview's verdict is asked of, as the Stylist check does to see the tokens
+   * each call used. It must leave every call as it is.
+   */
+  verdictMiddleware?: LanguageModelMiddleware;
 }
 
 /**
@@ -55,11 +60,12 @@ export class AnthropicAiProvider implements Pick<AiProvider, "checkPhoto" | "sty
   private readonly claudeStylistModel: LanguageModelV4;
   private readonly previewVerdictModel: LanguageModel;
 
-  constructor({ apiKey, fetch }: AnthropicAiOptions) {
+  constructor({ apiKey, fetch, verdictMiddleware }: AnthropicAiOptions) {
     const anthropic = createAnthropic({ apiKey, fetch });
     this.photoCheckModel = anthropic(CLAUDE_PHOTO_CHECK_MODEL);
     this.claudeStylistModel = wrapLanguageModel({ model: anthropic(CLAUDE_STYLIST_MODEL), middleware: STYLIST_MIDDLEWARE });
-    this.previewVerdictModel = anthropic(CLAUDE_PREVIEW_VERDICT_MODEL);
+    const previewVerdictModel = anthropic(CLAUDE_PREVIEW_VERDICT_MODEL);
+    this.previewVerdictModel = verdictMiddleware ? wrapLanguageModel({ model: previewVerdictModel, middleware: verdictMiddleware }) : previewVerdictModel;
   }
 
   judgePreview(input: FirstDrawToJudge): Promise<VerdictResult<FirstDrawVerdict>>;
