@@ -10,7 +10,7 @@ import {
   PHOTO_TYPE_LABELS,
   type ProductCategory,
 } from "@/config/consultations";
-import { addsToCurrentOutfits, type StylingKind } from "@/config/stylings";
+import { addsToCurrentOutfits, HAIR_LENGTH_PASS_OVERS_PER_STYLING, type StylingKind } from "@/config/stylings";
 import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
 import { brandCategoryOf, needsBrands } from "@/server/outfit-assembly/brands";
 import { outfitCategories } from "@/server/outfit-assembly/categories";
@@ -32,7 +32,14 @@ import {
   stylingSteps,
   whileRunning,
 } from "./steps";
-import { passOverStyleIconInputSchema, type SaveOutfitInput, saveOutfitInputSchema, type StylistSteps, writeNoteInputSchema } from "./stylist";
+import {
+  type PassOverReasonKind,
+  passOverStyleIconInputSchema,
+  type SaveOutfitInput,
+  saveOutfitInputSchema,
+  type StylistSteps,
+  writeNoteInputSchema,
+} from "./stylist";
 import type { StylistBrief, StylistStyleIcon } from "./stylist-brief";
 import { addSteps, addStylistNotes, asOneNote, hasNoteFromTurn, hasNotesFromTurn, type NoteFault, noteFault, notesIn, STEPS } from "./stylist-notes";
 
@@ -139,10 +146,12 @@ function stylistSteps(
     },
 
     // Qloo's order binds the Stylist, but it may pass over a Style Icon (ADR-0010), saying why, in
-    // style terms, in a note to the user.
+    // style terms, in a note to the user. On a Face Photo, whose Hairstyle is the whole Outfit, it
+    // may also pass over a few whose signature cut needs much more length than the user's hair has:
+    // the tool, not the Stylist's judgement, keeps that to a Face Photo, and to a few a Styling.
     async passOverStyleIcon(stylingId, turn, input) {
       const parsed = passOverStyleIconInputSchema.safeParse(input);
-      if (!parsed.success) return refused("Give the number of the Style Icon to pass over, and your reason, about style.");
+      if (!parsed.success) return refused("Give the number of the Style Icon to pass over, the kind of your reason, style or hairLength, and your reason.");
       const asked = parsed.data;
       return whileRunning(ctx.db, stylingId, async (tx) => {
         const building = await readBuilding(tx, stylingId);
@@ -152,11 +161,23 @@ function stylistSteps(
         if (icon.status === "used") return refused(`${icon.name} has already inspired an Outfit.`);
         // A retry after the pass-over went through has nothing left to do.
         if (icon.status === "skipped") return { ok: true, styleIcon: icon.number };
+        const forHairLength = asked.reasonKind === "hairLength";
+        const adaptInstead = `adapt ${icon.name}'s signature cut to what the person's hair can do instead.`;
+        if (forHairLength && building.photoType !== "face") return refused(`Only a Face Photo's Style Icons are passed over for hair length: ${adaptInstead}`);
+        if (forHairLength && building.hairLengthPassOvers >= HAIR_LENGTH_PASS_OVERS_PER_STYLING) {
+          return refused(`You've passed over ${HAIR_LENGTH_PASS_OVERS_PER_STYLING} Style Icons for hair length, the most a Styling may: ${adaptInstead}`);
+        }
         // Checked like a note, but refused rather than dropped, so the Stylist can say it again.
         const reason = asOneNote(asked.reason);
         const fault = noteFault(reason);
-        if (fault) return refused(REASON_REFUSALS[fault](icon.name));
+        if (fault) return refused(REASON_REFUSALS[fault](icon.name, asked.reasonKind));
         await tx.update(styleIcon).set({ status: "skipped" }).where(eq(styleIcon.id, icon.id));
+        if (forHairLength) {
+          await tx
+            .update(styling)
+            .set({ hairLengthPassOvers: sql`${styling.hairLengthPassOvers} + 1` })
+            .where(eq(styling.id, stylingId));
+        }
         // A reason the turn wrote as a note already isn't shown twice.
         const noted = await hasNoteFromTurn(tx, stylingId, turn, reason);
         await addStylistNotes(tx, stylingId, [
@@ -272,9 +293,15 @@ function stylistSteps(
   };
 }
 
-/** Why a reason for passing over a Style Icon is refused, by what's wrong with it as a note. */
-const REASON_REFUSALS: Record<NoteFault, (styleIconName: string) => string> = {
-  empty: (name) => `Say why you're passing over ${name}, about style.`,
+/** What a reason for passing over a Style Icon is about, by its kind, as a refusal asks for it. */
+const REASON_ABOUT: Record<PassOverReasonKind, string> = {
+  style: "about style",
+  hairLength: "about the length their signature cut needs",
+};
+
+/** Why a reason of this kind for passing over a Style Icon is refused, by what's wrong with it as a note. */
+const REASON_REFUSALS: Record<NoteFault, (styleIconName: string, kind: PassOverReasonKind) => string> = {
+  empty: (name, kind) => `Say why you're passing over ${name}, ${REASON_ABOUT[kind]}.`,
   "states a price": (name) => `Your reason for passing over ${name} must not state a price.`,
   "too long": (name) => `Your reason for passing over ${name} is too long: keep it to a sentence.`,
 };

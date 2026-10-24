@@ -140,6 +140,7 @@ describe("a new Consultation's first Styling", () => {
         outfitsWanted: 2,
         outfitsMade: 0,
         productSearches: 0,
+        hairLengthPassOvers: 0,
         failureReason: null,
         workflowRunId: expect.any(String),
         market: "US",

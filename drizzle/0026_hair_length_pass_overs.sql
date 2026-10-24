@@ -1,0 +1,1 @@
+ALTER TABLE "styling" ADD COLUMN "hair_length_pass_overs" integer DEFAULT 0 NOT NULL;

@@ -294,6 +294,9 @@ export const styling = pgTable(
     // The searches it has set going in the product search, up to its `StylingLimits`' productSearches,
     // each counted once however many tries it takes.
     productSearches: integer("product_searches").notNull().default(0),
+    // The Style Icons its Stylist has passed over for hair length, up to
+    // HAIR_LENGTH_PASS_OVERS_PER_STYLING: only ever on a Face Photo.
+    hairLengthPassOvers: integer("hair_length_pass_overs").notNull().default(0),
     failureReason: stylingFailureReasonEnum("failure_reason"),
     workflowRunId: text("workflow_run_id"),
     // The market its Products come from, chosen from the user's Country as it started. Null only for

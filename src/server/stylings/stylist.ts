@@ -5,7 +5,7 @@ import * as z from "zod";
 
 import type { Line } from "@/config/accounts";
 import { CATEGORY_LABELS } from "@/config/consultations";
-import { PRODUCT_CALLS_AT_ONCE, QLOO_CALLS_AT_ONCE, TOP_BRANDS_PER_CATEGORY } from "@/config/stylings";
+import { HAIR_LENGTH_PASS_OVERS_PER_STYLING, PRODUCT_CALLS_AT_ONCE, QLOO_CALLS_AT_ONCE, TOP_BRANDS_PER_CATEGORY } from "@/config/stylings";
 import type { Photo } from "@/server/ai/provider";
 import type { BrandLists, BrandToLookUp } from "@/server/outfit-assembly/brands";
 import type { QlooPerson } from "@/server/qloo/client";
@@ -84,13 +84,25 @@ export const searchProductsInputSchema = z.object({
 });
 export type SearchProductsInput = z.infer<typeof searchProductsInputSchema>;
 
-/** What passing over a Style Icon takes: its number, and why, which the user reads in the Stylist's Notes. */
+/**
+ * What a reason for passing over a Style Icon is about: its style, or on a Face Photo, the length its
+ * signature cut needs.
+ */
+export const PASS_OVER_REASON_KINDS = ["style", "hairLength"] as const;
+export type PassOverReasonKind = (typeof PASS_OVER_REASON_KINDS)[number];
+
+/** What passing over a Style Icon takes: its number, what kind of reason, and why, which the user reads in the Stylist's Notes. */
 export const passOverStyleIconInputSchema = z.object({
   styleIcon: z.number().int().describe("The number of the Style Icon to pass over, as listed."),
+  reasonKind: z
+    .enum(PASS_OVER_REASON_KINDS)
+    .describe(
+      `What your reason is about: style; or on a Face Photo, hairLength, when the Style Icon's signature cut needs much more length than the person's hair has, at most ${HAIR_LENGTH_PASS_OVERS_PER_STYLING} a Styling. Never the hair's texture.`,
+    ),
   reason: z
     .string()
     .describe(
-      'Why, in one short sentence to the user as "you", about style: such as "Her shoe Brands only sell heels, which don\'t fit your sporty Photo Style." Never about the user, or the Style Icon as a person. Never a price.',
+      'Why, in one short sentence to the user as "you": about style, such as "Her shoe Brands only sell heels, which don\'t fit your sporty Photo Style."; or for hairLength, about the length the cut needs, such as "His signature long, loose hair needs much more length than a cut from yours can reach." Never about the hair\'s texture, or about the user or the Style Icon as a person. Never a price.',
     ),
 });
 
@@ -217,7 +229,9 @@ export interface StylistSteps extends PreviewSteps {
    * that wrote it, unless that turn wrote the same note already, checked like one: refused before
    * the Style Icons are found, for a Style Icon not on the list or that has inspired an Outfit, and
    * for a reason that's empty, states a price or is too long. Passed over already, there's nothing
-   * left to do.
+   * left to do. A reason of hair length is refused, saying to adapt the cut instead, unless the photo
+   * is a Face Photo and the Styling has passed over fewer than HAIR_LENGTH_PASS_OVERS_PER_STYLING
+   * Style Icons for it.
    */
   passOverStyleIcon(stylingId: string, turn: number, input: unknown): Promise<StylistStepResult<StyleIconPassedOver>>;
   /**
@@ -544,8 +558,7 @@ function stylistTools(stylingId: string, steps: StylistSteps, notes: TurnNoteSav
       }),
     }),
     passOverStyleIcon: tool({
-      description:
-        "Passes over a Style Icon that doesn't suit the photo, so it inspires no Outfit and the next one takes its place. Your reason is shown to the user in your notes.",
+      description: `Passes over a Style Icon that doesn't suit the photo, so it inspires no Outfit and the next one takes its place: for its style, or on a Face Photo, at most ${HAIR_LENGTH_PASS_OVERS_PER_STYLING} a Styling, for the length its signature cut needs. Your reason is shown to the user in your notes.`,
       inputSchema: passOverStyleIconInputSchema,
       execute: afterTurnNotes(
         (input, turn): Promise<StyleIconPassedOver> => inOrder(async () => unlessRefused(await orBreak(() => steps.passOverStyleIcon(stylingId, turn, input)))),

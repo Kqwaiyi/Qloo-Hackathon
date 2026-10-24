@@ -233,7 +233,18 @@ describe("the Stylist's prompt", () => {
 
     expect(prompt).toMatch(/pass over a Style Icon whose style doesn't suit the photo/i);
     expect(prompt).toContain("her shoe Brands only sell heels, which don't fit your sporty Photo Style");
-    expect(prompt).toMatch(/reasons? (are|is) about style, never about the user or the Style Icon as a person/i);
+    expect(prompt).toMatch(/reasons? (are|is) about style, or for hairLength the length a cut needs, never about the user or the Style Icon as a person/i);
+  });
+
+  it("carries the Face Photo rule: pass over a Style Icon whose cut needs much more length than the person's hair has, at most twice, never for the hair's texture", async () => {
+    const prompt = await promptSent();
+
+    expect(prompt).toMatch(/on a Face Photo: the Hairstyle is the whole Outfit, so pass over a Style Icon whose signature cut needs much more length than the person's hair has/i);
+    expect(prompt).toMatch(/with passOverStyleIcon and the reasonKind hairLength, giving a reason about the cut's length/i);
+    expect(prompt).toMatch(/pass over at most 2 Style Icons for hair length in a Styling\. After that, and on every other Photo Type, adapt the cut/i);
+    expect(prompt).toMatch(/never pass over a Style Icon for the hair's texture, and never write about it: adapt the cut instead/i);
+    // The rest of the Hairstyle's rules are unchanged.
+    expect(prompt).toMatch(/achievable from the person's current hair: shorter, or restyled, without adding much length or changing its texture/i);
   });
 });
 
@@ -504,7 +515,7 @@ describe("passing over a Style Icon", () => {
   const REASON = "Ava Stone's signature cut is a sleek bob, which doesn't go with your casual Photo Style.";
 
   it("marks it skipped, and adds a step saying so to the Stylist's Notes, then the Stylist's reason, so the next Style Icons' Outfits are made", async () => {
-    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? call("passOverStyleIcon", { styleIcon: 1, reason: `  ${REASON}\n` }) : undefined);
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? call("passOverStyleIcon", { styleIcon: 1, reasonKind: "style", reason: `  ${REASON}\n` }) : undefined);
     const browser = await signedInUser();
     const consultationId = await start(browser);
 
@@ -526,7 +537,7 @@ describe("passing over a Style Icon", () => {
 
   it("adds the reason once when the Stylist wrote it with writeNote in the same turn, before the step", async () => {
     harness.ai.stylistTurn = ({ turn }) =>
-      turn === 2 ? { calls: [...call("writeNote", { text: REASON }).calls, ...call("passOverStyleIcon", { styleIcon: 1, reason: REASON }).calls] } : undefined;
+      turn === 2 ? { calls: [...call("writeNote", { text: REASON }).calls, ...call("passOverStyleIcon", { styleIcon: 1, reasonKind: "style", reason: REASON }).calls] } : undefined;
     const browser = await signedInUser();
     const consultationId = await start(browser);
 
@@ -543,14 +554,15 @@ describe("passing over a Style Icon", () => {
   });
 
   it.each([
-    ["no reason", { styleIcon: 1, reason: " \n " }, "Refused: Say why you're passing over Ava Stone, about style."],
-    ["a reason that states a price", { styleIcon: 1, reason: "Her signature cut costs about $90 to keep up." }, "Refused: Your reason for passing over Ava Stone must not state a price."],
+    ["no reason", { styleIcon: 1, reasonKind: "style", reason: " \n " }, "Refused: Say why you're passing over Ava Stone, about style."],
+    ["a reason that states a price", { styleIcon: 1, reasonKind: "style", reason: "Her signature cut costs about $90 to keep up." }, "Refused: Your reason for passing over Ava Stone must not state a price."],
     [
       "a reason too long for a note",
-      { styleIcon: 1, reason: `Her signature cut is ${"very ".repeat(60)}sleek.` },
+      { styleIcon: 1, reasonKind: "style", reason: `Her signature cut is ${"very ".repeat(60)}sleek.` },
       "Refused: Your reason for passing over Ava Stone is too long: keep it to a sentence.",
     ],
-    ["a Style Icon not on the list", { styleIcon: 4, reason: REASON }, "Refused: There's no Style Icon 4 on your list."],
+    ["a Style Icon not on the list", { styleIcon: 4, reasonKind: "style", reason: REASON }, "Refused: There's no Style Icon 4 on your list."],
+    ["no kind of reason", { styleIcon: 1, reason: REASON }, expect.stringContaining("reasonKind")],
   ])("refuses to pass over a Style Icon with %s, passing nothing over", async (_name, input, refusal) => {
     harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? call("passOverStyleIcon", input) : undefined);
     const browser = await signedInUser();
@@ -564,7 +576,7 @@ describe("passing over a Style Icon", () => {
   });
 
   it("refuses to pass over a Style Icon that has inspired an Outfit", async () => {
-    harness.ai.stylistTurn = ({ turn }) => (turn === 3 ? call("passOverStyleIcon", { styleIcon: 1, reason: REASON }) : undefined);
+    harness.ai.stylistTurn = ({ turn }) => (turn === 3 ? call("passOverStyleIcon", { styleIcon: 1, reasonKind: "style", reason: REASON }) : undefined);
     const browser = await signedInUser();
     const consultationId = await start(browser);
 
@@ -575,6 +587,120 @@ describe("passing over a Style Icon", () => {
       "Refused: Ava Stone has already inspired an Outfit.",
     ]);
     expect(await styleIconStatusesOf(consultationId)).toEqual(["used", "used", "unused"]);
+  });
+});
+
+describe("passing over a Style Icon for hair length", () => {
+  it("passes over 2 of a Face Photo's Style Icons for hair length, each with its reason, and refuses a third, whose cut is to be adapted instead", async () => {
+    harness.qloo.respond = qlooAnswering(SIX_WOMEN);
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? call("passOverStyleIcon", forHairLength(1), forHairLength(2), forHairLength(3)) : undefined);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests[2]!.toolResults.slice(-3).map(({ output, error }) => [output, error])).toEqual([
+      [{ styleIcon: 1 }, null],
+      [{ styleIcon: 2 }, null],
+      [null, "Refused: You've passed over 2 Style Icons for hair length, the most a Styling may: adapt Cleo Hart's signature cut to what the person's hair can do instead."],
+    ]);
+    expect(await styleIconStatusesOf(consultationId)).toEqual(["skipped", "skipped", "used", "used", "unused", "unused"]);
+    const shown = (await readConsultation(harness.context(browser), consultationId))!;
+    expect(shown.outfits.map((o) => o.styleIconName)).toEqual(["Cleo Hart", "Dana Reed"]);
+    expect(shown.stylistNotes[0]!.notes.slice(2, 6)).toEqual([
+      { kind: "step", text: "Passed over Ava Stone" },
+      { kind: "note", text: "Her signature long, loose mane needs much more length than a cut from yours can reach." },
+      { kind: "step", text: "Passed over Bea Marsh" },
+      { kind: "note", text: "Her signature hip-length layered cut needs much more length than a cut from yours can reach." },
+    ]);
+  });
+
+  it("still passes over a Face Photo's Style Icon for style once it has passed over 2 for hair length", async () => {
+    harness.qloo.respond = qlooAnswering(SIX_WOMEN);
+    const forStyle = { styleIcon: 3, reasonKind: "style", reason: "Cleo Hart's signature cut is a sleek bob, which doesn't go with your casual Photo Style." };
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? call("passOverStyleIcon", forHairLength(1), forHairLength(2), forStyle) : undefined);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests[2]!.toolResults.slice(-3).map(({ error }) => error)).toEqual([null, null, null]);
+    expect(await styleIconStatusesOf(consultationId)).toEqual(["skipped", "skipped", "skipped", "used", "used", "unused"]);
+  });
+
+  it("refuses to pass over a Style Icon for hair length with no reason, asking for one about the cut's length", async () => {
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? call("passOverStyleIcon", { ...forHairLength(1), reason: " " }) : undefined);
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests[2]!.toolResults.at(-1)).toMatchObject({
+      toolName: "passOverStyleIcon",
+      output: null,
+      error: "Refused: Say why you're passing over Ava Stone, about the length their signature cut needs.",
+    });
+    expect(await styleIconStatusesOf(consultationId)).toEqual(["used", "used", "unused"]);
+  });
+
+  it.each(["full_body", "body_only"] as const)("refuses to pass over a %s photo's Style Icon for hair length, whose cut is to be adapted instead", async (photoType) => {
+    harness.qloo.respond = qlooWithBrands(WOMEN);
+    harness.ai.stylistTurn = ({ turn }) => (turn === 2 ? call("passOverStyleIcon", forHairLength(1)) : undefined);
+    const browser = await signedInUser();
+    const consultationId = await start(browser, photoType);
+
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests[2]!.toolResults.at(-1)).toMatchObject({
+      toolName: "passOverStyleIcon",
+      output: null,
+      error: "Refused: Only a Face Photo's Style Icons are passed over for hair length: adapt Ava Stone's signature cut to what the person's hair can do instead.",
+    });
+    expect(await styleIconStatusesOf(consultationId)).toEqual(["used", "used", "unused"]);
+    expect(JSON.stringify((await readConsultation(harness.context(browser), consultationId))!.stylistNotes)).not.toContain("Passed over");
+  });
+
+  it('lets "Show 2 more Outfits" pass over 2 more for hair length, whatever the Styling before it passed over', async () => {
+    harness.qloo.respond = qlooAnswering(SEVEN_WOMEN);
+    harness.ai.stylistTurn = ({ turn, brief }) =>
+      brief?.styling === "First Styling" && turn === 2
+        ? call("passOverStyleIcon", forHairLength(1), forHairLength(2))
+        : brief?.styling === "Show 2 more Outfits" && turn === 1
+          ? call("passOverStyleIcon", forHairLength(5), forHairLength(6))
+          : undefined;
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    await harness.stylings.runPending();
+
+    await showMoreOutfits(harness.context(browser), consultationId);
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests.at(-1)!.toolResults.filter(({ toolName }) => toolName === "passOverStyleIcon").map(({ error }) => error)).toEqual([null, null]);
+    expect(await styleIconStatusesOf(consultationId)).toEqual(["skipped", "skipped", "used", "used", "skipped", "skipped", "used"]);
+  });
+
+  it("lets Try again pass over 2 more for hair length, whatever the broken Styling passed over", async () => {
+    harness.qloo.respond = qlooAnswering(SIX_WOMEN);
+    harness.ai.stylistTurn = ({ turn, brief }) =>
+      brief?.styling === "First Styling" && turn === 2
+        ? call("passOverStyleIcon", forHairLength(1), forHairLength(2))
+        : brief?.styling === "Try again" && turn === 1
+          ? call("passOverStyleIcon", forHairLength(3), forHairLength(4))
+          : undefined;
+    // Once it has passed over 2, the model goes down.
+    harness.ai.duringCall = async (made) => {
+      if (made === "stylistModel" && harness.ai.stylistRequests.at(-1)?.turn === 3) throw new Error("The model is down.");
+    };
+    const browser = await signedInUser();
+    const consultationId = await start(browser);
+    await harness.stylings.runPending();
+    harness.ai.duringCall = undefined;
+
+    expect(await tryAgain(harness.context(browser), consultationId)).toEqual({ ok: true });
+    await harness.stylings.runPending();
+
+    expect(harness.ai.stylistRequests.at(-1)!.toolResults.filter(({ toolName }) => toolName === "passOverStyleIcon").map(({ error }) => error)).toEqual([null, null]);
+    expect((await readConsultation(harness.context(browser), consultationId))!.outfits.map((o) => o.styleIconName)).toEqual(["Esme Vale", "Fay Lowe"]);
   });
 });
 
@@ -1883,6 +2009,18 @@ function save(...outfits: object[]) {
 /** A turn that calls `tool` once with each input, at once. */
 function call(tool: string, ...inputs: object[]) {
   return { calls: inputs.map((input) => ({ tool, input })) };
+}
+
+/** The signature cuts `forHairLength` passes Style Icons over for, by their number: each needs far more length. */
+const LONG_CUTS = ["long, loose mane", "hip-length layered cut", "long curtain-fringed cut", "long sleek ponytail", "waist-length blowout"];
+
+/** Passing over Style Icon `styleIcon` for hair length, with a reason about its signature cut's length. */
+function forHairLength(styleIcon: number) {
+  return {
+    styleIcon,
+    reasonKind: "hairLength",
+    reason: `Her signature ${LONG_CUTS[(styleIcon - 1) % LONG_CUTS.length]} needs much more length than a cut from yours can reach.`,
+  };
 }
 
 /** An Outfit as the Stylist saves it: a Hairstyle from Style Icon `styleIcon`, with anything `hairstyle` changes. */

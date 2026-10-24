@@ -448,7 +448,8 @@ async function searchFilters(db: Database | Transaction, running: Parameters<typ
 
 /**
  * What a body photo's tools check the Styling against: where it is, its limits, its kind, its Budget
- * Tier, its market, its searches so far and the photo's Categories.
+ * Tier, its market, its searches so far and the photo's Categories; and its Style Icons passed over
+ * for hair length, which passing one over checks.
  */
 export async function readBuilding(tx: Transaction, stylingId: string) {
   const [row] = await tx
@@ -459,6 +460,7 @@ export async function readBuilding(tx: Transaction, stylingId: string) {
       budgetTier: styling.budgetTier,
       market: styling.market,
       productSearches: styling.productSearches,
+      hairLengthPassOvers: styling.hairLengthPassOvers,
       countryCode: consultation.countryCode,
       consultationId: styling.consultationId,
       photoType: consultation.photoType,

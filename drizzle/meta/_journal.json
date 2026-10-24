@@ -183,6 +183,13 @@
       "when": 1792840672484,
       "tag": "0025_preview_checked",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792841925209,
+      "tag": "0026_hair_length_pass_overs",
+      "breakpoints": true
     }
   ]
 }

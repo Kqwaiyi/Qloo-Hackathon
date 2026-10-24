@@ -205,7 +205,7 @@ function passOverCall(request: FakeStylistRequest, icon: StylistStyleIcon): Fake
   const reason = request.tools.includes("fetchBrands")
     ? `The Brands ${icon.name}'s fans favour don't go with your ${style} Photo Style.`
     : `${icon.name}'s signature cut doesn't go with your ${style} Photo Style.`;
-  return { tool: "passOverStyleIcon", input: { styleIcon: icon.number, reason } };
+  return { tool: "passOverStyleIcon", input: { styleIcon: icon.number, reasonKind: "style", reason } };
 }
 
 /** The numbers of the Style Icons the Stylist has passed over with passOverStyleIcon. */

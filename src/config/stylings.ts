@@ -83,6 +83,15 @@ export const PREVIEW_STEP_MAX_RETRIES = 3;
 export const OUTFITS_PER_STYLING = 2;
 
 /**
+ * On a Face Photo, the Stylist may pass over this many Style Icons in a Styling for hair length, as
+ * their signature cut needs much more length than the user's hair has. After that it adapts the
+ * cut, so a user with short hair isn't told again and again, and their Outfits stay near the top
+ * of Qloo's picks. Each Styling counts its own, so "Show 2 more Outfits" and Try again may each
+ * pass over this many more. The Demo Account's Stylings have the same.
+ */
+export const HAIR_LENGTH_PASS_OVERS_PER_STYLING = 2;
+
+/**
  * How much room the Stylist has on one Styling, so one Styling's cost is bounded. Each is the
  * Styling's own, enforced by the Stylist's tools and its loop, never by its judgement. Redraws
  * aren't among them: each Outfit's Preview may be redrawn once, whoever's Styling it is.
