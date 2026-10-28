@@ -1,4 +1,4 @@
-# Qurator: your style, curated by culture
+# Qurator: Your Style, Curated by Culture
 
 Take one photo of yourself and get complete Outfits: a hairstyle, top, bottom and shoes, each inspired by a real Style Icon, built from real Products you can buy within your budget, and shown on you in an AI-generated Preview. Built for the Qloo Agentic Hackathon.
 
