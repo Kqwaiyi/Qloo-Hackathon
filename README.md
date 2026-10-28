@@ -2,7 +2,7 @@
 
 Take one photo of yourself and get complete Outfits: a hairstyle, top, bottom and shoes, each inspired by a real Style Icon, built from real Products you can buy within your budget, and shown on you in an AI-generated Preview. Built for the Qloo Agentic Hackathon.
 
-- **Live demo:** _<demo URL>_ (the judges' Demo Account login is shared privately)
+- **Live demo:** https://qloo-hackathon-kohl.vercel.app 
 - **License:** [MIT](LICENSE)
 
 ![Qurator architecture: the Styling Agent asks Qloo for Style Icons and their fans' Brands, then Channel3 and Gemini turn them into real Products and a Preview](docs/images/architecture.webp)
