@@ -1,19 +1,28 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BOT_CHECK_TIMEOUT_MS, PHOTO_NOTICE_VERSION } from "@/config/accounts";
+import { guestPlaceholderAddress } from "@/config/guests";
 import { GUEST_PHOTO_CHECK_LIMIT } from "@/config/limits";
 import { AGE_GATE_COOKIE } from "@/server/accounts/age-gate";
-import { consultation, guestUsageRecord, qlooCache, qlooLimitState, usageRecord, user } from "@/server/db/schema";
+import { deleteAccountOf } from "@/server/accounts/deletion";
+import { consultation, guestUsageRecord, outfit, qlooCache, qlooLimitState, usageRecord, user } from "@/server/db/schema";
 import { deleteConsultation, listConsultations, readConsultation } from "@/server/operations/consultations";
-import { readGuestPage, type StartGuestConsultationInput, startGuestConsultation } from "@/server/operations/guest-consultations";
+import {
+  clearDeletedGuestCookie,
+  readGuestPage,
+  type StartGuestConsultationInput,
+  startGuestConsultation,
+} from "@/server/operations/guest-consultations";
+import { requestPasswordReset } from "@/server/operations/password-reset";
 import { readSignUpGate } from "@/server/operations/sign-up";
 import { changeBudgetTier, changePhotoStyle, readStylingStatus, showMoreOutfits, tryAgain } from "@/server/operations/stylings";
 import { readUsageSummary } from "@/server/operations/usage";
 import { qlooBrand, qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
 import { saveQlooLimitState } from "@/server/qloo/limit-state";
+import { recordGuestUsage } from "@/server/usage/guest-records";
 import { recordProductSearches } from "@/server/usage/records";
 import {
   BOTH_CONSENT_BOXES_TICKED,
@@ -58,6 +67,7 @@ beforeEach(async () => {
   harness.ai.duringCall = undefined;
   harness.ai.stylistRequests.length = 0;
   harness.stylings.pending.length = 0;
+  harness.afterResponse.pending.length = 0;
   harness.qloo.requests.length = 0;
   harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
   harness.turnstile.requests.length = 0;
@@ -92,12 +102,12 @@ describe("a Guest Consultation", () => {
     });
   });
 
-  it("is opened by the guest cookie alone, HTTP-only and valid for an hour, so another browser can neither follow nor open it", async () => {
+  it("is opened by the guest cookie alone, HTTP-only, so another browser can neither follow nor open it", async () => {
     const guest = new TestBrowser({ ipCountry: "GB" });
     const otherBrowser = new TestBrowser({ ipCountry: "GB" });
     const consultationId = consultationIdOf(await startGuestConsultation(harness.context(guest), await guestInput()));
 
-    expect(guest.cookie("guest")).toMatchObject({ httpOnly: true, maxAge: 60 * 60, path: "/" });
+    expect(guest.cookie("guest")).toMatchObject({ httpOnly: true, path: "/" });
     expect(await readStylingStatus(harness.context(guest), consultationId)).toMatchObject({ state: "styling", progress: { kind: "first" } });
     expect(await readStylingStatus(harness.context(otherBrowser), consultationId)).toBeNull();
     await harness.stylings.runPending();
@@ -278,17 +288,56 @@ describe("the Guest Page", () => {
     });
   });
 
-  it("no longer opens on the Guest Consultation once the guest cookie is an hour old, but on its address's daily limit, used up", async () => {
+  it("tells a Guest back after the hour that their Guest Consultation has been deleted, over the address's used-up limit, until the cookie is cleared", async () => {
+    const guest = new TestBrowser({ ipCountry: "GB" });
+    await startGuestConsultation(harness.context(guest), await guestInput());
+    await harness.stylings.runPending();
+    // The browser keeps it a day, past its hour, so the page can say so.
+    expect(guest.cookie("guest")).toMatchObject({ maxAge: 24 * 60 * 60 });
+
+    harness.clock.set("2026-10-16T13:00:00Z");
+
+    const usedUp = { show: "used-up", refusal: { refusal: "guest-consultation-used", moreFrom: new Date("2026-10-17T12:00:00Z") } };
+    expect(await readGuestPage(harness.context(guest))).toEqual({ ...usedUp, guestConsultationDeleted: true });
+    await clearDeletedGuestCookie(harness.context(guest));
+    expect(guest.cookie("guest")).toBeUndefined();
+    expect(await readGuestPage(harness.context(guest))).toEqual(usedUp);
+  });
+
+  it("tells them so over the New Consultation steps when the address can have another", async () => {
+    harness.qloo.respond = () => Response.json({ error: "Internal Server Error" }, { status: 500 });
     const guest = new TestBrowser({ ipCountry: "GB" });
     await startGuestConsultation(harness.context(guest), await guestInput());
     await harness.stylings.runPending();
 
     harness.clock.set("2026-10-16T13:00:00Z");
 
-    expect(await readGuestPage(harness.context(guest))).toEqual({
-      show: "used-up",
-      refusal: { refusal: "guest-consultation-used", moreFrom: new Date("2026-10-17T12:00:00Z") },
-    });
+    expect(await readGuestPage(harness.context(guest))).toEqual({ show: "new-consultation", countryCode: "GB", guestConsultationDeleted: true });
+  });
+
+  it("treats a guest cookie whose guest user is gone within the hour as absent, saying its Guest Consultation has been deleted", async () => {
+    const guest = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+    const consultationId = consultationIdOf(await startGuestConsultation(harness.context(guest), await guestInput()));
+    await harness.stylings.runPending();
+    const [guestUserId] = guest.cookie("guest")!.value.split(".");
+    await deleteAccountOf(harness, guestUserId!);
+
+    expect(await readConsultation(harness.context(guest), consultationId)).toBeNull();
+    expect(await readGuestPage(harness.context(guest))).toMatchObject({ show: "used-up", guestConsultationDeleted: true });
+    await clearDeletedGuestCookie(harness.context(guest));
+    expect(guest.cookie("guest")).toBeUndefined();
+  });
+
+  it("keeps a guest cookie that still opens its Guest Consultation, and says nothing was deleted without one of ours", async () => {
+    const guest = new TestBrowser({ ipCountry: "GB" });
+    await startGuestConsultation(harness.context(guest), await guestInput());
+    const forger = new TestBrowser({ ip: "198.51.100.30", ipCountry: "GB" });
+    forger.responseCookies.set({ name: "guest", value: `${randomUUID()}.${Date.parse("2026-10-16T13:00:00Z")}.not-our-signature`, path: "/" });
+
+    await clearDeletedGuestCookie(harness.context(guest));
+
+    expect(await readGuestPage(harness.context(guest))).toMatchObject({ show: "guest-consultation" });
+    expect(await readGuestPage(harness.context(forger))).toEqual({ show: "new-consultation", countryCode: "GB" });
   });
 
   it("is closed, saying why, to a browser the age gate has blocked, to a country Gemini doesn't serve, and while a cap stops every Styling", async () => {
@@ -742,6 +791,156 @@ describe("a Guest's photo checks", () => {
     expect(await readGuestPage(harness.context(sixth))).toMatchObject({ show: "new-consultation" });
   });
 });
+
+// ADR-0013: a Guest Consultation is kept an hour, then deleted with everything in it.
+describe("the guest cleanup", () => {
+  it("deletes a Guest Consultation once it's an hour old, with its photo, Previews and guest user, in the background of another Guest opening the Guest Page", async () => {
+    const first = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+    const consultationId = consultationIdOf(await startGuestConsultation(harness.context(first), await guestInput()));
+    await harness.stylings.runPending();
+    // The photo and both Previews.
+    expect(harness.blob.objects.size).toBe(3);
+    const another = new TestBrowser({ ip: "203.0.113.8", ipCountry: "GB" });
+
+    harness.clock.set("2026-10-16T12:59:59Z");
+    await readGuestPage(harness.context(another));
+    await harness.afterResponse.runPending();
+    expect(await guestConsultationsLeft([consultationId])).toEqual([consultationId]);
+
+    harness.clock.set("2026-10-16T13:00:00Z");
+    await readGuestPage(harness.context(another));
+    // The page didn't wait for it.
+    expect(await guestConsultationsLeft([consultationId])).toEqual([consultationId]);
+    await harness.afterResponse.runPending();
+
+    expect(await guestConsultationsLeft([consultationId])).toEqual([]);
+    expect(harness.blob.objects.size).toBe(0);
+    expect(await harness.db.$count(user, eq(user.isGuest, true))).toBe(guestUsersBefore);
+  });
+
+  it.each<{ acting: string; act: (another: TestBrowser) => Promise<unknown> }>([
+    { acting: "starts a Guest Consultation", act: async (another) => startGuestConsultation(harness.context(another), await guestInput()) },
+    {
+      acting: "comes back to their own Guest Consultation",
+      act: async (another) => {
+        harness.clock.set("2026-10-16T12:30:00Z");
+        await startGuestConsultation(harness.context(another), await guestInput());
+        // Only what coming back leaves.
+        harness.afterResponse.pending.length = 0;
+        harness.clock.set("2026-10-16T13:00:00Z");
+        expect(await readGuestPage(harness.context(another))).toMatchObject({ show: "guest-consultation" });
+      },
+    },
+  ])("deletes one an hour old in the background of another Guest who $acting", async ({ act }) => {
+    const first = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+    const consultationId = consultationIdOf(await startGuestConsultation(harness.context(first), await guestInput()));
+    await harness.stylings.runPending();
+    const another = new TestBrowser({ ip: "203.0.113.8", ipCountry: "GB" });
+    harness.clock.set("2026-10-16T13:00:00Z");
+    harness.afterResponse.pending.length = 0;
+
+    await act(another);
+    await harness.afterResponse.runPending();
+
+    expect(await guestConsultationsLeft([consultationId])).toEqual([]);
+  });
+
+  it("keeps one an hour old while its Styling runs, so its Workflow is never broken, and deletes it once the Styling has finished", async () => {
+    const first = await guestTryingAgainAt("2026-10-16T12:55:00Z");
+    const another = new TestBrowser({ ip: "203.0.113.8", ipCountry: "GB" });
+
+    harness.clock.set("2026-10-16T13:00:00Z");
+    await readGuestPage(harness.context(another));
+    await harness.afterResponse.runPending();
+    expect(await guestConsultationsLeft([first])).toEqual([first]);
+    await harness.stylings.runPending();
+    expect(await outfitsOn(first)).toBe(2);
+
+    harness.clock.set("2026-10-16T13:01:00Z");
+    await readGuestPage(harness.context(another));
+    await harness.afterResponse.runPending();
+    expect(await guestConsultationsLeft([first])).toEqual([]);
+    expect(harness.blob.objects.size).toBe(0);
+  });
+
+  it("deletes one whose Styling is stuck, cancelling its Workflow run first, as the stuck check would finish it", async () => {
+    const first = await guestTryingAgainAt("2026-10-16T12:55:00Z");
+    const another = new TestBrowser({ ip: "203.0.113.8", ipCountry: "GB" });
+
+    harness.clock.set("2026-10-16T13:05:00Z");
+    await readGuestPage(harness.context(another));
+    await harness.afterResponse.runPending();
+
+    expect(await guestConsultationsLeft([first])).toEqual([]);
+    expect(harness.stylings.pending).toEqual([]);
+    expect(harness.blob.objects.size).toBe(0);
+  });
+
+  it("purges the guest usage records 24 hours old, with the IP hashes they hold, in the background of a Guest opening the Guest Page", async () => {
+    await recordGuestUsage(harness.db, { kind: "photo_check", ipHash: "an-address", at: new Date("2026-10-15T12:00:00Z") });
+    await recordGuestUsage(harness.db, { kind: "guest_consultation", ipHash: "an-address", at: new Date("2026-10-15T12:00:01Z") });
+
+    await readGuestPage(harness.context(new TestBrowser({ ipCountry: "GB" })));
+    expect(await harness.db.$count(guestUsageRecord)).toBe(2);
+    await harness.afterResponse.runPending();
+
+    const left = await harness.db.select({ usedAt: guestUsageRecord.usedAt }).from(guestUsageRecord);
+    expect(left).toEqual([{ usedAt: new Date("2026-10-15T12:00:01Z") }]);
+  });
+});
+
+// ADR-0013: a guest user is no account, so nothing built around accounts reaches it.
+describe("a guest user", () => {
+  it.each<{ request: string; send: (address: string) => Promise<unknown> }>([
+    {
+      request: "a password reset",
+      send: async (address) =>
+        expect(await requestPasswordReset(harness.context(new TestBrowser()), { email: address, botCheckToken: TEST_BOT_CHECK_TOKEN })).toEqual({
+          ok: true,
+        }),
+    },
+    {
+      request: "a new verification link",
+      send: async (address) =>
+        expect((await harness.postToAuth("/send-verification-email", { email: address }, new TestBrowser())).status).toBe(200),
+    },
+  ])("is never emailed: $request for its placeholder address is answered as for any address, sending nothing", async ({ send }) => {
+    const guest = new TestBrowser({ ipCountry: "GB" });
+    await startGuestConsultation(harness.context(guest), await guestInput());
+    const [guestUserId] = guest.cookie("guest")!.value.split(".");
+    const address = guestPlaceholderAddress(guestUserId!);
+
+    await send(address);
+
+    expect(harness.emails.to(address)).toEqual([]);
+  });
+});
+
+/**
+ * A Guest Consultation started at noon, from 203.0.113.7, whose first Styling broke, and which the
+ * Guest tries again at `time`: its new Styling runs, waiting for `runPending()`.
+ */
+async function guestTryingAgainAt(time: string): Promise<string> {
+  harness.qloo.respond = () => Response.json({ error: "Internal Server Error" }, { status: 500 });
+  const guest = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+  const consultationId = consultationIdOf(await startGuestConsultation(harness.context(guest), await guestInput()));
+  await harness.stylings.runPending();
+  harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+  harness.clock.set(time);
+  expect(await tryAgain(harness.context(guest), consultationId)).toEqual({ ok: true });
+  return consultationId;
+}
+
+/** How many Outfits the Consultation has. */
+async function outfitsOn(consultationId: string): Promise<number> {
+  return harness.db.$count(outfit, eq(outfit.consultationId, consultationId));
+}
+
+/** Which of these Consultations are still stored. */
+async function guestConsultationsLeft(consultationIds: string[]): Promise<string[]> {
+  const left = await harness.db.select({ id: consultation.id }).from(consultation).where(inArray(consultation.id, consultationIds));
+  return left.map(({ id }) => id);
+}
 
 /** A Guest Consultation on this address, its Styling run straight away: its two Outfits shown, unless Qloo fails it. */
 async function guestConsultationShownOn(ip: string): Promise<void> {

@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import { COPY } from "@/config/copy";
 import type { EmailKind } from "@/config/email";
+import { isGuestPlaceholderAddress } from "@/config/guests";
 import { AUTH_API_PATH, AUTH_ENDPOINTS, EMAIL_CHANGE_LANDINGS, ROUTES } from "@/config/routes";
 import { unverifiedAccountDeletionDate } from "@/server/accounts/verification";
 import {
@@ -36,6 +37,9 @@ interface AuthUser {
  * Once the old address approves a verified user's email change, Better Auth sends the new address
  * its link this way too, with `user.email` already the new address. `onEmailChangeLinkSent` then
  * hears of it.
+ *
+ * A guest user is sent nothing, though anyone may ask for its placeholder address's link, and
+ * Better Auth answers as if it went, as for any address.
  */
 export function verificationEmailSender(
   emailSender: EmailSender,
@@ -43,6 +47,8 @@ export function verificationEmailSender(
   onEmailChangeLinkSent: (recipient: Pick<AuthUser, "id" | "email">) => Promise<void>,
 ) {
   return async ({ user, token }: { user: AuthUser; token: string }, request?: Request): Promise<void> => {
+    // A guest user is no account, so it's never emailed (ADR-0013).
+    if (isGuestPlaceholderAddress(user.email)) return;
     const endpoint = request ? new URL(request.url).pathname.slice(AUTH_API_PATH.length) : apiEndpoint.getStore();
     // Anything else counts as a resend, the kind with a per-account cap.
     const kind = (endpoint === undefined ? undefined : VERIFICATION_EMAIL_KINDS[endpoint]) ?? "verification-resend";
@@ -59,10 +65,12 @@ export function verificationEmailSender(
 
 /**
  * Better Auth's `sendResetPassword`, through our send function. A refused email throws, which
- * Better Auth logs and keeps to itself, so the request gets the same reply whatever happened.
+ * Better Auth logs and keeps to itself, so the request gets the same reply whatever happened. A
+ * guest user, which has no password, is sent nothing, and gets that reply too.
  */
 export function passwordResetEmailSender(emailSender: EmailSender, baseURL: string) {
   return async ({ user, token }: { user: AuthUser; token: string }): Promise<void> => {
+    if (isGuestPlaceholderAddress(user.email)) return;
     // Our own link: Better Auth checks the token, then lands on the reset page with it.
     const link = `${baseURL}${AUTH_API_PATH}${AUTH_ENDPOINTS.resetPassword}/${encodeURIComponent(token)}?callbackURL=${encodeURIComponent(ROUTES.resetPassword)}`;
     const result = await emailSender.send({ kind: "password-reset", userId: user.id, to: user.email, ...passwordResetEmail({ link }) });

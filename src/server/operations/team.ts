@@ -13,7 +13,7 @@ import { consultation, outfit, piece, styleIcon } from "@/server/db/schema";
 import type { ResponseCookies } from "@/server/http/cookies";
 import { updateProfile } from "@/server/operations/account";
 import { startConsultation, storedPiece, storedPieceColumns } from "@/server/operations/consultations";
-import type { OperationContext, Result } from "@/server/operations/context";
+import type { OperationContext, OperationContextWithoutRequest, Result } from "@/server/operations/context";
 import type { LandingSample } from "@/server/operations/landing";
 import { signIn } from "@/server/operations/sign-in";
 import type { StylingRunner } from "@/server/stylings/runner";
@@ -205,7 +205,7 @@ export interface LandingSampleMaking {
  * What making a landing sample runs on: a fresh app of its own, with no Demo Account in it yet, the
  * Qloo, product search and AI it should call, and Stylings run in this process when it says.
  */
-export type LandingSampleApp = Omit<OperationContext, "requestHeaders" | "responseCookies" | "stylings"> & {
+export type LandingSampleApp = Omit<OperationContextWithoutRequest, "stylings"> & {
   /** Runs Stylings in this process: each one started runs to its end when `runPending()` is called. */
   stylings: StylingRunner & { runPending(): Promise<void> };
 };
@@ -265,9 +265,10 @@ export async function makeLandingSample(
 /**
  * The requests one browser makes on a fresh app of a team script's, such as the Demo Account's
  * judge's on the landing sample's: a context for each next one, from the app's own origin, carrying
- * the cookies Better Auth has set so far.
+ * the cookies Better Auth has set so far. A script has no response to send first, so work left for
+ * after it starts at once.
  */
-export async function browserRequests(app: Omit<OperationContext, "requestHeaders" | "responseCookies">): Promise<() => OperationContext> {
+export async function browserRequests(app: OperationContextWithoutRequest): Promise<() => OperationContext> {
   const origin = new URL((await app.auth.$context).baseURL).origin;
   const cookies = new Map<string, string>();
   const responseCookies: ResponseCookies = {
@@ -276,8 +277,13 @@ export async function browserRequests(app: Omit<OperationContext, "requestHeader
   };
   return () => {
     const cookie = [...cookies].map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join("; ");
-    return { ...app, requestHeaders: new Headers({ origin, cookie }), responseCookies };
+    return { ...app, requestHeaders: new Headers({ origin, cookie }), responseCookies, afterResponse: startAtOnce };
   };
+}
+
+/** Starts work left for after a request at once, logging how it failed, if it does. */
+function startAtOnce(work: () => Promise<void>): void {
+  work().catch((error: unknown) => console.error("Work left for after a request failed:", error instanceof Error ? error.message : "unknown error"));
 }
 
 /** The account using this email, as Better Auth finds it at sign-in: ignoring case. */

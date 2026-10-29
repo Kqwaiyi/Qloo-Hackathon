@@ -22,7 +22,7 @@ import { previewPathnameFor, previewRedrawPathnameFor } from "@/server/consultat
 import type { PhotoRejection } from "@/server/consultations/photo-check";
 import { outfit, piece, styleIcon, styling } from "@/server/db/schema";
 import { readConsultation, startConsultation } from "@/server/operations/consultations";
-import type { OperationContext } from "@/server/operations/context";
+import type { OperationContext, OperationContextWithoutRequest } from "@/server/operations/context";
 import { signUp } from "@/server/operations/sign-up";
 import { browserRequests } from "@/server/operations/team";
 import type { PreviewDrawn } from "@/server/stylings/preview-phase";
@@ -191,7 +191,7 @@ export class StylistCheckBlob implements BlobStore {
  * What a Stylist check runs on: a fresh app, with no account in it but those the check makes, on a
  * watched AI, with Stylings run in this process when it says.
  */
-export type StylistCheckApp = Omit<OperationContext, "requestHeaders" | "responseCookies" | "stylings" | "ai" | "blob"> & {
+export type StylistCheckApp = Omit<OperationContextWithoutRequest, "stylings" | "ai" | "blob"> & {
   ai: StylistCheckAi;
   blob: StylistCheckBlob;
   /**

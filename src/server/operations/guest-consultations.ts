@@ -4,12 +4,13 @@ import * as z from "zod";
 
 import { isStylePreference, type StylePreference } from "@/config/accounts";
 import { findCountry } from "@/config/countries";
-import { GUEST_EMAIL_DOMAIN } from "@/config/guests";
+import { guestPlaceholderAddress } from "@/config/guests";
 import { applyAgeGate, isBlockedByAgeGate } from "@/server/accounts/age-gate";
 import { birthDateFieldsSchema, parseBirthDateFields } from "@/server/accounts/birth-date";
 import { consultation, user } from "@/server/db/schema";
+import { cleanUpGuestsAfterResponse } from "@/server/guests/cleanup";
 import { checkGuestLimits, type GuestLimitRefusal, lockGuestLimits } from "@/server/guests/daily-limit";
-import { guestCookie } from "@/server/guests/guest-cookie";
+import { clearedGuestCookie, guestCookie, holdsSignedGuestCookie } from "@/server/guests/guest-cookie";
 import { guestIpHashOf } from "@/server/guests/ip-hash";
 import {
   bothPhotoBoxesTicked,
@@ -20,7 +21,7 @@ import {
 } from "@/server/operations/consultations";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readGuestUsageSummary, type UsageSummary } from "@/server/operations/usage";
-import { readGuest } from "@/server/operations/viewer";
+import { readGuest, type Viewer } from "@/server/operations/viewer";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
 import { ipCountryOf, isFromSupportedRegion } from "@/server/region-gate";
 import { type AppWideStylingStartRefusal, checkAppWideStylingStart } from "@/server/stylings/start";
@@ -79,6 +80,7 @@ export async function startGuestConsultation(
   ctx: OperationContext,
   input: StartGuestConsultationInput,
 ): Promise<Result<{ consultationId: string }, StartGuestConsultationRefusal>> {
+  cleanUpGuestsAfterResponse(ctx);
   // First, so nothing is asked of, or recorded from, where the app isn't available.
   if (!isFromSupportedRegion(ctx.requestHeaders)) return { ok: false, refusal: "unsupported-region" };
   // Next, as at sign-up, so a bot learns nothing from the other checks, and a refused request uses
@@ -119,7 +121,7 @@ export async function startGuestConsultation(
       return null;
     }
     const ageGroup = ageGroupAt(birthDate.year, birthDate.month, now);
-    const placeholder = `${guestUserId}@${GUEST_EMAIL_DOMAIN}`;
+    const placeholder = guestPlaceholderAddress(guestUserId);
     await tx.insert(user).values({
       id: guestUserId,
       name: "Guest",
@@ -161,25 +163,62 @@ function invalid(field: GuestDetailsField): { ok: false; refusal: "invalid"; fie
  * - closed while an app-wide cap or a backstop stops every Styling.
  *
  * The Guest Consultation comes with the Guest's usage summary, for Try again once its Styling
- * breaks (`readGuestUsageSummary`).
+ * breaks (`readGuestUsageSummary`). Any of the others says when the browser's guest cookie opens
+ * nothing because its Guest Consultation has been deleted, which the page then clears
+ * (`clearDeletedGuestCookie`).
  */
 export type GuestPageView =
   | { show: "guest-consultation"; consultationId: string; usage: UsageSummary }
+  | (GuestPageWithoutGuestConsultation & { guestConsultationDeleted?: true });
+
+/** What the Guest Page shows without a Guest Consultation to open. */
+export type GuestPageWithoutGuestConsultation =
   | { show: "new-consultation"; countryCode: string | null }
   | { show: "used-up"; refusal: GuestLimitRefusal }
   | { show: "closed"; refusal: { refusal: "under-18" } | AppWideStylingStartRefusal | { refusal: "guest-page-unavailable" } };
 
+/**
+ * Opening the Guest Page, which leaves the guest cleanup for once the page has gone. A guest
+ * cookie of ours that opens no Guest Consultation is treated as absent, and its Guest Consultation
+ * as deleted: its guest user is gone, or the cookie is past its hour, when the guest cleanup
+ * deletes it.
+ */
 export async function readGuestPage(
-  ctx: Pick<OperationContext, "auth" | "db" | "clock" | "stylings" | "guestIpSalt" | "requestHeaders">,
+  ctx: Pick<OperationContext, "auth" | "db" | "clock" | "blob" | "stylings" | "guestIpSalt" | "requestHeaders" | "afterResponse">,
 ): Promise<GuestPageView> {
+  cleanUpGuestsAfterResponse(ctx);
+  const opened = await readGuestConsultation(ctx);
+  if (opened) return { show: "guest-consultation", consultationId: opened.consultationId, usage: await readGuestUsageSummary(ctx, opened.guest) };
+  const page = await readGuestPageWithoutGuestConsultation(ctx);
+  return holdsSignedGuestCookie(ctx.auth.cookieSecret, ctx.requestHeaders) ? { ...page, guestConsultationDeleted: true } : page;
+}
+
+/**
+ * Clears the browser's guest cookie once it opens no Guest Consultation, as the Guest Page has
+ * just said: a page can't set cookies, so the page asks for this. A cookie that still opens one,
+ * such as a new Guest Consultation's set meanwhile, stays.
+ */
+export async function clearDeletedGuestCookie(
+  ctx: Pick<OperationContext, "auth" | "db" | "clock" | "requestHeaders" | "responseCookies">,
+): Promise<void> {
+  if (!holdsSignedGuestCookie(ctx.auth.cookieSecret, ctx.requestHeaders)) return;
+  if (await readGuestConsultation(ctx)) return;
+  ctx.responseCookies.set(clearedGuestCookie());
+}
+
+/** The Guest Consultation the request's guest cookie opens, with its Guest, or null. A guest user owns it alone. */
+async function readGuestConsultation(
+  ctx: Pick<OperationContext, "auth" | "db" | "clock" | "requestHeaders">,
+): Promise<{ guest: Viewer; consultationId: string } | null> {
   const guest = await readGuest(ctx);
-  // A guest user owns its Guest Consultation alone.
-  const [guestConsultation] = guest
-    ? await ctx.db.select({ id: consultation.id }).from(consultation).where(eq(consultation.userId, guest.id)).limit(1)
-    : [];
-  if (guest && guestConsultation) {
-    return { show: "guest-consultation", consultationId: guestConsultation.id, usage: await readGuestUsageSummary(ctx, guest) };
-  }
+  if (!guest) return null;
+  const [found] = await ctx.db.select({ id: consultation.id }).from(consultation).where(eq(consultation.userId, guest.id)).limit(1);
+  return found ? { guest, consultationId: found.id } : null;
+}
+
+async function readGuestPageWithoutGuestConsultation(
+  ctx: Pick<OperationContext, "auth" | "db" | "clock" | "stylings" | "guestIpSalt" | "requestHeaders">,
+): Promise<GuestPageWithoutGuestConsultation> {
   if (!isFromSupportedRegion(ctx.requestHeaders)) return { show: "closed", refusal: { refusal: "unsupported-region" } };
   // Before the address's limits, unlike "Get my Outfits", so a blocked browser isn't offered sign-up, which is closed to it too.
   if (isBlockedByAgeGate(ctx.requestHeaders)) return { show: "closed", refusal: { refusal: "under-18" } };

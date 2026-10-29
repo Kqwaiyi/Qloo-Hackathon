@@ -40,6 +40,9 @@ export function priceRefreshRoute(consultationId: string): string {
 /** Where the app pages renew the sign-in in the background (see RenewSignIn). */
 export const SIGN_IN_RENEWAL_ROUTE = "/api/sign-in-renewal";
 
+/** Where the Guest Page clears a guest cookie whose Guest Consultation has been deleted (see ClearDeletedGuestCookie). */
+export const GUEST_COOKIE_ROUTE = "/api/guest-cookie";
+
 /** Where Better Auth's own endpoints are served. */
 export const AUTH_API_PATH = "/api/auth";
 

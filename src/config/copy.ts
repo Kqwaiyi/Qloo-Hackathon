@@ -178,5 +178,7 @@ export const COPY = {
   guestPhotoCheckLimitReached: (limit: number, time: string) => `Your internet connection has had ${limit} photos checked today. More from ${time}.`,
   /** The Guest Page on a deployment that can't count Guest Consultations, without the salt it hashes internet addresses under. */
   guestPageUnavailable: "The Guest Page isn't available right now.",
+  /** Atop the Guest Page, once, for a Guest back after their Guest Consultation was deleted. */
+  guestConsultationDeleted: "Your Guest Consultation has been deleted, with its photo and Previews, as every Guest's is about an hour after it starts.",
   didNotSignUp: (date: string) => `Didn't sign up? Ignore this email. The account is removed on ${date}.`,
 } as const;

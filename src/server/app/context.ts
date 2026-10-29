@@ -1,9 +1,11 @@
 import "server-only";
 
 import { cookies, headers } from "next/headers";
+import { after } from "next/server";
 
 import { aiForBrowser, FAKE_AI_SCENARIO_COOKIE } from "@/server/ai/fake";
 import { getServices } from "@/server/app/services";
+import { secureInProduction } from "@/server/http/cookies";
 import type { OperationContext } from "@/server/operations/context";
 
 /** A server operation's context for the request a server action is handling. */
@@ -14,20 +16,22 @@ export async function getOperationContext(): Promise<OperationContext> {
     ai: aiForBrowser(services.ai, cookieStore.get(FAKE_AI_SCENARIO_COOKIE)?.value),
     requestHeaders,
     responseCookies: {
-      set: (cookie) => cookieStore.set({ ...cookie, secure: cookie.secure ?? process.env.NODE_ENV === "production" }),
+      set: (cookie) => cookieStore.set(secureInProduction(cookie)),
     },
+    afterResponse: after,
   };
 }
 
 /**
  * What reads need: the services and the request's headers. Pages can't set cookies. The reads that
- * run the stuck check cancel a stuck Styling's Workflow run.
+ * run the stuck check cancel a stuck Styling's Workflow run, and the Guest Page's leaves the guest
+ * cleanup for once the page has gone.
  */
 export async function getReadContext(): Promise<
-  Pick<OperationContext, "auth" | "db" | "clock" | "blob" | "stylings" | "guestIpSalt" | "requestHeaders">
+  Pick<OperationContext, "auth" | "db" | "clock" | "blob" | "stylings" | "guestIpSalt" | "requestHeaders" | "afterResponse">
 > {
   const [services, requestHeaders] = await Promise.all([getServices(), currentRequestHeaders()]);
-  return { ...services, requestHeaders };
+  return { ...services, requestHeaders, afterResponse: after };
 }
 
 /**

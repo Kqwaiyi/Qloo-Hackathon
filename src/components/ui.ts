@@ -22,4 +22,7 @@ export const fieldHint = "mt-1 text-sm text-stone-500";
 /** A line confirming something just worked, at the top of the page it landed on. */
 export const successNotice = "mb-6 rounded-lg bg-emerald-50 px-4 py-3 font-medium text-emerald-800";
 
+/** A line saying what happened while the visitor was away, at the top of the page. */
+export const infoNotice = "mb-6 rounded-lg bg-stone-100 px-4 py-3 font-medium text-stone-800";
+
 export const textLink ="font-medium underline underline-offset-2 hover:text-stone-600";

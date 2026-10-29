@@ -7,6 +7,7 @@ import { NewConsultation } from "@/app/(app)/consultations/new/new-consultation"
 import { Stepper } from "@/app/(app)/consultations/stepper";
 import { inkPill, stepHeading } from "@/app/(app)/consultations/ui";
 import { LimitMessage } from "@/components/limit-message";
+import { infoNotice } from "@/components/ui";
 import { COPY } from "@/config/copy";
 import { COUNTRY_OPTIONS } from "@/config/countries";
 import { APP_HOME, ROUTES } from "@/config/routes";
@@ -15,24 +16,43 @@ import { getBotCheckSiteKey } from "@/server/data/bot-check";
 import { getConsultation, getStylingStatus } from "@/server/data/consultations";
 import { getGuestPage } from "@/server/data/guests";
 import { getSignedInUser } from "@/server/data/session";
-import type { GuestPageView } from "@/server/operations/guest-consultations";
+import type { GuestPageView, GuestPageWithoutGuestConsultation } from "@/server/operations/guest-consultations";
 import type { UsageSummary } from "@/server/operations/usage";
+
+import { ClearDeletedGuestCookie } from "./clear-deleted-guest-cookie";
 
 export const metadata: Metadata = { title: COPY.guestPageTitle };
 
 /**
  * The Guest Page: the app as a Guest sees it. With a guest cookie that works, it's their Guest
  * Consultation, running or finished; otherwise it's the New Consultation steps, unless the internet
- * address has used up its daily limit, or something keeps every Styling from starting. Someone
- * signed in has the app itself instead: their session is who the Consultation operations act for,
- * so a guest cookie in the same browser couldn't be.
+ * address has used up its daily limit, or something keeps every Styling from starting. A Guest
+ * back after their Guest Consultation was deleted is told so above, once. Someone signed in has
+ * the app itself instead: their session is who the Consultation operations act for, so a guest
+ * cookie in the same browser couldn't be.
  */
 export default async function GuestPage() {
   if (await getSignedInUser()) redirect(APP_HOME);
   const [page, botCheckSiteKey] = await Promise.all([getGuestPage(), getBotCheckSiteKey()]);
+  if (page.show === "guest-consultation") return <GuestConsultation consultationId={page.consultationId} usage={page.usage} />;
+  return (
+    <>
+      {page.guestConsultationDeleted && (
+        <>
+          <p role="status" className={infoNotice}>
+            {COPY.guestConsultationDeleted}
+          </p>
+          <ClearDeletedGuestCookie />
+        </>
+      )}
+      <WithoutGuestConsultation page={page} botCheckSiteKey={botCheckSiteKey} />
+    </>
+  );
+}
+
+/** What the Guest Page shows without a Guest Consultation to open. */
+function WithoutGuestConsultation({ page, botCheckSiteKey }: { page: GuestPageWithoutGuestConsultation; botCheckSiteKey: string | null }) {
   switch (page.show) {
-    case "guest-consultation":
-      return <GuestConsultation consultationId={page.consultationId} usage={page.usage} />;
     case "new-consultation":
       return (
         <>

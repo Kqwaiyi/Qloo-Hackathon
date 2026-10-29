@@ -13,13 +13,13 @@ import { systemClock } from "@/server/clock";
 import { openPgliteDatabase } from "@/server/db/pglite";
 import { CapturingEmailTransport } from "@/server/email/capturing";
 import { createEmailSender } from "@/server/email/send-email";
-import type { OperationContext } from "@/server/operations/context";
+import type { OperationContextWithoutRequest } from "@/server/operations/context";
 import { productPhotosFromEnvironment, productSearchFromEnvironment } from "@/server/product-search/environment";
 import { qlooClientFromEnvironment } from "@/server/qloo/client";
 import { InlineStylingRunner } from "@/server/stylings/inline-runner";
 
 /** A fresh app on the AI and Blob store it was given, with Stylings run in this process. */
-export type FreshApp<A extends AiProvider, B extends BlobStore> = Omit<OperationContext, "requestHeaders" | "responseCookies" | "stylings" | "ai" | "blob"> & {
+export type FreshApp<A extends AiProvider, B extends BlobStore> = Omit<OperationContextWithoutRequest, "stylings" | "ai" | "blob"> & {
   ai: A;
   blob: B;
   stylings: InlineStylingRunner;

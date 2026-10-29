@@ -18,6 +18,11 @@ export interface ResponseCookies {
   set(cookie: CookieToSet): void;
 }
 
+/** The cookie as our own responses send it: Secure in production unless it says otherwise. */
+export function secureInProduction(cookie: CookieToSet): CookieToSet {
+  return { ...cookie, secure: cookie.secure ?? process.env.NODE_ENV === "production" };
+}
+
 export function readRequestCookie(headers: Headers, name: string): string | undefined {
   return parseCookies(headers.get("cookie") ?? "").get(name);
 }
