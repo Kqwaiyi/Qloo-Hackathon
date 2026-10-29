@@ -7,6 +7,12 @@
 export const GUEST_CONSULTATION_LIFETIME_SECONDS = 60 * 60;
 
 /**
+ * Within how many hours a Guest Consultation is always deleted, as the Privacy Policy and Terms
+ * promise (ADR-0013): the daily sweep runs the guest cleanup once a day, whether or not any Guest acts.
+ */
+export const GUEST_CONSULTATION_DELETED_WITHIN_HOURS = 24;
+
+/**
  * The guest cookie, which lets a Guest come back to their Guest Consultation: signed, HTTP-only,
  * holding the guest user's id, and valid for as long as the Guest Consultation is kept from "Get my
  * Outfits".

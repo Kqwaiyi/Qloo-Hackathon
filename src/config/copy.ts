@@ -150,7 +150,7 @@ export const COPY = {
   usesYourGuestConsultation: "Uses your one Guest Consultation",
   /** Below a Guest's Outfits, in place of "Show 2 more Outfits": to sign-up. */
   createAnAccountForMore: "Create an account to get more consultations",
-  /** Beside "Create an account to get more consultations". */
+  /** Beside "Create an account to get more consultations", and in the Terms and the Privacy Policy's Guest section. */
   guestResultsWontCarryOver: "Your guest results won't carry over to a new account.",
   /** The Guest Page's details, on its photo step, as their fields name them. */
   guestBirthDate: "Date of birth",

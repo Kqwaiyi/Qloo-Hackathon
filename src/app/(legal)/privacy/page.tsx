@@ -14,17 +14,31 @@ import {
 import { PHOTO_MAX_LONG_SIDE_PX } from "@/config/consultations";
 import { COPY } from "@/config/copy";
 import { EMAIL_LOG_LIFETIME_DAYS } from "@/config/email";
-import { USAGE_RECORD_LIFETIME_DAYS } from "@/config/limits";
+import { GUEST_COOKIE_MAX_AGE_SECONDS, GUEST_COOKIE_VALID_SECONDS } from "@/config/guests";
+import {
+  GUEST_CONSULTATIONS_PER_ADDRESS,
+  GUEST_PHOTO_CHECK_LIMIT,
+  GUEST_USAGE_RECORD_LIFETIME_HOURS,
+  USAGE_RECORD_LIFETIME_DAYS,
+  USAGE_WINDOW_HOURS,
+} from "@/config/limits";
 import { ROUTES } from "@/config/routes";
 import { getTeamEmail } from "@/server/data/team";
 
-import { bulletList, count, LegalSection, paragraph, subheading, TeamEmailLink } from "../legal-text";
+import {
+  bulletList,
+  count,
+  guestConsultationDeleted,
+  guestConsultationDeletedWithin,
+  LegalSection,
+  paragraph,
+  SECONDS_PER_DAY,
+  SECONDS_PER_HOUR,
+  subheading,
+  TeamEmailLink,
+} from "../legal-text";
 
 export const metadata: Metadata = { title: "Privacy Policy" };
-
-const SECONDS_PER_DAY = 24 * 60 * 60;
-
-const SECONDS_PER_HOUR = 60 * 60;
 
 /** Each section's title by its id, in page order, for the contents list. */
 const SECTION_TITLES = {
@@ -35,6 +49,7 @@ const SECTION_TITLES = {
   recipients: "Who receives it",
   transfers: "International transfers",
   retention: "How long we keep it",
+  guests: "Using Qurator as a Guest",
   photos: "Photos",
   previews: "Previews are AI-generated",
   "content-rules": "What you may upload",
@@ -54,8 +69,9 @@ function section(id: SectionId): { id: SectionId; title: string } {
 
 /**
  * The Privacy Policy, everything the spec's "Privacy Policy and Terms" section lists, with the
- * Real Products spec's product search and Product photos. Public, with no sign-in. Its retention
- * promises read their numbers from config, so they follow the rules.
+ * Real Products spec's product search and Product photos, and the Guest Page spec's Guest section.
+ * Public, with no sign-in. Its retention promises read their numbers from config, so they follow
+ * the rules.
  */
 export default function Page() {
   const teamEmail = getTeamEmail();
@@ -64,7 +80,13 @@ export default function Page() {
       <h1 className="text-3xl font-semibold tracking-tight">Privacy Policy</h1>
       <p className={paragraph}>
         This is how Qurator handles your personal data, in plain English. In short: we keep only what it takes to
-        make your Outfits, we never sell it or use it for ads, and you can delete it whenever you like.
+        make your Outfits, we never sell it or use it for ads, and you can delete it whenever you like. As a Guest,
+        without an account, you have nothing to delete: your Guest Consultation is deleted on its own within{" "}
+        {guestConsultationDeletedWithin} (see{" "}
+        <a href="#guests" className={textLink}>
+          {SECTION_TITLES.guests}
+        </a>
+        ).
       </p>
 
       <nav aria-label="On this page" className="mt-6 rounded-xl border border-stone-200 bg-white p-5">
@@ -152,16 +174,25 @@ export default function Page() {
           <li>when you last used the app, so that accounts nobody uses can be deleted.</li>
         </ul>
         <p className={paragraph}>
-          We also check which country your connection comes from, to make sure the app is available there, without storing
-          it. We use only the cookies the app needs: one that keeps you signed in, and, if a date of birth under{" "}
-          {MINIMUM_AGE} is entered at sign-up, one that stops another try from that browser for{" "}
-          {count(AGE_GATE_COOKIE_MAX_AGE_SECONDS / SECONDS_PER_DAY, "day")}.
+          We also check which country your connection comes from, to make sure the app is available there, and on the Guest
+          Page to fill in your Country for you, without storing it. We use only the cookies the app needs: one that keeps you
+          signed in; on the Guest Page, the guest cookie, which lets your browser come back to your Guest Consultation; and,
+          if a date of birth under {MINIMUM_AGE} is entered at sign-up or on the Guest Page, one that stops another try from
+          that browser for {count(AGE_GATE_COOKIE_MAX_AGE_SECONDS / SECONDS_PER_DAY, "day")}.
+        </p>
+        <p className={paragraph}>
+          As a Guest, without an account, we keep much less, and only briefly: see{" "}
+          <a href="#guests" className={textLink}>
+            {SECTION_TITLES.guests}
+          </a>
+          .
         </p>
         <h3 className={subheading}>What you have to give us</h3>
         <p className={paragraph}>
           An account needs your username, email, password, date of birth, Style Preference and Country. Without them we
           can&apos;t run your account, check your age or pick Outfits for you. <strong>A photo is required to get Outfits</strong>,
-          since every Outfit is built from one. You can have an account without ever sending a photo.
+          since every Outfit is built from one. You can have an account without ever sending a photo. A Guest Consultation
+          needs your date of birth, Style Preference and Country, and a photo.
         </p>
       </LegalSection>
 
@@ -201,10 +232,10 @@ export default function Page() {
             interest in protecting your account and the app.
           </li>
           <li>
-            <strong>To stop automated sign-ups,</strong> from your IP address and your browser&apos;s details, which Cloudflare
-            reads on the forms for signing up, signing in and asking for a password reset (the Bot Check). Legal basis: our
-            legitimate interest (Article 6(1)(f)) in keeping the app&apos;s overall limits and our emails for real people, not
-            scripts.
+            <strong>To stop automated sign-ups and Guest Consultations,</strong> from your IP address and your browser&apos;s
+            details, which Cloudflare reads on the forms for signing up, signing in and asking for a password reset, and on the
+            Guest Page before &ldquo;Get my Outfits&rdquo; (the Bot Check). Legal basis: our legitimate interest (Article
+            6(1)(f)) in keeping the app&apos;s overall limits and our emails for real people, not scripts.
           </li>
           <li>
             <strong>To delete accounts nobody uses,</strong> from when you last used the app. Legal basis: our legitimate
@@ -263,10 +294,11 @@ export default function Page() {
           </li>
           <li>
             <strong>Cloudflare</strong> runs the Bot Check with its Turnstile service. On the forms for signing up, signing in
-            and asking for a password reset, it gets your IP address, your browser&apos;s details (its TLS fingerprint and
-            user agent) and the site&apos;s address, to check that you&apos;re not a bot, even if you don&apos;t send the
-            form. It never gets what you type in it. Cloudflare handles this as our processor, and also as a controller,
-            under its own privacy policy, to improve its bot detection.
+            and asking for a password reset, and on the Guest Page&apos;s photo step before &ldquo;Get my Outfits&rdquo;, it
+            gets your IP address, your browser&apos;s details (its TLS fingerprint and user agent) and the site&apos;s
+            address, to check that you&apos;re not a bot, even if you don&apos;t send the form or press &ldquo;Get my
+            Outfits&rdquo;. It never gets what you type in them, or your photo. Cloudflare handles this as our processor, and
+            also as a controller, under its own privacy policy, to improve its bot detection.
           </li>
         </ul>
         <p className={paragraph}>Nobody else gets your data, unless the law requires it.</p>
@@ -293,6 +325,14 @@ export default function Page() {
           <li>
             <strong>Consultations</strong>, with their photos, Outfits and Previews: until you delete them, withdraw photo
             consent, or your account is deleted.
+          </li>
+          <li>
+            <strong>A Guest Consultation</strong>, with everything kept for it: deleted {guestConsultationDeleted}. The hash
+            of a Guest&apos;s IP address: {count(GUEST_USAGE_RECORD_LIFETIME_HOURS, "hour")}. See{" "}
+            <a href="#guests" className={textLink}>
+              {SECTION_TITLES.guests}
+            </a>
+            .
           </li>
           <li>
             <strong>Your AI Stylist&apos;s notes</strong> on a Styling: as long as the Outfits they explain are shown, so
@@ -351,6 +391,103 @@ export default function Page() {
         </ul>
       </LegalSection>
 
+      <LegalSection {...section("guests")}>
+        <p className={paragraph}>
+          On the Guest Page, you can try Qurator without an account: as a Guest, you get one Guest Consultation, made from
+          your photo as any Consultation is. This is what it keeps, why, and for how long. The rest of this policy applies
+          to it as to any Consultation, except where this section says otherwise.
+        </p>
+        <h3 className={subheading}>What we keep</h3>
+        <ul className={bulletList}>
+          <li>
+            your Guest Consultation: your photo, its Outfits and Previews, your AI Stylist&apos;s notes and what the photo
+            check found, as for any Consultation;
+          </li>
+          <li>
+            your age group, Style Preference and Country. The Guest Page asks for your whole date of birth to check you&apos;re{" "}
+            {MINIMUM_AGE} or older and to work out your age group, and never stores it;
+          </li>
+          <li>
+            your agreement on the consent sheet, to the photo notice, the Terms and this Privacy Policy together: which
+            version of the photo notice it was, and when;
+          </li>
+          <li>
+            a salted hash of your IP address: a code worked out from it with a secret key, kept with your Guest Consultation,
+            and with the times your connection had a Guest Consultation or a photo checked. We never store your IP address
+            itself;
+          </li>
+          <li>the time each of your Outfits was made, in the usage records the app&apos;s overall limits count, as for anyone.</li>
+        </ul>
+        <p className={paragraph}>
+          When you press &ldquo;Get my Outfits&rdquo;, we also set the guest cookie in your browser. It holds only a random ID
+          for your Guest Consultation and when it stops working, signed so it can&apos;t be forged. For{" "}
+          {count(GUEST_COOKIE_VALID_SECONDS / SECONDS_PER_HOUR, "hour")}, it lets this browser, and only this browser, come
+          back to your Guest Consultation. It stays in the browser for{" "}
+          {count(GUEST_COOKIE_MAX_AGE_SECONDS / SECONDS_PER_HOUR, "hour")}, so that if you come back later we can tell you
+          your Guest Consultation has been deleted.
+        </p>
+        <h3 className={subheading}>Why we keep it</h3>
+        <ul className={bulletList}>
+          <li>
+            <strong>To run your Styling</strong> and show you its Outfits, from your photo, age group, Style Preference and
+            Country, as for any Consultation. Legal basis: our contract with you, since you asked for the Guest Consultation
+            and agreed to the Terms, and for your photo, your consent, given on the consent sheet before every Guest
+            Consultation.
+          </li>
+          <li>
+            <strong>
+              To hold each internet connection to {count(GUEST_CONSULTATIONS_PER_ADDRESS, "Guest Consultation")} and{" "}
+              {count(GUEST_PHOTO_CHECK_LIMIT, "photo check")} in any {count(USAGE_WINDOW_HOURS, "hour")},
+            </strong>{" "}
+            from the hash of your IP address, so that a free app stays affordable and fair. Legal basis: our legitimate
+            interest (Article 6(1)(f)) in keeping the app running for everyone.
+          </li>
+        </ul>
+        <h3 className={subheading}>How long we keep it</h3>
+        <ul className={bulletList}>
+          <li>
+            <strong>Your Guest Consultation</strong>, with everything above that&apos;s kept for it: deleted{" "}
+            {guestConsultationDeleted}, but never while its Styling is still running. It starts when you press &ldquo;Get my
+            Outfits&rdquo;. Its photo and Previews go as{" "}
+            <a href="#photos" className={textLink}>
+              Photos
+            </a>{" "}
+            describes, copies in our providers&apos; systems included.
+          </li>
+          <li>
+            <strong>The hash of your IP address</strong>, with those times: deleted after{" "}
+            {count(GUEST_USAGE_RECORD_LIFETIME_HOURS, "hour")}, once no limit counts it.
+          </li>
+          <li>
+            <strong>Usage records</strong> of your Outfits: about {USAGE_RECORD_LIFETIME_DAYS} days, as anyone&apos;s. Once
+            your Guest Consultation is deleted, nothing links them to you.
+          </li>
+        </ul>
+        <p className={paragraph}>
+          A Guest has no Settings, so you can&apos;t delete your Guest Consultation or withdraw your consent there: it&apos;s
+          deleted on its own, as above. {COPY.guestResultsWontCarryOver}
+        </p>
+        <h3 className={subheading}>Who receives what</h3>
+        <p className={paragraph}>
+          The same providers as for anyone, as{" "}
+          <a href="#recipients" className={textLink}>
+            Who receives it
+          </a>{" "}
+          describes:
+        </p>
+        <ul className={bulletList}>
+          <li>
+            <strong>Cloudflare</strong> runs the Bot Check on the Guest Page, before &ldquo;Get my Outfits&rdquo;, and gets
+            what it gets on the sign-up form.
+          </li>
+          <li>
+            <strong>Our AI and product-search providers</strong>, Anthropic&apos;s Claude, Google&apos;s Gemini, Qloo and
+            Channel3, and our hosting, database and storage providers get what they get for any Consultation. A Guest has no
+            username or email, so none of them gets one.
+          </li>
+        </ul>
+      </LegalSection>
+
       <LegalSection {...section("photos")}>
         <h3 className={subheading}>Biometric notice</h3>
         <p className={paragraph}>
@@ -372,8 +509,9 @@ export default function Page() {
           Before your first Consultation, and again whenever this notice changes, the consent sheet asks you to tick two boxes,
           both unticked to start with. Ticking the first is your written release: you agree to us storing your photos and
           Previews and having AI process your face and body, for the purpose and the time described here. Ticking the second
-          agrees to your photos being sent to Anthropic&apos;s Claude and Google&apos;s Gemini. We record which version you
-          agreed to, and when.
+          agrees to your photos being sent to Anthropic&apos;s Claude and Google&apos;s Gemini. On the Guest Page, it asks
+          before every Guest Consultation, with a third box agreeing to the Terms and this Privacy Policy. We record which
+          version you agreed to, and when.
         </p>
         <h3 className={subheading}>Other people in your photo</h3>
         <p className={paragraph}>
@@ -387,13 +525,14 @@ export default function Page() {
         <p className={paragraph}>
           Your browser redraws every photo before sending it, as a JPEG at most {PHOTO_MAX_LONG_SIDE_PX} pixels on its long
           side. Redrawing drops the hidden metadata a photo can carry, such as the GPS location where it was taken. Only a photo
-          that passes the check is stored, and only someone signed in to your account can open it, through private links that
-          soon expire.
+          that passes the check is stored, and only someone signed in to your account can open it, or for a Guest
+          Consultation only the browser it was made in, through private links that soon expire.
         </p>
         <h3 className={subheading}>How long photos are kept, and how they&apos;re destroyed</h3>
         <p className={paragraph}>
           Your photos and Previews are kept until you delete their Consultation, withdraw photo consent, or your account is
-          deleted, including after {INACTIVE_ACCOUNT_LIFETIME_MONTHS} months without activity. Then:
+          deleted, including after {INACTIVE_ACCOUNT_LIFETIME_MONTHS} months without activity. A Guest&apos;s are kept until
+          their Guest Consultation is deleted, within {guestConsultationDeletedWithin}. Then:
         </p>
         <p className="mt-3 rounded-lg border border-stone-200 bg-white px-4 py-3 font-medium leading-relaxed">
           {COPY.deletionPromise}
@@ -474,6 +613,8 @@ export default function Page() {
         <p className={paragraph}>
           None of this has a legal or similarly significant effect on you: it only suggests clothes and haircuts. You can
           change the Photo Style and the Budget Tier on any Consultation, and your Style Preference and Country in Settings.
+          As a Guest, you choose your Budget Tier, Style Preference and Country before &ldquo;Get my Outfits&rdquo;, and
+          can&apos;t change them, or the Photo Style, once your Outfits are shown.
         </p>
       </LegalSection>
 
@@ -530,8 +671,9 @@ export default function Page() {
 
       <LegalSection {...section("adults-only")}>
         <p className={paragraph}>
-          Qurator is for adults: you must be {MINIMUM_AGE} or older to use it. Sign-up asks for your date of birth.
-          A date under {MINIMUM_AGE} creates no account and we keep nothing of it: only a cookie in that browser stops another
+          Qurator is for adults: you must be {MINIMUM_AGE} or older to use it. Sign-up and the Guest Page ask for your date
+          of birth. A date under {MINIMUM_AGE} creates no account or Guest Consultation, and we keep nothing of it: only a
+          cookie in that browser stops another
           try for {count(AGE_GATE_COOKIE_MAX_AGE_SECONDS / SECONDS_PER_DAY, "day")}. If we find out that an account belongs to someone under {MINIMUM_AGE},
           we delete it with everything in it. To tell us about one, email{" "}
           <TeamEmailLink teamEmail={teamEmail} subject={`An account of someone under ${MINIMUM_AGE}`} />.
