@@ -11,7 +11,7 @@ Take one photo of yourself and get complete Outfits: a hairstyle, top, bottom an
 
 Have you ever wanted to change your style but had no idea where to start? There are thousands of brands, endless haircuts, a new style icon every week, and trends that disappear within a month. Finding what suits you is like looking for a needle in a haystack.
 
-Research shows 82% of the clothes in people's wardrobes go completely unworn for at least 12 months and 74% of online shoppers abandon their carts simply because they feel overwhelmed by the choices. Additionally, Millennials and Gen Z report the highest rates of clothing indecision. Constant exposure to social media and hyper-fast trend cycles forces them into a daily balancing act between personal taste and online influence, making outfit selection much harder.
+Research shows Americans left 82% of the clothes in their wardrobes unworn for a whole year[^1], and 74% of shoppers abandoned a purchase in just three months because they felt overwhelmed[^2]. Young adults feel it most: nearly half of 18 to 35-year-olds take outfit ideas from social media, yet 54% feel judged for what they wear[^3]. Constant exposure to social media and hyper-fast trend cycles forces them into a daily balancing act between personal taste and online influence, making outfit selection much harder.
 
 Most style apps answer this with a generic AI that guesses what looks good, so they give everyone the same "smart casual" advice. We wanted recommendations grounded in what real people, in your age group and your country, actually love.
 
@@ -121,3 +121,7 @@ Tests: `npm test`, `npm run typecheck` and `npm run test:e2e`. The team's operat
 ## Credits
 
 The people in the landing page's sample Consultations are AI-generated images from [Pixabay](https://pixabay.com), used under the Pixabay Content License.
+
+[^1]: Movinga's 2018 survey of about 18,000 households in 20 countries, as reported in [People do not wear at least 50 percent of their wardrobes, says study](https://fashionunited.uk/news/fashion/people-do-not-wear-at-least-50-percent-of-their-wardrobes-says-study/2018081638356), FashionUnited, August 2018.
+[^2]: [The empowered consumer](https://www.accenture.com/us-en/insights/consulting/empowered-consumer), Accenture, April 2024: a survey of about 19,000 consumers in 12 countries in late 2023.
+[^3]: H&M's 2026 study of 1,000 18 to 35-year-olds in Germany, run by Civey, as reported in [H&M 2026 study: fashion between self-expression and social pressure](https://fashionunited.uk/news/fashion/h-m-2026-study-fashion-between-self-expression-and-social-pressure/2026052288218), FashionUnited, May 2026.
