@@ -48,13 +48,18 @@ export function Chip({ children, tone }: { children: ReactNode; tone: Tone }) {
   return <Label className={`inline-flex h-7 items-center rounded-full px-3 ${surface}`}>{children}</Label>;
 }
 
-/** A pill-shaped link: solid for the main action, glass for one that floats over anything. */
+/**
+ * A pill-shaped link: solid for the main action, glass for one that floats over anything.
+ * `compactOnPhones` leaves out its glyph and some padding on phones, and tightens its letters on
+ * the narrowest, so two fit beside the wordmark.
+ */
 export function Pill({
   href,
   children,
   variant,
   tone = "paper",
   glyph,
+  compactOnPhones = false,
   className = "",
   ...rest
 }: {
@@ -63,6 +68,7 @@ export function Pill({
   variant: "solid" | "glass" | "ghost";
   tone?: Tone;
   glyph?: "+" | "↗" | "↓";
+  compactOnPhones?: boolean;
   className?: string;
   "aria-label"?: string;
   "data-scroll-to"?: string;
@@ -74,11 +80,11 @@ export function Pill({
   }[variant];
   const content = (
     <>
-      <Label className="whitespace-nowrap">{children}</Label>
+      <Label className={`whitespace-nowrap ${compactOnPhones ? "max-[374px]:tracking-[0.02em]" : ""}`}>{children}</Label>
       {glyph && (
         <span
           aria-hidden="true"
-          className="flex size-6 items-center justify-center text-sm transition-transform duration-300 ease-glide group-hover:rotate-90"
+          className={`flex size-6 items-center justify-center text-sm transition-transform duration-300 ease-glide group-hover:rotate-90 ${compactOnPhones ? "max-sm:hidden" : ""}`}
         >
           {/* U+FE0E keeps arrows plain glyphs, not emoji. */}
           {glyph === "+" ? "+" : `${glyph}︎`}
@@ -86,7 +92,7 @@ export function Pill({
       )}
     </>
   );
-  const classes = `group inline-flex h-10 items-center gap-6 rounded-full pr-2 pl-4 transition-colors duration-300 ${looks} ${className}`;
+  const classes = `group inline-flex h-10 items-center gap-6 rounded-full pr-2 pl-4 transition-colors duration-300 ${compactOnPhones ? "max-sm:px-3 max-[374px]:px-2.5" : ""} ${looks} ${className}`;
   // An in-page link stays a plain anchor, so it works without script and the smooth scroll can take it over.
   if (href.startsWith("#")) {
     return (

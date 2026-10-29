@@ -311,8 +311,9 @@ export function createAuth({
     plugins: [username({ minUsernameLength: USERNAME_MIN_LENGTH, maxUsernameLength: USERNAME_MAX_LENGTH })],
   });
   trackApiEndpoints(auth.api);
-  // Which account is the Demo Account, for whatever reads a user through Better Auth.
-  return Object.assign(auth, { demoAccountEmail });
+  // Which account is the Demo Account, for whatever reads a user through Better Auth, and the
+  // secret Better Auth signs its cookies with, which signs the guest cookie too.
+  return Object.assign(auth, { demoAccountEmail, cookieSecret: secret });
 }
 
 export type Auth = ReturnType<typeof createAuth>;

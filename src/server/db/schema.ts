@@ -47,6 +47,7 @@ import type { QlooBrand } from "../qloo/client";
 // fields on the user. Better Auth looks these up by the export names below.
 
 export const stylePreferenceEnum = pgEnum("style_preference", STYLE_PREFERENCES);
+export const ageGroupEnum = pgEnum("age_group", AGE_GROUPS);
 
 export const user = pgTable(
   "user",
@@ -63,9 +64,16 @@ export const user = pgTable(
     displayUsername: text("display_username"),
     stylePreference: stylePreferenceEnum("style_preference").notNull(),
     countryCode: text("country_code").notNull(),
-    // Only the birth year and month are kept: the day is dropped at sign-up.
-    birthYear: integer("birth_year").notNull(),
-    birthMonth: integer("birth_month").notNull(),
+    // Only the birth year and month are kept: the day is dropped at sign-up. A guest user has
+    // neither: a Guest's birth date is never kept.
+    birthYear: integer("birth_year"),
+    birthMonth: integer("birth_month"),
+    // A guest user, the throwaway owner of one Guest Consultation (ADR-0013): it has a placeholder
+    // email and username, no password and no session, so it can never sign in. Better Auth doesn't
+    // know these two fields: only starting a Guest Consultation writes them.
+    isGuest: boolean("is_guest").notNull().default(false),
+    // A guest user's age group, which their Outfits are styled for, in place of a birth date.
+    ageGroup: ageGroupEnum("age_group"),
     // The photo notice the user last agreed to on the consent sheet, and when. Withdrawing photo
     // consent clears both.
     acceptedPhotoNoticeVersion: integer("accepted_photo_notice_version"),
@@ -80,6 +88,11 @@ export const user = pgTable(
     check(
       "user_photo_notice_accepted_together",
       sql`(${table.acceptedPhotoNoticeVersion} is null) = (${table.photoNoticeAcceptedAt} is null)`,
+    ),
+    // An account keeps its birth year and month; a guest user only its age group.
+    check(
+      "user_birth_date_or_guest_age_group",
+      sql`${table.isGuest} = (${table.birthYear} is null) and ${table.isGuest} = (${table.birthMonth} is null) and ${table.isGuest} = (${table.ageGroup} is not null)`,
     ),
   ],
 );
@@ -206,7 +219,6 @@ export const usageRecord = pgTable(
 
 export const photoTypeEnum = pgEnum("photo_type", PHOTO_TYPES);
 export const budgetTierEnum = pgEnum("budget_tier", BUDGET_TIERS);
-export const ageGroupEnum = pgEnum("age_group", AGE_GROUPS);
 export const consultationStateEnum = pgEnum("consultation_state", CONSULTATION_STATES);
 
 export const consultation = pgTable(

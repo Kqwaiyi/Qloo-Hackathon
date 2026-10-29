@@ -14,38 +14,46 @@ import { inkPill, linePill } from "../ui";
 const AGREED = "agreed";
 
 /**
- * The consent sheet: what happens to the user's photos, in plain English, then the two separate
- * agreements "Get my Outfits" needs, both unticked each time it opens. Its wording is the photo
- * notice, the Demo Account's lines included: raise PHOTO_NOTICE_VERSION whenever it changes, so
- * every user sees it again.
+ * Whose photo notice the consent sheet shows: an account's; the Demo Account's, which every judge
+ * sees before each Consultation, saying plainly that anyone with the login can see the
+ * Consultations made there; or a Guest's, saying how soon a Guest Consultation is deleted, with a
+ * third agreement, to the Terms and Privacy Policy, which a Guest hasn't given at sign-up.
+ */
+export type PhotoNotice = "account" | "demo-account" | "guest";
+
+/**
+ * The consent sheet: what happens to the user's photos, in plain English, then the separate
+ * agreements "Get my Outfits" needs, all unticked each time it opens. Its wording is the photo
+ * notice, the Demo Account's and a Guest's lines included: raise PHOTO_NOTICE_VERSION whenever it
+ * changes, so every user sees it again.
  *
- * `isDemoAccount` says it's the Demo Account's, which every judge sees before each Consultation: it
- * says plainly that anyone with the login can see the Consultations made there.
- *
- * `onClose` says whether the user agreed to both, or closed it (with "Not now" or Escape) without.
+ * `onClose` says whether the user agreed to every box, or closed it (with "Not now" or Escape) without.
  *
  * On phones it rises from the bottom edge, where the boxes and Continue are in reach of a thumb.
  */
 export function ConsentSheet({
   open,
-  isDemoAccount,
+  notice,
   onClose,
 }: {
   open: boolean;
-  isDemoAccount: boolean;
+  notice: PhotoNotice;
   onClose: (agreed: boolean) => void;
 }) {
+  const isGuest = notice === "guest";
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const titleId = useId();
   const [storeAndProcess, setStoreAndProcess] = useState(false);
   const [sendToAiProviders, setSendToAiProviders] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   useEffect(() => {
     const sheet = dialog.current;
     if (!open || !sheet || sheet.open) return;
     setStoreAndProcess(false);
     setSendToAiProviders(false);
+    setAcceptedTerms(false);
     sheet.returnValue = "";
     sheet.showModal();
     // From the top, so the notice is read before the boxes.
@@ -64,16 +72,20 @@ export function ConsentSheet({
           <h2 ref={heading} id={titleId} tabIndex={-1} className="text-[1.375rem] leading-tight font-medium tracking-[-0.01em] outline-none">
             Before we use your photos
           </h2>
-          {isDemoAccount && <SharedDemoAccountNote className="mt-4" />}
+          {notice === "demo-account" && <SharedDemoAccountNote className="mt-4" />}
           <p className="mt-2 text-sm text-mute">Here&apos;s what happens to each photo you send.</p>
           <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-ink/80 marker:text-ash">
-            <li>
-              We keep it privately, with the Outfits and Previews made from it, until{" "}
-              {isDemoAccount
-                ? "that Consultation or this account is deleted. Anyone signed in to this account can open them"
-                : "you delete that Consultation, withdraw this consent or your account is deleted. Only you can open them"}
-              , through private links that stop working after an hour.
-            </li>
+            {isGuest ? (
+              <li>{COPY.guestPhotosKept}</li>
+            ) : (
+              <li>
+                We keep it privately, with the Outfits and Previews made from it, until{" "}
+                {notice === "demo-account"
+                  ? "that Consultation or this account is deleted. Anyone signed in to this account can open them"
+                  : "you delete that Consultation, withdraw this consent or your account is deleted. Only you can open them"}
+                , through private links that stop working after an hour.
+              </li>
+            )}
             <li>
               AI looks at your face and body to check the photo, read its style, tailor each Outfit to you and draw Previews of
               you wearing them. That AI is Anthropic&apos;s Claude and Google&apos;s Gemini, so your photo is sent to Anthropic
@@ -103,7 +115,7 @@ export function ConsentSheet({
             </li>
           </ul>
 
-          <h3 className="mt-6 text-sm font-medium">When you delete them</h3>
+          <h3 className="mt-6 text-sm font-medium">{isGuest ? COPY.whenTheyAreDeleted : "When you delete them"}</h3>
           <p className="mt-2 text-sm text-ink/80">{COPY.deletionPromise}</p>
 
           <p className="mt-6 text-sm text-ink/80">
@@ -127,6 +139,11 @@ export function ConsentSheet({
           <ConsentBox checked={sendToAiProviders} onChange={setSendToAiProviders}>
             I agree to my photos being sent to Anthropic&apos;s Claude and Google&apos;s Gemini.
           </ConsentBox>
+          {isGuest && (
+            <ConsentBox checked={acceptedTerms} onChange={setAcceptedTerms}>
+              {COPY.agreeToTermsAndPrivacy}
+            </ConsentBox>
+          )}
         </div>
         <div className="flex justify-end gap-2 px-6 pt-3 pb-4 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
           <button type="button" onClick={() => dialog.current?.close()} className={`${linePill} max-sm:flex-1`}>
@@ -135,7 +152,7 @@ export function ConsentSheet({
           <button
             type="button"
             onClick={() => dialog.current?.close(AGREED)}
-            disabled={!storeAndProcess || !sendToAiProviders}
+            disabled={!storeAndProcess || !sendToAiProviders || (isGuest && !acceptedTerms)}
             className={`${inkPill} max-sm:flex-1`}
           >
             Continue
@@ -147,7 +164,7 @@ export function ConsentSheet({
 }
 
 /**
- * One of the sheet's two agreements: a box, unticked until the user ticks it, and what it agrees
+ * One of the sheet's agreements: a box, unticked until the user ticks it, and what it agrees
  * to, on a row that ticks it wherever it's tapped.
  */
 function ConsentBox({ checked, onChange, children }: { checked: boolean; onChange: (checked: boolean) => void; children: ReactNode }) {

@@ -2,9 +2,10 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as z from "zod";
 
-import { PHOTO_NOTICE_VERSION } from "@/config/accounts";
+import { PHOTO_NOTICE_VERSION, type StylePreference } from "@/config/accounts";
 import { countryCurrency } from "@/config/currencies";
 import {
+  type AgeGroup,
   BUDGET_TIERS,
   type BudgetTier,
   byCategoryOrder,
@@ -21,14 +22,14 @@ import {
 } from "@/config/consultations";
 import type { PreviewRefusalReason, PreviewState, StylingFailureReason } from "@/config/stylings";
 import { needsPhotoConsent, photoConsentStands, recordPhotoConsent } from "@/server/accounts/photo-consent";
-import type { PhotoCheckResult } from "@/server/ai/provider";
+import type { Photo, PhotoCheckReport, PhotoCheckResult } from "@/server/ai/provider";
 import type { BlobStore } from "@/server/blob/store";
 import type { Clock } from "@/server/clock";
 import { photoPathnameFor } from "@/server/consultations/blob-pathnames";
 import { deleteConsultationOf } from "@/server/consultations/deletion";
 import { judgePhotoCheck, type PhotoRejection } from "@/server/consultations/photo-check";
 import { readPhotoFile } from "@/server/consultations/photo-file";
-import type { Database } from "@/server/db/database";
+import type { Database, Transaction } from "@/server/db/database";
 import { consultation, outfit, piece, styleIcon, styling } from "@/server/db/schema";
 import { readExchangeRates } from "@/server/exchange-rates/rates";
 import type { OperationContext, Result } from "@/server/operations/context";
@@ -56,6 +57,11 @@ const photoConsentTicksSchema = z.object({
   sendToAiProviders: z.boolean(),
 });
 export type PhotoConsentTicks = z.infer<typeof photoConsentTicksSchema>;
+
+/** Whether both of the consent sheet's photo boxes were ticked. */
+export function bothPhotoBoxesTicked(consent: PhotoConsentTicks | undefined): boolean {
+  return consent?.storeAndProcess === true && consent.sendToAiProviders;
+}
 
 /** The shape of what "Get my Outfits" sends. The server action parses its form with this. */
 export const startConsultationInputSchema = z.object({
@@ -98,7 +104,7 @@ export async function startConsultation(
   // otherwise they must already have given. They're recorded on the user, except on the Demo
   // Account, where each judge agrees before every Consultation, which keeps it instead.
   const consentedAt = ctx.clock.now();
-  const ticked = input.consent?.storeAndProcess === true && input.consent.sendToAiProviders;
+  const ticked = bothPhotoBoxesTicked(input.consent);
   if (!ticked && needsPhotoConsent(user)) return { ok: false, refusal: "photo-consent-needed" };
   if (ticked && !user.isDemoAccount) await recordPhotoConsent(ctx.db, user.id, consentedAt);
   const stylingStart = await checkStylingStart(ctx, user);
@@ -110,41 +116,109 @@ export async function startConsultation(
     if (photoChecks.usedUp) return { ok: false, refusal: "photo-check-limit", moreFrom: photoChecks.moreFrom };
   }
 
+  const checked = await checkPhoto(ctx, input, async () => {
+    if (countsUsage) await recordUsage(ctx.db, { kind: "photo_check", userId: user.id, at: ctx.clock.now() });
+  });
+  if (!checked.ok) return checked;
+  const created = await createConsultation(ctx, { ...input, ...checked, outfitsWanted: stylingStart.outfitsWanted }, async (tx, now) => {
+    // Consent withdrawn in another tab while the photo was checked leaves nothing behind. The Demo
+    // Account's came with this request, and nobody can withdraw it.
+    if (!user.isDemoAccount && !(await photoConsentStands(tx, user.id))) return null;
+    return {
+      userId: user.id,
+      isDemoAccount: user.isDemoAccount,
+      stylePreference: user.stylePreference,
+      countryCode: user.countryCode,
+      ageGroup: ageGroupAt(user.birthYear, user.birthMonth, now),
+      // The Demo Account's judge agreed to the photo notice for this Consultation alone.
+      photoNoticeAcceptedAt: user.isDemoAccount ? consentedAt : null,
+    };
+  });
+  if (!created.ok && created.refusal === "abandoned") return { ok: false, refusal: "photo-consent-needed" };
+  return created;
+}
+
+/** A photo the AI has checked and accepted, as it's stored, and what the check saw in it. */
+export interface CheckedPhoto {
+  photo: Photo;
+  report: PhotoCheckReport;
+}
+
+/** Why a photo wasn't accepted: the file, the check itself, or the photo. */
+export type PhotoCheckRefusal = { refusal: "unusable-file" | "check-errored" } | { refusal: "photo-rejected"; rejection: PhotoRejection };
+
+/**
+ * Has the AI check the photo against the Photo Type rules. `counted` runs once the check has
+ * answered, whether it accepted the photo or not, so a photo-check limit counts it. A file the
+ * browser didn't redraw, or a check that errors, doesn't count.
+ */
+export async function checkPhoto(
+  ctx: Pick<OperationContext, "ai">,
+  input: Pick<StartConsultationInput, "photo" | "photoType">,
+  counted: () => Promise<void>,
+): Promise<Result<CheckedPhoto, PhotoCheckRefusal>> {
   // Only requests that skipped the browser's redraw fail here, so it isn't a photo check.
   const photo = await readPhotoFile(input.photo);
   if (!photo) return { ok: false, refusal: "unusable-file" };
-
   let photoCheck: PhotoCheckResult;
   try {
     photoCheck = await ctx.ai.checkPhoto({ photo, photoType: input.photoType });
   } catch (error) {
-    // Only the message: a provider's error can carry the request, and with it the photo. A check
-    // that errors doesn't count towards the limit.
+    // Only the message: a provider's error can carry the request, and with it the photo.
     console.error("The photo check errored:", error instanceof Error ? error.message : "unknown error");
     return { ok: false, refusal: "check-errored" };
   }
-  // Counted whether the photo is accepted or rejected.
-  if (countsUsage) await recordUsage(ctx.db, { kind: "photo_check", userId: user.id, at: ctx.clock.now() });
+  await counted();
   const verdict = judgePhotoCheck(photoCheck, input.photoType);
   if (!verdict.accepted) return { ok: false, refusal: "photo-rejected", rejection: verdict.rejection };
-  const { report } = verdict;
+  return { ok: true, photo, report: verdict.report };
+}
 
+/** Whose a new Consultation is, and the profile every Styling on it uses, as it starts. */
+export interface ConsultationOwner {
+  userId: string;
+  isDemoAccount: boolean;
+  stylePreference: StylePreference;
+  countryCode: string;
+  ageGroup: AgeGroup;
+  /**
+   * When the photo notice was agreed to for this Consultation alone, which it then keeps, as the
+   * Demo Account's and a Guest's are, or null for an agreement kept on the account.
+   */
+  photoNoticeAcceptedAt: Date | null;
+}
+
+/** A Consultation to create: its accepted photo, the Budget Tier asked for, and how many Outfits its first Styling may make. */
+interface NewConsultation extends CheckedPhoto, Pick<StartConsultationInput, "photoType" | "budgetTier"> {
+  outfitsWanted: number;
+}
+
+/**
+ * Stores the accepted photo privately, then creates the Consultation and its first Styling in one
+ * transaction, and sets the Styling going. `ownedBy` runs first in that transaction, at its time,
+ * and says whose it is, or null to create nothing: `abandoned`. Nothing is left behind when nothing
+ * is created, the photo included.
+ */
+export async function createConsultation(
+  ctx: Pick<OperationContext, "db" | "clock" | "blob" | "stylings">,
+  { photo, report, photoType, budgetTier: budgetTierAsked, outfitsWanted }: NewConsultation,
+  ownedBy: (tx: Transaction, now: Date) => Promise<ConsultationOwner | null>,
+): Promise<Result<{ consultationId: string }, { refusal: "already-styling" } | { refusal: "abandoned" }>> {
   const id = randomUUID();
   const photoPathname = photoPathnameFor(id, photo.mediaType);
   await ctx.blob.put(photoPathname, photo.bytes, photo.mediaType);
   let stylingId: string | null;
   try {
     stylingId = await ctx.db.transaction(async (tx) => {
-      // Consent withdrawn in another tab while the photo was checked leaves nothing behind. The Demo
-      // Account's came with this request, and nobody can withdraw it.
-      if (!user.isDemoAccount && !(await photoConsentStands(tx, user.id))) return null;
       const now = ctx.clock.now();
-      const budgetTier = hasBudgetTier(input.photoType) ? (input.budgetTier ?? DEFAULT_BUDGET_TIER) : null;
+      const owner = await ownedBy(tx, now);
+      if (!owner) return null;
+      const budgetTier = hasBudgetTier(photoType) ? (budgetTierAsked ?? DEFAULT_BUDGET_TIER) : null;
       await tx.insert(consultation).values({
         id,
-        userId: user.id,
+        userId: owner.userId,
         createdAt: now,
-        photoType: input.photoType,
+        photoType,
         photoPathname,
         faceVisible: report.visible.face,
         hairVisible: report.visible.hair,
@@ -154,22 +228,23 @@ export async function startConsultation(
         hairCovered: report.hairCovered,
         photoStyle: report.photoStyle,
         budgetTier,
-        stylePreference: user.stylePreference,
-        countryCode: user.countryCode,
-        ageGroup: ageGroupAt(user.birthYear, user.birthMonth, now),
+        stylePreference: owner.stylePreference,
+        countryCode: owner.countryCode,
+        ageGroup: owner.ageGroup,
         state: "styling",
-        // The Demo Account's judge agreed to the photo notice for this Consultation alone.
-        ...(user.isDemoAccount ? { acceptedPhotoNoticeVersion: PHOTO_NOTICE_VERSION, photoNoticeAcceptedAt: consentedAt } : {}),
+        ...(owner.photoNoticeAcceptedAt
+          ? { acceptedPhotoNoticeVersion: PHOTO_NOTICE_VERSION, photoNoticeAcceptedAt: owner.photoNoticeAcceptedAt }
+          : {}),
       });
       return createStyling(tx, now, {
         consultationId: id,
-        userId: user.id,
-        onDemoAccount: user.isDemoAccount,
+        userId: owner.userId,
+        onDemoAccount: owner.isDemoAccount,
         kind: "first",
         budgetTier,
         photoStyle: report.photoStyle,
-        outfitsWanted: stylingStart.outfitsWanted,
-        market: productSearchMarket(user.countryCode),
+        outfitsWanted,
+        market: productSearchMarket(owner.countryCode),
         stage: "style_icons",
       });
     });
@@ -181,7 +256,7 @@ export async function startConsultation(
   }
   if (!stylingId) {
     await ctx.blob.delete(photoPathname);
-    return { ok: false, refusal: "photo-consent-needed" };
+    return { ok: false, refusal: "abandoned" };
   }
   await launchStyling(ctx, stylingId);
   return { ok: true, consultationId: id };

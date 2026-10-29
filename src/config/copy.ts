@@ -132,5 +132,33 @@ export const COPY = {
   /** On the Demo Account's consent sheet, as part of its photo notice, and on its My Consultations. */
   sharedDemoAccount: "Shared demo account: anyone with this login can see Consultations made here. Delete yours when you're done.",
   emailUsForData: "Email us for a copy of your data",
+  /** The landing header's button to the Guest Page, for signed-out visitors, in place of "Get started". */
+  tryItAsAGuest: "Try it as a Guest",
+  /** The Guest Page's tab title, before the root layout's " · Qurator". */
+  guestPageTitle: "Guest Page",
+  /** Beside the wordmark in the Guest Page's header. */
+  guestTag: "Guest",
+  /** The Guest Page header's one button, to sign-up. */
+  createAnAccount: "Create an account",
+  /** Under the Guest Page's "Get my Outfits", in place of the allowance line. */
+  usesYourGuestConsultation: "Uses your one Guest Consultation",
+  /** The Guest Page's details, on its photo step, as their fields name them. */
+  guestBirthDate: "Date of birth",
+  /** The Guest Page's details, as "Get my Outfits" names them when they're left out. */
+  guestDetailNames: { birthDate: "date of birth", stylePreference: "Style Preference", countryCode: "Country" },
+  /** Under the Guest Page's "Get my Outfits" when details were left out, given their names in a sentence. */
+  guestDetailsMissing: (details: string) => `Add your ${details} to get your Outfits.`,
+  /**
+   * On the Guest Page's consent sheet, in place of how long an account's photos are kept. Part of
+   * the photo notice: raise PHOTO_NOTICE_VERSION when it changes.
+   */
+  guestPhotosKept:
+    "We keep it privately, with the Outfits and Previews made from it, until your Guest Consultation is deleted: usually about an hour after you start it, and always within 24 hours. Only this browser can open them, through private links that stop working after an hour.",
+  /** The heading over the deletion promise on the Guest Page's consent sheet, where a Guest deletes nothing themselves. */
+  whenTheyAreDeleted: "When they're deleted",
+  /** The Guest Page consent sheet's third box. */
+  agreeToTermsAndPrivacy: "I agree to Qurator's Terms and Privacy Policy.",
+  /** The quiet line after the Guest Page's consent sheet is closed without agreeing. */
+  agreeToAllThreeBoxes: "To get Outfits, agree to all three boxes on the consent sheet.",
   didNotSignUp: (date: string) => `Didn't sign up? Ignore this email. The account is removed on ${date}.`,
 } as const;

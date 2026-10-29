@@ -6,7 +6,7 @@ import { PRODUCT_SEARCH_BACKSTOP_SEARCHES, QLOO_BACKSTOP_CALLS } from "@/config/
 import type { ProductSearchMarket } from "@/config/product-search";
 import { EVERYONES_STYLING_LIMITS, OUTFITS_PER_STYLING, type StylingKind, type StylingStage } from "@/config/stylings";
 import { startOfNextUtcMonth } from "@/server/clock";
-import type { Transaction } from "@/server/db/database";
+import type { Database, Transaction } from "@/server/db/database";
 import { consultation, styleIcon, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
 import type { Viewer } from "@/server/operations/viewer";
@@ -43,6 +43,12 @@ export type StylingStartRefusal =
 /** A Styling may start, making at most `outfitsWanted` Outfits, or the reason it can't. */
 export type StylingStart = Result<{ outfitsWanted: number }, StylingStartRefusal>;
 
+/** Why a Styling can't start, by the rules that hold whoever starts it: the region gate, the app-wide caps and the backstops. */
+export type AppWideStylingStartRefusal = Exclude<StylingStartRefusal, { refusal: "already-styling" | "allowance-used" }>;
+
+/** A Styling may start by the rules that hold whoever starts it, making at most `outfitsWanted` Outfits, or the reason it can't. */
+export type AppWideStylingStart = Result<{ outfitsWanted: number }, AppWideStylingStartRefusal>;
+
 /**
  * The check every operation that starts a Styling runs first, before anything that costs, so each
  * rule that can stop a Styling, or limit how many Outfits it makes, lives in this one place. The
@@ -76,13 +82,38 @@ export async function checkStylingStart(
     .limit(1);
   if (running) return { ok: false, refusal: "already-styling" };
   const now = ctx.clock.now();
-  const [outfits, appWide, qloo, productSearches] = await Promise.all([
-    readUsageLeft(ctx.db, { kind: "outfit", userId: viewer.id, at: now }),
-    readAppWideOutfitsLeft(ctx.db, now),
-    readQlooLimitState(ctx.db),
-    readProductSearchesInMonth(ctx.db, now),
+  const [outfits, appWide] = await Promise.all([readUsageLeft(ctx.db, { kind: "outfit", userId: viewer.id, at: now }), readAppWideLimits(ctx.db, now)]);
+  const inForce: LimitInForce<StylingStartRefusal>[] = [...appWide.inForce];
+  if (outfits.usedUp) inForce.push({ liftsAt: outfits.moreFrom, refusal: { refusal: "allowance-used", moreFrom: outfits.moreFrom } });
+  // A Styling's usual number of Outfits, or what the allowance or the caps leave if that's fewer.
+  return startUnlessInForce(inForce, Math.min(outfits.left, appWide.outfitsLeft));
+}
+
+/**
+ * The shared start check for a Styling with no user to hold it yet: a new Guest Consultation's,
+ * before its guest user exists. Only the rules that hold whoever starts a Styling apply: the region
+ * gate, then the app-wide caps and the backstops, in the order `checkStylingStart` gives them.
+ */
+export async function checkAppWideStylingStart(ctx: Pick<OperationContext, "db" | "clock" | "requestHeaders">): Promise<AppWideStylingStart> {
+  if (!isFromSupportedRegion(ctx.requestHeaders)) return { ok: false, refusal: "unsupported-region" };
+  const appWide = await readAppWideLimits(ctx.db, ctx.clock.now());
+  return startUnlessInForce(appWide.inForce, appWide.outfitsLeft);
+}
+
+/** A limit stopping Stylings, and when it lifts. */
+interface LimitInForce<R extends object> {
+  liftsAt: Date;
+  refusal: R;
+}
+
+/** The app-wide caps and backstops in force at `now`, and how many Outfits the caps leave. */
+async function readAppWideLimits(db: Database, now: Date): Promise<{ inForce: LimitInForce<AppWideStylingStartRefusal>[]; outfitsLeft: number }> {
+  const [appWide, qloo, productSearches] = await Promise.all([
+    readAppWideOutfitsLeft(db, now),
+    readQlooLimitState(db),
+    readProductSearchesInMonth(db, now),
   ]);
-  const inForce: { liftsAt: Date; refusal: StylingStartRefusal }[] = [];
+  const inForce: LimitInForce<AppWideStylingStartRefusal>[] = [];
   if (appWide.inMonth === 0) {
     const backOn = startOfNextUtcMonth(now);
     inForce.push({ liftsAt: backOn, refusal: { refusal: "app-wide-monthly-cap", backOn } });
@@ -94,11 +125,18 @@ export async function checkStylingStart(
     inForce.push({ liftsAt: productSearchesBackOn, refusal: { refusal: "product-search-backstop", backOn: productSearchesBackOn } });
   }
   if (appWide.inWindow.usedUp) inForce.push({ liftsAt: appWide.inWindow.moreFrom, refusal: { refusal: "app-wide-24-hour-cap" } });
-  if (outfits.usedUp) inForce.push({ liftsAt: outfits.moreFrom, refusal: { refusal: "allowance-used", moreFrom: outfits.moreFrom } });
-  const liftsLast = inForce.sort((a, b) => b.liftsAt.getTime() - a.liftsAt.getTime())[0];
+  return { inForce, outfitsLeft: Math.min(appWide.inWindow.left, appWide.inMonth) };
+}
+
+/**
+ * The limit in force that lifts last, so nobody is told to come back while another still holds, or
+ * a Styling of its usual number of Outfits, or the `outfitsLeft` the limits leave if that's fewer.
+ * On a tie, the app-wide limits come first, as they're in `inForce` first.
+ */
+function startUnlessInForce<R extends object>(inForce: LimitInForce<R>[], outfitsLeft: number): Result<{ outfitsWanted: number }, R> {
+  const liftsLast = inForce.toSorted((a, b) => b.liftsAt.getTime() - a.liftsAt.getTime())[0];
   if (liftsLast) return { ok: false, ...liftsLast.refusal };
-  // A Styling's usual number of Outfits, or what the allowance or the caps leave if that's fewer.
-  return { ok: true, outfitsWanted: Math.min(OUTFITS_PER_STYLING, outfits.left, appWide.inWindow.left, appWide.inMonth) };
+  return { ok: true, outfitsWanted: Math.min(OUTFITS_PER_STYLING, outfitsLeft) };
 }
 
 /**

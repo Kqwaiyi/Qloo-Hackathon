@@ -11,6 +11,8 @@ export const ROUTES = {
   verifyEmail: "/verify-email",
   /** Where a verified user's email-change links land: the old address's approval, then the new address's link. */
   emailChange: "/email-change",
+  /** The Guest Page: one Guest Consultation, then its results, without an account. */
+  guest: "/guest",
   newConsultation: "/consultations/new",
   myConsultations: "/consultations",
   settings: "/settings",

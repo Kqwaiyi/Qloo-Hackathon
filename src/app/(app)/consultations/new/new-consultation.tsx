@@ -30,17 +30,20 @@ import {
   type PhotoType,
   SELF_TIMER_SECONDS,
 } from "@/config/consultations";
+import { INVALID_BIRTH_DATE } from "@/components/messages";
 import { COPY } from "@/config/copy";
 import { consultationRoute, ROUTES } from "@/config/routes";
 import { SLOW_STEP_MS } from "@/config/stylings";
 import type { PhotoRejection } from "@/server/consultations/photo-check";
+import type { GuestDetailsField } from "@/server/operations/guest-consultations";
 
 import { Stepper } from "../stepper";
 import { StylingStep } from "../styling-step";
 import { groupLabel, inkPill, linePill, smallPill, stepHeading, stepLead } from "../ui";
-import { startConsultationAction } from "./actions";
+import { startConsultationAction, startGuestConsultationAction } from "./actions";
 import { CameraView, useCamera } from "./camera";
 import { ConsentSheet } from "./consent-sheet";
+import { GuestDetails, type GuestDetailsValue, type GuestVariant, missingGuestDetails } from "./guest-details";
 import { shrinkPhoto } from "./shrink-photo";
 
 const PHOTO_SOURCES = ["camera", "upload"] as const;
@@ -57,29 +60,33 @@ interface ChosenPhoto {
 }
 
 /**
- * `outfitsWanted` is how many Outfits the Styling will make, of the `outfitsLeft` in the user's
- * Outfit Allowance, which is null on the Demo Account: it has none. `photoConsentNeeded` says the
- * consent sheet comes first: the user hasn't agreed to the current photo notice.
- * `isDemoAccount` says it's the Demo Account, which the judges share: the consent sheet comes before
- * each of its Consultations, and says the account is shared.
+ * For a signed-in user: `outfitsWanted` is how many Outfits the Styling will make, of the
+ * `outfitsLeft` in the user's Outfit Allowance, which is null on the Demo Account: it has none.
+ * `photoConsentNeeded` says the consent sheet comes first: the user hasn't agreed to the current
+ * photo notice. `isDemoAccount` says it's the Demo Account, which the judges share: the consent
+ * sheet comes before each of its Consultations, and says the account is shared.
+ *
+ * For a Guest, `guest` is the Guest Page's variant: the same steps, with the Guest's details beside
+ * "Get my Outfits", which uses their one Guest Consultation. As on the Demo Account, the consent
+ * sheet comes first, with its Terms box too.
  */
-export function NewConsultation({
-  outfitsWanted,
-  outfitsLeft,
-  photoConsentNeeded,
-  isDemoAccount,
-}: {
-  outfitsWanted: number;
-  outfitsLeft: number | null;
-  photoConsentNeeded: boolean;
-  isDemoAccount: boolean;
-}) {
+export function NewConsultation(
+  props:
+    | { outfitsWanted: number; outfitsLeft: number | null; photoConsentNeeded: boolean; isDemoAccount: boolean; guest?: undefined }
+    | { guest: GuestVariant },
+) {
+  const { guest } = props;
   const [step, setStep] = useState<"photo-type" | "photo">("photo-type");
   const [photoType, setPhotoType] = useState<PhotoType>(DEFAULT_PHOTO_TYPE);
-  // Kept here so going Back and on again keeps the photo and the Budget Tier.
+  // Kept here so going Back and on again keeps the photo, the Budget Tier and a Guest's details.
   const [photo, setPhoto] = useState<ChosenPhoto | null>(null);
   const [budgetTier, setBudgetTier] = useState<BudgetTier>(DEFAULT_BUDGET_TIER);
-  const [consentNeeded, setConsentNeeded] = useState(photoConsentNeeded);
+  const [consentNeeded, setConsentNeeded] = useState(guest ? true : props.photoConsentNeeded);
+  const [guestDetails, setGuestDetails] = useState<GuestDetailsValue>({
+    birthDate: { day: "", month: "", year: "" },
+    stylePreference: "",
+    countryCode: guest?.countryCode ?? "",
+  });
 
   useEffect(() => {
     if (!photo) return;
@@ -90,7 +97,9 @@ export function NewConsultation({
     <PhotoTypeStep photoType={photoType} onChange={setPhotoType} onContinue={() => setStep("photo")} />
   ) : (
     <PhotoStep
-      allowanceLine={outfitsLeft === null ? null : COPY.outfitsItUses(outfitsWanted, outfitsLeft)}
+      allowanceLine={
+        guest ? COPY.usesYourGuestConsultation : props.outfitsLeft === null ? null : COPY.outfitsItUses(props.outfitsWanted, props.outfitsLeft)
+      }
       photoType={photoType}
       onPhotoTypeChange={setPhotoType}
       photo={photo}
@@ -99,7 +108,8 @@ export function NewConsultation({
       onBudgetTierChange={setBudgetTier}
       consentNeeded={consentNeeded}
       onConsentNeededChange={setConsentNeeded}
-      isDemoAccount={isDemoAccount}
+      isDemoAccount={!guest && props.isDemoAccount}
+      guest={guest ? { ...guest, details: guestDetails, onDetailsChange: setGuestDetails } : null}
       onBack={() => setStep("photo-type")}
     />
   );
@@ -244,9 +254,10 @@ function rejectionProblem(rejection: PhotoRejection): Problem {
 
 /**
  * The photo step: the frame, from the camera or an upload, on one side, and what goes with the
- * photo on the other: its Budget Tier and "Get my Outfits". It fits the screen, the frame taking
- * the height the rest leaves. On phones, where there's room for little else, the Budget Tier and
- * "Get my Outfits" share one row under the frame, and only once there's a photo to send.
+ * photo on the other: its Budget Tier, a Guest's details, and "Get my Outfits". It fits the screen,
+ * the frame taking the height the rest leaves. On phones, where there's room for little else, the
+ * Budget Tier and "Get my Outfits" share one row under the frame, under a Guest's details, and only
+ * once there's a photo to send.
  */
 function PhotoStep({
   allowanceLine,
@@ -259,6 +270,7 @@ function PhotoStep({
   consentNeeded,
   onConsentNeededChange,
   isDemoAccount,
+  guest,
   onBack,
 }: {
   /** Under "Get my Outfits": how many Outfits it will use, of how many are left, if there's an Outfit Allowance. */
@@ -275,6 +287,8 @@ function PhotoStep({
   onConsentNeededChange: (consentNeeded: boolean) => void;
   /** The Demo Account, which keeps no agreement on record, and whose consent sheet says it's shared. */
   isDemoAccount: boolean;
+  /** The Guest Page's variant, with the Guest's details as they stand, or null for a signed-in user. */
+  guest: (GuestVariant & { details: GuestDetailsValue; onDetailsChange: (details: GuestDetailsValue) => void }) | null;
   /** Back to the Photo Type step, from "Change". */
   onBack: () => void;
 }) {
@@ -289,6 +303,8 @@ function PhotoStep({
   const [consentSheetFor, setConsentSheetFor] = useState<PhotoType | null>(null);
   // The sheet was closed without agreeing, so nothing was sent.
   const [consentDeclined, setConsentDeclined] = useState(false);
+  // A Guest's details "Get my Outfits" found missing or wrong, and the line under it saying so.
+  const [detailsProblem, setDetailsProblem] = useState<{ fields: GuestDetailsField[]; message: string } | null>(null);
   const [opening, setOpening] = useState(false);
   const [capturing, setCapturing] = useState(false);
   // A file is being dragged over the upload frame.
@@ -413,10 +429,20 @@ function PhotoStep({
     if (!shown) return;
     setProblem(null);
     setConsentDeclined(false);
+    if (guest) {
+      const missing = missingGuestDetails(guest.details);
+      if (missing.length > 0) return setDetailsProblem(missingDetailsProblem(missing));
+    }
+    setDetailsProblem(null);
     if (consentNeeded) setConsentSheetFor(type);
     // The Demo Account keeps no agreement on record, so the judge's, given on this page, goes with
     // each photo sent from it, until one becomes a Consultation and the page moves on.
     else send(type, isDemoAccount);
+  }
+
+  function changeGuestDetails(details: GuestDetailsValue) {
+    guest?.onDetailsChange(details);
+    setDetailsProblem(null);
   }
 
   /** The consent sheet has closed: the photo goes with both ticks if the user agreed, and otherwise nothing is sent. */
@@ -427,7 +453,7 @@ function PhotoStep({
     else setConsentDeclined(true);
   }
 
-  /** Sends the photo as `type`, with both of the consent sheet's ticks if `consented`. */
+  /** Sends the photo as `type`, with every one of the consent sheet's ticks if `consented`, and a Guest's details. */
   function send(type: PhotoType, consented: boolean) {
     if (!shown) return;
     setAccepted(false);
@@ -440,29 +466,46 @@ function PhotoStep({
       if (consented) {
         form.set("consentStoreAndProcess", "on");
         form.set("consentSendToAiProviders", "on");
+        if (guest) form.set("acceptedTerms", "on");
+      }
+      if (guest) {
+        form.set("birthDay", guest.details.birthDate.day);
+        form.set("birthMonth", guest.details.birthDate.month);
+        form.set("birthYear", guest.details.birthDate.year);
+        form.set("stylePreference", guest.details.stylePreference);
+        form.set("countryCode", guest.details.countryCode);
       }
       let result;
       try {
-        result = await startConsultationAction(form);
+        result = await (guest ? startGuestConsultationAction(form) : startConsultationAction(form));
       } catch {
         // The request itself failed: the network, or our side.
         setProblem({ message: COPY.photoCheckFailed });
         return;
       }
       // The server now has the ticks on record, so the one-tap Photo Type switch after a rejection
-      // needs no second sheet. The refusals that come before the consent check (signed out,
+      // needs no second sheet. A Guest's sheet comes before every photo they send. The refusals that come before the consent check (signed out,
       // unverified, the region gate) leave this step anyway, and a withdrawal meanwhile asks again
       // below.
-      if (consented) onConsentNeededChange(false);
+      if (consented && !guest) onConsentNeededChange(false);
       if (result.ok) {
         setAccepted(true);
         setStepStartedAt(Date.now());
-        startSending(() => router.push(consultationRoute(result.consultationId)));
+        // The Guest Page shows the Guest Consultation its new guest cookie holds.
+        startSending(() => (guest ? router.refresh() : router.push(consultationRoute(result.consultationId))));
       } else if (result.refusal === "signed-out") startSending(() => router.push(ROUTES.signIn));
-      else if (result.refusal === "photo-consent-needed") {
+      else if (result.refusal === "photo-consent-needed" || result.refusal === "terms-not-accepted") {
         // Consent was withdrawn, or the photo notice changed, since the page loaded.
         onConsentNeededChange(true);
         setConsentSheetFor(type);
+      } else if (result.refusal === "invalid") {
+        setDetailsProblem(
+          result.field === "birthDate" ? { fields: ["birthDate"], message: INVALID_BIRTH_DATE } : missingDetailsProblem([result.field]),
+        );
+      } else if (result.refusal === "under-18") {
+        setDetailsProblem({ fields: [], message: COPY.under18 });
+        // An under-18 date closes the Guest Page to this browser, as it does sign-up.
+        router.refresh();
       } else if (result.refusal === "photo-check-limit") setProblem({ message: <LimitMessage refusal={result} /> });
       else if (result.refusal === "photo-rejected") setProblem(rejectionProblem(result.rejection));
       else if (result.refusal === "check-errored") setProblem({ message: COPY.photoCheckFailed });
@@ -514,7 +557,12 @@ function PhotoStep({
           </button>
         </p>
 
-        <div className="mt-4 grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] gap-x-10 gap-y-3 sm:mt-6 sm:short:mt-5 md:grid-cols-[minmax(0,1fr)_16.5rem] md:grid-rows-[minmax(0,1fr)]">
+        {/* A Guest's details need a wider column for the date of birth's three fields. */}
+        <div
+          className={`mt-4 grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] gap-x-10 gap-y-3 sm:mt-6 sm:short:mt-5 md:grid-rows-[minmax(0,1fr)] ${
+            guest ? "md:grid-cols-[minmax(0,1fr)_20rem]" : "md:grid-cols-[minmax(0,1fr)_16.5rem]"
+          }`}
+        >
           <div className="min-h-0 min-w-0 [container-type:size]">
             <div
               className={`mx-auto flex flex-col ${
@@ -629,8 +677,13 @@ function PhotoStep({
             </div>
           </div>
 
-          {/* On phones, only once there's a photo to send, or a reason it wasn't sent. */}
-          <div className={`flex min-w-0 flex-col gap-6 short:gap-4 ${shown || consentDeclined ? "" : "max-md:hidden"}`}>
+          {/* On phones, only once there's a photo to send, or a reason it wasn't sent. A Guest's
+              details may need more height than a short screen leaves, so theirs scroll. */}
+          <div
+            className={`flex min-w-0 flex-col gap-6 short:gap-4 ${shown || consentDeclined ? "" : "max-md:hidden"} ${
+              guest ? "md:-mx-1 md:min-h-0 md:overflow-y-auto md:px-1 md:pb-1" : ""
+            }`}
+          >
             {hasBudgetTier(photoType) ? (
               <BudgetTierPicker value={budgetTier} onChange={onBudgetTierChange} className="max-md:hidden" />
             ) : (
@@ -638,6 +691,15 @@ function PhotoStep({
                 <p className={groupLabel}>Budget Tier</p>
                 <p className="mt-1 text-sm text-mute">None for a Face Photo: a Hairstyle has no price.</p>
               </div>
+            )}
+            {guest && (
+              <GuestDetails
+                value={guest.details}
+                onChange={changeGuestDetails}
+                countries={guest.countries}
+                invalid={detailsProblem?.fields ?? []}
+                disabled={sending}
+              />
             )}
             <div className="md:border-t md:border-ink/10 md:pt-6 md:short:pt-4">
               <div className="flex gap-2">
@@ -647,7 +709,7 @@ function PhotoStep({
                   type="button"
                   onClick={() => getOutfits(photoType)}
                   disabled={!shown || busy}
-                  aria-describedby="allowance-line consent-declined-line"
+                  aria-describedby="allowance-line consent-declined-line guest-details-line"
                   className={`min-w-0 flex-1 ${inkPill}`}
                 >
                   Get my Outfits
@@ -660,16 +722,30 @@ function PhotoStep({
               {!shown && <p className="mt-2 text-sm text-mute short:hidden md:mt-2.5">Take or upload your photo first.</p>}
               {consentDeclined && (
                 <p id="consent-declined-line" role="status" className="mt-2 text-sm text-ink md:mt-2.5">
-                  {COPY.agreeToBothBoxes}
+                  {guest ? COPY.agreeToAllThreeBoxes : COPY.agreeToBothBoxes}
+                </p>
+              )}
+              {detailsProblem && (
+                <p id="guest-details-line" role="alert" className="mt-2 text-sm text-red-800 md:mt-2.5">
+                  {detailsProblem.message}
                 </p>
               )}
             </div>
           </div>
         </div>
       </section>
-      <ConsentSheet open={consentSheetFor !== null} isDemoAccount={isDemoAccount} onClose={closeConsentSheet} />
+      <ConsentSheet
+        open={consentSheetFor !== null}
+        notice={guest ? "guest" : isDemoAccount ? "demo-account" : "account"}
+        onClose={closeConsentSheet}
+      />
     </>
   );
+}
+
+/** What "Get my Outfits" says of a Guest's details left out: their names, in a sentence. */
+function missingDetailsProblem(fields: GuestDetailsField[]): { fields: GuestDetailsField[]; message: string } {
+  return { fields, message: COPY.guestDetailsMissing(inASentence(fields.map((field) => COPY.guestDetailNames[field]))) };
 }
 
 /** The four Budget Tier buttons, No Budget first, for screens with room for them. */
