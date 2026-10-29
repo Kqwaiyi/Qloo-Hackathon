@@ -34,6 +34,7 @@ import { readExchangeRates } from "@/server/exchange-rates/rates";
 import type { OperationContext, Result } from "@/server/operations/context";
 import { readSignedInUser } from "@/server/operations/session";
 import type { StylistNoteView } from "@/server/operations/stylings";
+import { viewersConsultation, readViewer } from "@/server/operations/viewer";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
 import { productSearchMarket } from "@/server/outfit-assembly/markets";
 import { brandPriceRange, visitUrl } from "@/server/outfit-assembly/brands";
@@ -424,19 +425,19 @@ export function piecesAsShown(pieces: readonly StoredPiece[], viewer: PriceViewe
 }
 
 /**
- * One of the signed-in user's own Consultations, or null for anyone else's or one that doesn't
- * exist. Its prices are in the currency of the user's Country as it is now.
+ * One of the viewer's own Consultations, or null with no viewer, for anyone else's, or for one that
+ * doesn't exist. Its prices are in the currency of the viewer's Country as it is now.
  */
 export async function readConsultation(
   ctx: Pick<OperationContext, "auth" | "db" | "blob" | "clock" | "requestHeaders">,
   consultationId: string,
 ): Promise<ConsultationView | null> {
-  const user = await readSignedInUser(ctx);
-  if (!user) return null;
+  const viewer = await readViewer(ctx);
+  if (!viewer) return null;
   const [row] = await ctx.db
     .select()
     .from(consultation)
-    .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)));
+    .where(viewersConsultation(viewer, consultationId));
   if (!row) return null;
   const linkValidUntil = signedLinkValidUntil(ctx.clock);
   const outfitRows = await ctx.db
@@ -465,10 +466,10 @@ export async function readConsultation(
               outfitRows.map((outfitRow) => outfitRow.id),
             ),
           );
-  // Prices are shown in the currency of the user's Country now, whichever it was in when they were found.
-  const viewer: PriceViewer = {
-    countryCode: user.countryCode,
-    rates: await readExchangeRates(ctx.db, [countryCurrency(user.countryCode), ...pieceRows.flatMap(({ currency }) => currency ?? [])]),
+  // Prices are shown in the currency of the viewer's Country now, whichever it was in when they were found.
+  const priceViewer: PriceViewer = {
+    countryCode: viewer.countryCode,
+    rates: await readExchangeRates(ctx.db, [countryCurrency(viewer.countryCode), ...pieceRows.flatMap(({ currency }) => currency ?? [])]),
   };
   const outfits = await Promise.all(
     outfitRows.map(
@@ -482,7 +483,7 @@ export async function readConsultation(
             .filter((pieceRow) => pieceRow.outfitId === id)
             .toSorted(byCategoryOrder)
             .map(storedPiece),
-          viewer,
+          priceViewer,
         ),
       }),
     ),

@@ -14,12 +14,12 @@ export async function getMyConsultations(): Promise<ConsultationSummary[]> {
   return listConsultations(await getReadContext());
 }
 
-/** One of the signed-in user's own Consultations, with fresh 1-hour links to its photo and Previews. */
+/** One of the viewer's own Consultations, with fresh 1-hour links to its photo and Previews. */
 export async function getConsultation(consultationId: string): Promise<ConsultationView | null> {
   return readConsultation(await getReadContext(), consultationId);
 }
 
-/** The Styling status of one of the signed-in user's own Consultations, with the Stylist's Notes after its first `notesAfter`. */
+/** The Styling status of one of the viewer's own Consultations, with the Stylist's Notes after its first `notesAfter`. */
 export async function getStylingStatus(consultationId: string, notesAfter = 0): Promise<StylingStatusView | null> {
   return readStylingStatus(await getReadContext(), consultationId, { notesAfter });
 }

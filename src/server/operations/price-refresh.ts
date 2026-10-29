@@ -3,7 +3,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import { PRODUCT_CHECKS_AT_ONCE, type ProductSearchMarket } from "@/config/product-search";
 import { consultation, outfit, piece } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
-import { readSignedInUser } from "@/server/operations/session";
+import { viewersConsultation, readViewer } from "@/server/operations/viewer";
 import { chosenOffer, isDueForCheck } from "@/server/outfit-assembly/products";
 import type { ProductCheckResult } from "@/server/product-search/provider";
 
@@ -11,13 +11,13 @@ import type { ProductCheckResult } from "@/server/product-search/provider";
 // once, then, when one of its Products wasn't checked today, asks for this in the background and
 // refreshes in place once it's done.
 
-/** A Consultation that isn't the user's is not found, just like one that doesn't exist. */
+/** `signed-out` with no viewer. A Consultation that isn't the viewer's is not found, just like one that doesn't exist. */
 export type RefreshPricesRefusal = { refusal: "signed-out" | "not-found" };
 
 /**
- * Checks each Product of one of the signed-in user's own Consultations' current Outfits that wasn't
- * found or checked today, through the product search's free Product check, in the market it was
- * found in, whatever the user's Country is now. The offer rule picks its offer again, with no price
+ * Checks each Product of one of the viewer's own Consultations' current Outfits that wasn't found
+ * or checked today, through the product search's free Product check, in the market it was found
+ * in, whatever the viewer's Country is now. The offer rule picks its offer again, with no price
  * filter: its new offer, price and currency are stored with today's date. A Product the check finds
  * no offer of is marked no longer available, and a later check can make it available again. A check
  * that errors changes nothing, so the next visit tries it again. Pieces made before Products have
@@ -27,12 +27,12 @@ export async function refreshPrices(
   ctx: Pick<OperationContext, "auth" | "db" | "clock" | "productSearch" | "requestHeaders">,
   consultationId: string,
 ): Promise<Result<object, RefreshPricesRefusal>> {
-  const user = await readSignedInUser(ctx);
-  if (!user) return { ok: false, refusal: "signed-out" };
+  const viewer = await readViewer(ctx);
+  if (!viewer) return { ok: false, refusal: "signed-out" };
   const [owned] = await ctx.db
     .select({ id: consultation.id })
     .from(consultation)
-    .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)));
+    .where(viewersConsultation(viewer, consultationId));
   if (!owned) return { ok: false, refusal: "not-found" };
   const now = ctx.clock.now();
   const rows = await ctx.db

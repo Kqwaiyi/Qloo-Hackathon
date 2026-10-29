@@ -6,7 +6,7 @@ import { BUILDING_OUTFITS_STAGES, SLOW_BUILDING_OUTFITS_MS, SLOW_STEP_MS, type S
 import type { Transaction } from "@/server/db/database";
 import { consultation, outfit, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
-import { readSignedInUser } from "@/server/operations/session";
+import { viewersConsultation, readViewer } from "@/server/operations/viewer";
 import type { PhotoCategoryFacts } from "@/server/outfit-assembly/categories";
 import { productSearchMarket } from "@/server/outfit-assembly/markets";
 import { hasCurrentStyleIconLeft, readCurrentStyleIconList } from "@/server/stylings/current-outfits";
@@ -24,8 +24,8 @@ import { finishStuckStylings } from "@/server/stylings/stop";
 import { readStylistNotes, type StylistNoteEntry } from "@/server/stylings/stylist-notes";
 
 /**
- * Why a Styling on a Consultation didn't start, whatever its kind. A Consultation that isn't the
- * user's is not found, just like one that doesn't exist.
+ * Why a Styling on a Consultation didn't start, whatever its kind: `signed-out` with no viewer. A
+ * Consultation that isn't the viewer's is not found, just like one that doesn't exist.
  */
 export type ConsultationStylingRefusal = { refusal: "signed-out" | "not-found" } | StylingStartRefusal;
 
@@ -140,10 +140,10 @@ type StylingPlan = Pick<NewStyling, "kind" | "budgetTier" | "photoStyle" | "stag
 type CurrentConsultation = PhotoCategoryFacts & Pick<NewStyling, "budgetTier" | "photoStyle">;
 
 /**
- * Starts a Styling on one of the signed-in user's own Consultations, after the shared start check,
- * once no Styling runs on it. `plan` says what it builds, or why it can't start, holding the
+ * Starts a Styling on one of the viewer's own Consultations, after the shared start check, once no
+ * Styling runs on it. `plan` says what it builds, or why it can't start, holding the
  * Consultation's row to the end of the transaction, so of two presses at once the second finds it
- * Styling. One started meanwhile on another of the user's Consultations, past the shared start
+ * Styling. One started meanwhile on another of the viewer's Consultations, past the shared start
  * check's lock, is caught by the database's.
  */
 async function startStylingOn<R extends { refusal: string }>(
@@ -151,9 +151,9 @@ async function startStylingOn<R extends { refusal: string }>(
   consultationId: string,
   plan: (tx: Transaction, current: CurrentConsultation) => Promise<Result<StylingPlan, R>>,
 ): Promise<Result<object, ConsultationStylingRefusal | R>> {
-  const user = await readSignedInUser(ctx);
-  if (!user) return { ok: false, refusal: "signed-out" };
-  const stylingStart = await checkStylingStart(ctx, user);
+  const viewer = await readViewer(ctx);
+  if (!viewer) return { ok: false, refusal: "signed-out" };
+  const stylingStart = await checkStylingStart(ctx, viewer);
   if (!stylingStart.ok) return stylingStart;
   let started: Result<{ stylingId: string }, ConsultationStylingRefusal | R>;
   try {
@@ -167,7 +167,7 @@ async function startStylingOn<R extends { refusal: string }>(
           photoStyle: consultation.photoStyle,
         })
         .from(consultation)
-        .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)))
+        .where(viewersConsultation(viewer, consultationId))
         .for("update");
       if (!row) return { ok: false, refusal: "not-found" };
       if (row.state === "styling") return { ok: false, refusal: "already-styling" };
@@ -177,15 +177,15 @@ async function startStylingOn<R extends { refusal: string }>(
       const stylingId = await createStyling(tx, ctx.clock.now(), {
         ...stylingPlan,
         consultationId,
-        userId: user.id,
-        onDemoAccount: user.isDemoAccount,
+        userId: viewer.id,
+        onDemoAccount: viewer.isDemoAccount,
         outfitsWanted: stylingStart.outfitsWanted,
-        market: productSearchMarket(user.countryCode),
+        market: productSearchMarket(viewer.countryCode),
       });
       return { ok: true, stylingId };
     });
   } catch (error) {
-    // A Styling on another of the user's Consultations started since the shared start check.
+    // A Styling on another of the viewer's Consultations started since the shared start check.
     if (!(error instanceof AlreadyStylingError)) throw error;
     started = { ok: false, refusal: "already-styling" };
   }
@@ -230,19 +230,19 @@ export interface PreviewsProgress {
 }
 
 /**
- * The Styling status of one of the signed-in user's own Consultations, or null for anyone else's.
- * A page that has the running Styling's first `notesAfter` notes is given only those after them;
- * one that says anything but a whole number of them is given them all.
+ * The Styling status of one of the viewer's own Consultations, or null with no viewer or for anyone
+ * else's. A page that has the running Styling's first `notesAfter` notes is given only those after
+ * them; one that says anything but a whole number of them is given them all.
  */
 export async function readStylingStatus(
   ctx: Pick<OperationContext, "auth" | "db" | "clock" | "stylings" | "requestHeaders">,
   consultationId: string,
   { notesAfter = 0 }: { notesAfter?: number } = {},
 ): Promise<StylingStatusView | null> {
-  const user = await readSignedInUser(ctx);
-  if (!user) return null;
+  const viewer = await readViewer(ctx);
+  if (!viewer) return null;
   // Its Styling, if it's stuck, finishes: the page polling it then shows how it ended.
-  await finishStuckStylings(ctx, { userId: user.id, consultationId });
+  await finishStuckStylings(ctx, { userId: viewer.id, consultationId });
   // One statement, so the state and the running Styling's progress always agree.
   const [row] = await ctx.db
     .select({
@@ -260,7 +260,7 @@ export async function readStylingStatus(
     })
     .from(consultation)
     .leftJoin(styling, and(eq(styling.consultationId, consultation.id), eq(styling.status, "running")))
-    .where(and(eq(consultation.id, consultationId), eq(consultation.userId, user.id)));
+    .where(viewersConsultation(viewer, consultationId));
   if (!row) return null;
   const { state, stylingId, kind, stage, stageMovedAt, outfitsWanted, outfitsMade, previewsDone } = row;
   if (stylingId === null || kind === null || stage === null || stageMovedAt === null || outfitsWanted === null || outfitsMade === null) {

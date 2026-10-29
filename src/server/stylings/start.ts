@@ -9,7 +9,7 @@ import { startOfNextUtcMonth } from "@/server/clock";
 import type { Transaction } from "@/server/db/database";
 import { consultation, styleIcon, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
-import type { SignedInUser } from "@/server/operations/session";
+import type { Viewer } from "@/server/operations/viewer";
 import { type QlooLimitState, readQlooLimitState } from "@/server/qloo/limit-state";
 import { isFromSupportedRegion } from "@/server/region-gate";
 import { readAppWideOutfitsLeft, readProductSearchesInMonth, readUsageLeft } from "@/server/usage/records";
@@ -63,21 +63,21 @@ export type StylingStart = Result<{ outfitsWanted: number }, StylingStartRefusal
  */
 export async function checkStylingStart(
   ctx: Pick<OperationContext, "db" | "clock" | "stylings" | "requestHeaders">,
-  user: SignedInUser,
+  viewer: Viewer,
 ): Promise<StylingStart> {
   if (!isFromSupportedRegion(ctx.requestHeaders)) return { ok: false, refusal: "unsupported-region" };
   // A stuck Styling holds no lock, and what it made counts before the limits are read.
-  await finishStuckStylings(ctx, { userId: user.id });
-  if (user.isDemoAccount) return { ok: true, outfitsWanted: OUTFITS_PER_STYLING };
+  await finishStuckStylings(ctx, { userId: viewer.id });
+  if (viewer.isDemoAccount) return { ok: true, outfitsWanted: OUTFITS_PER_STYLING };
   const [running] = await ctx.db
     .select({ id: styling.id })
     .from(styling)
-    .where(and(eq(styling.userId, user.id), eq(styling.status, "running")))
+    .where(and(eq(styling.userId, viewer.id), eq(styling.status, "running")))
     .limit(1);
   if (running) return { ok: false, refusal: "already-styling" };
   const now = ctx.clock.now();
   const [outfits, appWide, qloo, productSearches] = await Promise.all([
-    readUsageLeft(ctx.db, { kind: "outfit", userId: user.id, at: now }),
+    readUsageLeft(ctx.db, { kind: "outfit", userId: viewer.id, at: now }),
     readAppWideOutfitsLeft(ctx.db, now),
     readQlooLimitState(ctx.db),
     readProductSearchesInMonth(ctx.db, now),

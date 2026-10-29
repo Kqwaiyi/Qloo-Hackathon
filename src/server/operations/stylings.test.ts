@@ -3493,6 +3493,19 @@ describe("a stuck Styling", () => {
     expect(harness.blob.objects.size).toBe(1);
   });
 
+  it("is left running by anyone else's Styling status poll, or a signed-out visitor's", async () => {
+    const browser = await signedInUser({ stylePreference: "womenswear" });
+    harness.clock.set("2026-10-16T12:30:00Z");
+    const consultationId = await start(browser, "face");
+    harness.clock.set("2026-10-16T12:40:00Z");
+
+    expect(await readStylingStatus(harness.context(await signedInUser()), consultationId)).toBeNull();
+    expect(await readStylingStatus(harness.context(new TestBrowser()), consultationId)).toBeNull();
+
+    expect(await stylingsOf(consultationId)).toEqual([expect.objectContaining({ status: "running" })]);
+    expect(harness.stylings.cancelled).toEqual([]);
+  });
+
   it("counts from when its stage last moved, not from when it started", async () => {
     const browser = await signedInUser({ stylePreference: "womenswear" });
     harness.clock.set("2026-10-16T12:30:00Z");
