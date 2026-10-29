@@ -57,6 +57,13 @@ test("a visitor tries Qurator as a Guest from the landing page, and one Guest Co
   await expect(page).toHaveURL(/\/guest$/);
   await expect(page.getByText("AI-generated")).toHaveCount(2);
 
+  // One Guest Consultation is all a Guest gets: an account where "Show 2 more Outfits" would be, and no re-styling.
+  const moreConsultations = page.getByRole("link", { name: "Create an account to get more consultations" });
+  await expect(moreConsultations).toHaveAttribute("href", "/sign-up");
+  await expect(page.getByText("Your guest results won't carry over to a new account.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show 2 more Outfits" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Change Photo Style" })).toHaveCount(0);
+
   // Coming back within the hour shows them again.
   await page.reload();
   await expect(outfitTitles).toHaveCount(2);

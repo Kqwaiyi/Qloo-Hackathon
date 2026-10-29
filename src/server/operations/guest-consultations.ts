@@ -17,6 +17,7 @@ import {
   startConsultationInputSchema,
 } from "@/server/operations/consultations";
 import type { OperationContext, Result } from "@/server/operations/context";
+import { readGuestUsageSummary, type UsageSummary } from "@/server/operations/usage";
 import { readGuest } from "@/server/operations/viewer";
 import { ageGroupAt } from "@/server/outfit-assembly/age-group";
 import { ipCountryOf, isFromSupportedRegion } from "@/server/region-gate";
@@ -119,19 +120,24 @@ function invalid(field: GuestDetailsField): { ok: false; refusal: "invalid"; fie
  * finished, or else the New Consultation steps, with the Country filled in from the request's IP
  * country when it's on the list. They're closed, saying why, to a browser the age gate has
  * blocked, and while the region gate, an app-wide cap or a backstop stops every Styling.
+ *
+ * The Guest Consultation comes with the Guest's usage summary, for Try again once its Styling
+ * breaks (`readGuestUsageSummary`).
  */
 export type GuestPageView =
-  | { show: "guest-consultation"; consultationId: string }
+  | { show: "guest-consultation"; consultationId: string; usage: UsageSummary }
   | { show: "new-consultation"; countryCode: string | null }
   | { show: "closed"; refusal: { refusal: "under-18" } | AppWideStylingStartRefusal };
 
-export async function readGuestPage(ctx: Pick<OperationContext, "auth" | "db" | "clock" | "requestHeaders">): Promise<GuestPageView> {
+export async function readGuestPage(ctx: Pick<OperationContext, "auth" | "db" | "clock" | "stylings" | "requestHeaders">): Promise<GuestPageView> {
   const guest = await readGuest(ctx);
   // A guest user owns its Guest Consultation alone.
   const [guestConsultation] = guest
     ? await ctx.db.select({ id: consultation.id }).from(consultation).where(eq(consultation.userId, guest.id)).limit(1)
     : [];
-  if (guestConsultation) return { show: "guest-consultation", consultationId: guestConsultation.id };
+  if (guest && guestConsultation) {
+    return { show: "guest-consultation", consultationId: guestConsultation.id, usage: await readGuestUsageSummary(ctx, guest) };
+  }
   if (isBlockedByAgeGate(ctx.requestHeaders)) return { show: "closed", refusal: { refusal: "under-18" } };
   const stylingStart = await checkAppWideStylingStart(ctx);
   if (!stylingStart.ok) {

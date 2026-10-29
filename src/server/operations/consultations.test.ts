@@ -338,6 +338,8 @@ describe("opening a Consultation", () => {
       failedStyling: null,
       stylistNotes: [],
       productsToCheck: false,
+      // A signed-in owner's: re-stylings are theirs to have.
+      isGuestConsultation: false,
     });
   });
 

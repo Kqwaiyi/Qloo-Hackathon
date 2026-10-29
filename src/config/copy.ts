@@ -2,6 +2,11 @@
 
 const STYLING_BROKE = "Something went wrong while styling.";
 
+/** A new Consultation's first Styling that built nothing, given its Budget Tier, or null for a Face Photo. */
+function firstStylingCouldntBuild(tier: string | null): string {
+  return `We couldn't build Outfits for this photo${tier ? ` at ${tier}` : ""}.`;
+}
+
 /** What else to try for more Outfits. A Face Photo has no Budget Tier to suggest. */
 function tryAnother(suggestBudgetTier: boolean): string {
   return `Try another ${suggestBudgetTier ? "Budget Tier or Photo Style" : "Photo Style"}`;
@@ -102,8 +107,9 @@ export const COPY = {
    * A new Consultation whose first Styling built nothing, given its Budget Tier, or null for a Face
    * Photo, which has none, so only another Photo Style is suggested.
    */
-  firstStylingBuiltNothing: (tier: string | null) =>
-    `We couldn't build Outfits for this photo${tier ? ` at ${tier}` : ""}. ${tryAnother(tier !== null)}.`,
+  firstStylingBuiltNothing: (tier: string | null) => `${firstStylingCouldntBuild(tier)} ${tryAnother(tier !== null)}.`,
+  /** A Guest Consultation's first Styling that built nothing: nothing else to try is suggested, since a Guest can't change either. */
+  guestFirstStylingBuiltNothing: firstStylingCouldntBuild,
   /**
    * A Styling that broke, shown with "Try again", given the Budget Tier or Photo Style of the
    * Outfits a re-styling kept, or null when there are none.
@@ -142,6 +148,10 @@ export const COPY = {
   createAnAccount: "Create an account",
   /** Under the Guest Page's "Get my Outfits", in place of the allowance line. */
   usesYourGuestConsultation: "Uses your one Guest Consultation",
+  /** Below a Guest's Outfits, in place of "Show 2 more Outfits": to sign-up. */
+  createAnAccountForMore: "Create an account to get more consultations",
+  /** Beside "Create an account to get more consultations". */
+  guestResultsWontCarryOver: "Your guest results won't carry over to a new account.",
   /** The Guest Page's details, on its photo step, as their fields name them. */
   guestBirthDate: "Date of birth",
   /** The Guest Page's details, as "Get my Outfits" names them when they're left out. */

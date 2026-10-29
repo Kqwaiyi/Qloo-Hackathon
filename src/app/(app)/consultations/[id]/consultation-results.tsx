@@ -1,7 +1,11 @@
+import Link from "next/link";
+
 import { LocalDate } from "@/components/local-date";
 import { AiGeneratedBadge, OutfitCard, previewFrame } from "@/components/outfit-card";
+import { secondaryButton } from "@/components/ui";
 import { BUDGET_TIER_LABELS, hasBudgetTier, PHOTO_TYPE_LABELS, photoStyleText } from "@/config/consultations";
 import { COPY } from "@/config/copy";
+import { ROUTES } from "@/config/routes";
 import type { ConsultationView, FailedStyling, PreviewView } from "@/server/operations/consultations";
 import type { StylingProgressView } from "@/server/operations/stylings";
 import type { UsageSummary } from "@/server/operations/usage";
@@ -18,6 +22,9 @@ import { TryAgain } from "./try-again";
 
 /** The header's allowance line, beside both the Budget Tier dropdown and the Photo Style editor. */
 const RESTYLING_LINE_ID = "restyling-line";
+
+/** The line beside a Guest's "Create an account to get more consultations". */
+const WONT_CARRY_OVER_LINE_ID = "wont-carry-over-line";
 
 /**
  * A Consultation opened while a Styling other than "Show 2 more Outfits" runs, from where it started
@@ -36,8 +43,12 @@ export function StylingInPlace({ consultation, progress }: { consultation: Consu
  * A Consultation's results, once no Styling runs in the Styling step's place: its photo and what it
  * was styled for, a failed Styling's line, the Outfits and "Your AI Stylist's notes", for a signed-in
  * user's Consultation page and the Guest Page alike. `progress` is the "Show 2 more Outfits"
- * Styling running below the Outfits, if one is. `usage` is the signed-in user's, for the controls
- * that start Stylings beside their allowance lines; a Guest has none, so null leaves them out.
+ * Styling running below the Outfits, if one is. `usage` is the viewer's, for the controls that
+ * start Stylings beside their allowance lines.
+ *
+ * A Guest Consultation has no re-styling: no Budget Tier dropdown or Photo Style editor, and
+ * "Create an account to get more consultations" where "Show 2 more Outfits" would be. Try again
+ * stays, so a Styling that broke doesn't cost the Guest their Guest Consultation.
  */
 export function ConsultationResults({
   consultation,
@@ -46,10 +57,10 @@ export function ConsultationResults({
 }: {
   consultation: ConsultationView;
   progress: StylingProgressView | null;
-  usage: UsageSummary | null;
+  usage: UsageSummary;
 }) {
   // Re-stylings start from the header, but not while "Show 2 more Outfits" runs.
-  const canRestyle = usage !== null && usage.stylingStart.ok && progress === null;
+  const canRestyle = usage.stylingStart.ok && progress === null;
 
   return (
     <>
@@ -69,7 +80,7 @@ export function ConsultationResults({
           <p className="text-sm text-stone-600">
             {PHOTO_TYPE_LABELS[consultation.photoType]} · <LocalDate date={consultation.createdAt} />
           </p>
-          {usage && (
+          {!consultation.isGuestConsultation && (
             <div className="mt-2 space-y-2 text-sm">
               {/* A Face Photo has no Budget Tier. */}
               {consultation.budgetTier && (
@@ -94,8 +105,13 @@ export function ConsultationResults({
       {consultation.failedStyling && (
         <div className="mt-6 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <p role="status">{failedStylingLine(consultation.failedStyling, consultation)}</p>
-          {usage && consultation.failedStyling.reason === "something_broke" && (
-            <TryAgain consultationId={consultation.id} stylingStart={usage.stylingStart} outfitsLeft={usage.outfitsLeft} />
+          {consultation.failedStyling.reason === "something_broke" && (
+            <TryAgain
+              consultationId={consultation.id}
+              stylingStart={usage.stylingStart}
+              outfitsLeft={usage.outfitsLeft}
+              onGuestPage={consultation.isGuestConsultation}
+            />
           )}
           {/* None for a Styling made before the Stylist's Notes. */}
           {consultation.failedStyling.notes.length > 0 && <FailedStylingNotes notes={consultation.failedStyling.notes} className="mt-3" />}
@@ -117,7 +133,9 @@ export function ConsultationResults({
           </ol>
           {/* None on a Consultation made before the Stylist's Notes. */}
           {consultation.stylistNotes.length > 0 && <StylistNotesByStyling entries={consultation.stylistNotes} className="mt-8" />}
-          {usage && (
+          {consultation.isGuestConsultation ? (
+            <MoreConsultationsWithAnAccount />
+          ) : (
             <MoreOutfits
               consultationId={consultation.id}
               running={progress}
@@ -136,17 +154,40 @@ export function ConsultationResults({
 }
 
 /**
- * What a failed Styling says. A re-styling's also says the Outfits from before it are still here, if
- * there are any, by the Budget Tier or Photo Style it changed. A first Styling had none.
+ * Below a Guest's Outfits, in place of "Show 2 more Outfits": the way to more, which is an account,
+ * and that the Guest Consultation won't go with them.
  */
-function failedStylingLine(failedStyling: FailedStyling, { budgetTier, photoStyle, outfits, photoType }: ConsultationView): string {
+function MoreConsultationsWithAnAccount() {
+  return (
+    <section aria-label="More consultations" className="mt-8 flex flex-col items-center gap-1.5 text-center">
+      <Link href={ROUTES.signUp} aria-describedby={WONT_CARRY_OVER_LINE_ID} className={secondaryButton}>
+        {COPY.createAnAccountForMore}
+      </Link>
+      <p id={WONT_CARRY_OVER_LINE_ID} className="text-sm text-stone-600">
+        {COPY.guestResultsWontCarryOver}
+      </p>
+    </section>
+  );
+}
+
+/**
+ * What a failed Styling says. A re-styling's also says the Outfits from before it are still here, if
+ * there are any, by the Budget Tier or Photo Style it changed. A first Styling had none. A Guest
+ * Consultation's suggests no other Budget Tier or Photo Style, which a Guest can't change.
+ */
+function failedStylingLine(
+  failedStyling: FailedStyling,
+  { budgetTier, photoStyle, outfits, photoType, isGuestConsultation }: ConsultationView,
+): string {
   const byBudgetTier = failedStyling.kind === "budget_tier_change";
   // Only a body photo's Budget Tier can change, and it always has one.
   const previous = outfits.length === 0 ? null : byBudgetTier ? budgetTier && BUDGET_TIER_LABELS[budgetTier] : photoStyleText(photoStyle);
   if (failedStyling.reason === "something_broke") return COPY.stylingBroke(previous);
   switch (failedStyling.kind) {
-    case "first":
-      return COPY.firstStylingBuiltNothing(failedStyling.budgetTier && BUDGET_TIER_LABELS[failedStyling.budgetTier]);
+    case "first": {
+      const tier = failedStyling.budgetTier && BUDGET_TIER_LABELS[failedStyling.budgetTier];
+      return isGuestConsultation ? COPY.guestFirstStylingBuiltNothing(tier) : COPY.firstStylingBuiltNothing(tier);
+    }
     case "budget_tier_change":
       return COPY.budgetTierChangeBuiltNothing(BUDGET_TIER_LABELS[failedStyling.budgetTier], previous);
     case "photo_style_change":

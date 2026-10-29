@@ -20,6 +20,8 @@ export interface Viewer {
   countryCode: string;
   /** Whether it's the Demo Account, which holds no user's Styling lock and has no limits. */
   isDemoAccount: boolean;
+  /** Whether it's a Guest, whose Guest Consultation is one Styling's Outfits and no more. */
+  isGuest: boolean;
 }
 
 /**
@@ -28,7 +30,7 @@ export interface Viewer {
  */
 export async function readViewer(ctx: Pick<OperationContext, "auth" | "db" | "clock" | "requestHeaders">): Promise<Viewer | null> {
   const signedIn = await readSignedInUser(ctx);
-  if (signedIn) return { id: signedIn.id, countryCode: signedIn.countryCode, isDemoAccount: signedIn.isDemoAccount };
+  if (signedIn) return { id: signedIn.id, countryCode: signedIn.countryCode, isDemoAccount: signedIn.isDemoAccount, isGuest: false };
   return readGuest(ctx);
 }
 
@@ -40,7 +42,7 @@ export async function readGuest(ctx: Pick<OperationContext, "auth" | "db" | "clo
     .select({ id: user.id, countryCode: user.countryCode })
     .from(user)
     .where(and(eq(user.id, guestUserId), eq(user.isGuest, true)));
-  return guest ? { ...guest, isDemoAccount: false } : null;
+  return guest ? { ...guest, isDemoAccount: false, isGuest: true } : null;
 }
 
 /**

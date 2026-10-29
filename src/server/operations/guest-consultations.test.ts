@@ -8,15 +8,29 @@ import { consultation, qlooCache, qlooLimitState, usageRecord, user } from "@/se
 import { deleteConsultation, listConsultations, readConsultation } from "@/server/operations/consultations";
 import { readGuestPage, type StartGuestConsultationInput, startGuestConsultation } from "@/server/operations/guest-consultations";
 import { readSignUpGate } from "@/server/operations/sign-up";
-import { readStylingStatus } from "@/server/operations/stylings";
+import { changeBudgetTier, changePhotoStyle, readStylingStatus, showMoreOutfits, tryAgain } from "@/server/operations/stylings";
 import { readUsageSummary } from "@/server/operations/usage";
-import { qlooPerson, qlooResponse } from "@/server/qloo/fake";
+import { qlooBrand, qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
 import { saveQlooLimitState } from "@/server/qloo/limit-state";
 import { recordProductSearches } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities: enough Style Icons for a Face Photo's two Outfits.
 const STYLE_ICONS = [qlooPerson("p-1", "Ava Stone", 0.94), qlooPerson("p-2", "Bea Marsh", 0.91), qlooPerson("p-3", "Cleo Hart", 0.88)];
+// Made-up Brands, shaped like Qloo's Brand entities, that every Style Icon's fans favour: enough for
+// a body photo's Outfits, and 10, so the pool isn't thin.
+const BRANDS = [
+  qlooBrand("b-stride", "Stride", { categories: ["footwear"], affinity: 0.97, price: [60, 180] }),
+  qlooBrand("b-bolt", "Bolt", { categories: ["apparel"], affinity: 0.95, price: [20, 120] }),
+  qlooBrand("b-sole", "Sole", { categories: ["footwear", "sneakers"], affinity: 0.93, price: [40, 90] }),
+  qlooBrand("b-dune", "Dune", { categories: ["apparel", "outerwear"], affinity: 0.9 }),
+  qlooBrand("b-jeanery", "Jeanery", { categories: ["apparel", "denim"], affinity: 0.88, price: [50, 110] }),
+  qlooBrand("b-ember", "Ember", { categories: ["apparel"], affinity: 0.85, price: [15, 60] }),
+  qlooBrand("b-pace", "Pace", { categories: ["footwear"], affinity: 0.8, price: [30, 70] }),
+  qlooBrand("b-hem", "Hem", { categories: ["apparel"], affinity: 0.7, price: [25, 80] }),
+  qlooBrand("b-loom", "Loom", { categories: ["apparel"], affinity: 0.65, price: [30, 90] }),
+  qlooBrand("b-weft", "Weft", { categories: ["apparel"], affinity: 0.6, price: [20, 70] }),
+];
 
 let harness: TestHarness;
 /** The guest users there were as the test started. */
@@ -102,6 +116,85 @@ describe("a Guest Consultation", () => {
   });
 });
 
+describe("once a Guest's Outfits are shown", () => {
+  it("the Guest reads it as a Guest Consultation", async () => {
+    const guest = new TestBrowser({ ipCountry: "GB" });
+    const consultationId = consultationIdOf(await startGuestConsultation(harness.context(guest), await guestInput()));
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(guest), consultationId)).toMatchObject({ state: "ready", isGuestConsultation: true });
+  });
+
+  it.each<{ restyling: string; start: (guest: TestBrowser, consultationId: string) => Promise<object> }>([
+    { restyling: '"Show 2 more Outfits"', start: (guest, consultationId) => showMoreOutfits(harness.context(guest), consultationId) },
+    { restyling: "a Budget Tier change", start: (guest, consultationId) => changeBudgetTier(harness.context(guest), consultationId, "expensive") },
+    { restyling: "a Photo Style change", start: (guest, consultationId) => changePhotoStyle(harness.context(guest), consultationId, ["edgy"]) },
+  ])("refuses $restyling with the guest refusal, starting no Styling and keeping the two Outfits", async ({ start }) => {
+    // A Body-Only Photo's, with Style Icons left over, so a signed-in owner could have each of them.
+    harness.qloo.respond = qlooAnsweringWithBrands();
+    const guest = new TestBrowser({ ipCountry: "US" });
+    const consultationId = consultationIdOf(
+      await startGuestConsultation(harness.context(guest), await guestInput({ photoType: "body_only", budgetTier: "medium", countryCode: "US" })),
+    );
+    await harness.stylings.runPending();
+    expect(await readConsultation(harness.context(guest), consultationId)).toMatchObject({ budgetTier: "medium", everyOutfitBuilt: false });
+
+    expect(await start(guest, consultationId)).toEqual({ ok: false, refusal: "guest" });
+    expect(harness.stylings.pending).toHaveLength(0);
+    expect(await readConsultation(harness.context(guest), consultationId)).toMatchObject({
+      state: "ready",
+      budgetTier: "medium",
+      photoStyle: ["casual"],
+      outfits: [{ position: 1 }, { position: 2 }],
+    });
+  });
+});
+
+describe("a Guest Consultation whose Styling made no Outfit", () => {
+  it("can be tried again once its Styling broke, and then shows its two Outfits", async () => {
+    harness.qloo.respond = () => Response.json({ error: "Internal Server Error" }, { status: 500 });
+    const guest = new TestBrowser({ ipCountry: "GB" });
+    const consultationId = consultationIdOf(await startGuestConsultation(harness.context(guest), await guestInput()));
+    await harness.stylings.runPending();
+    expect(await readConsultation(harness.context(guest), consultationId)).toMatchObject({
+      state: "no_outfits",
+      outfits: [],
+      failedStyling: { kind: "first", reason: "something_broke" },
+    });
+    harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+    harness.clock.set("2026-10-16T12:05:00Z");
+
+    expect(await tryAgain(harness.context(guest), consultationId)).toEqual({ ok: true });
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(guest), consultationId)).toMatchObject({
+      state: "ready",
+      failedStyling: null,
+      outfits: [{ position: 1 }, { position: 2 }],
+    });
+  });
+
+  it("recovers from a stuck Styling as anyone's does: the Guest's Styling status poll finishes it as broken, for Try again", async () => {
+    const guest = new TestBrowser({ ipCountry: "GB" });
+    const consultationId = consultationIdOf(await startGuestConsultation(harness.context(guest), await guestInput()));
+
+    harness.clock.set("2026-10-16T12:10:00Z");
+
+    expect(await readStylingStatus(harness.context(guest), consultationId)).toEqual({ state: "no_outfits", progress: null });
+    expect(await readConsultation(harness.context(guest), consultationId)).toMatchObject({
+      failedStyling: { kind: "first", reason: "something_broke" },
+    });
+    // Its Workflow run is cancelled, so it builds nothing.
+    await harness.stylings.runPending();
+    expect(await tryAgain(harness.context(guest), consultationId)).toEqual({ ok: true });
+    await harness.stylings.runPending();
+    expect(await readConsultation(harness.context(guest), consultationId)).toMatchObject({
+      state: "ready",
+      outfits: [{ position: 1 }, { position: 2 }],
+    });
+  });
+});
+
 describe("starting a Guest Consultation", () => {
   it.each<{ missing: string; input: Partial<StartGuestConsultationInput>; refusal: object }>([
     { missing: "the date of birth", input: { birthDate: { day: "", month: "", year: "" } }, refusal: { refusal: "invalid", field: "birthDate" } },
@@ -139,10 +232,28 @@ describe("the Guest Page", () => {
     const guest = new TestBrowser({ ipCountry: "GB" });
     const consultationId = consultationIdOf(await startGuestConsultation(harness.context(guest), await guestInput()));
 
-    expect(await readGuestPage(harness.context(guest))).toEqual({ show: "guest-consultation", consultationId });
+    expect(await readGuestPage(harness.context(guest))).toEqual({ show: "guest-consultation", consultationId, usage: expect.any(Object) });
     await harness.stylings.runPending();
-    expect(await readGuestPage(harness.context(guest))).toEqual({ show: "guest-consultation", consultationId });
+    expect(await readGuestPage(harness.context(guest))).toEqual({ show: "guest-consultation", consultationId, usage: expect.any(Object) });
     expect(await readGuestPage(harness.context(new TestBrowser({ ipCountry: "GB" })))).toEqual({ show: "new-consultation", countryCode: "GB" });
+  });
+
+  it("says whether a Guest Consultation whose Styling broke can be tried again, or why not, with no Outfit Allowance to count", async () => {
+    harness.qloo.respond = () => Response.json({ error: "Internal Server Error" }, { status: 500 });
+    const guest = new TestBrowser({ ipCountry: "GB" });
+    const consultationId = consultationIdOf(await startGuestConsultation(harness.context(guest), await guestInput()));
+    await harness.stylings.runPending();
+
+    expect(await readGuestPage(harness.context(guest))).toEqual({
+      show: "guest-consultation",
+      consultationId,
+      usage: { outfitsLeft: null, moreOutfitsFrom: null, stylingStart: { ok: true, outfitsWanted: 2 } },
+    });
+    await outfitsMadeByOthers(100, "2026-10-16T09:00:00Z");
+    expect(await readGuestPage(harness.context(guest))).toMatchObject({
+      show: "guest-consultation",
+      usage: { stylingStart: { ok: false, refusal: "app-wide-24-hour-cap" } },
+    });
   });
 
   it("opens on the New Consultation steps again once the guest cookie is an hour old", async () => {
@@ -348,6 +459,12 @@ function hairstyleOutfit(styleIcon: number) {
       why: "A soft cut that carries your casual Photo Style.",
     },
   };
+}
+
+/** Qloo answering every person call with STYLE_ICONS, and every Brand call with BRANDS. */
+function qlooAnsweringWithBrands() {
+  return (request: RecordedQlooRequest) =>
+    qlooResponse(request.url.searchParams.get("filter.type") === "urn:entity:brand" ? BRANDS : STYLE_ICONS);
 }
 
 /** Records `count` Outfits shown at `time` by others, as if by accounts since deleted, whose records hold no user. */

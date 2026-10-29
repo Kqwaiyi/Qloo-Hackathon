@@ -69,7 +69,7 @@ export type AppWideStylingStart = Result<{ outfitsWanted: number }, AppWideStyli
  */
 export async function checkStylingStart(
   ctx: Pick<OperationContext, "db" | "clock" | "stylings" | "requestHeaders">,
-  viewer: Viewer,
+  viewer: Pick<Viewer, "id" | "isDemoAccount">,
 ): Promise<StylingStart> {
   if (!isFromSupportedRegion(ctx.requestHeaders)) return { ok: false, refusal: "unsupported-region" };
   // A stuck Styling holds no lock, and what it made counts before the limits are read.

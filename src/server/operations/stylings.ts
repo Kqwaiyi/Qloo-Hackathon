@@ -6,7 +6,7 @@ import { BUILDING_OUTFITS_STAGES, SLOW_BUILDING_OUTFITS_MS, SLOW_STEP_MS, type S
 import type { Transaction } from "@/server/db/database";
 import { consultation, outfit, styling } from "@/server/db/schema";
 import type { OperationContext, Result } from "@/server/operations/context";
-import { viewersConsultation, readViewer } from "@/server/operations/viewer";
+import { readViewer, type Viewer, viewersConsultation } from "@/server/operations/viewer";
 import type { PhotoCategoryFacts } from "@/server/outfit-assembly/categories";
 import { productSearchMarket } from "@/server/outfit-assembly/markets";
 import { hasCurrentStyleIconLeft, readCurrentStyleIconList } from "@/server/stylings/current-outfits";
@@ -29,9 +29,18 @@ import { readStylistNotes, type StylistNoteEntry } from "@/server/stylings/styli
  */
 export type ConsultationStylingRefusal = { refusal: "signed-out" | "not-found" } | StylingStartRefusal;
 
+/**
+ * Why "Show 2 more Outfits", a Budget Tier change or a Photo Style change didn't start for a Guest:
+ * a Guest Consultation is one Styling's Outfits and no more, and each of them makes more, so
+ * they're refused whatever the page shows. Try again stays, since it makes the Outfits a broken
+ * Styling didn't.
+ */
+export type GuestRefusal = { refusal: "guest" };
+
 /** Why "Show 2 more Outfits" didn't start. */
 export type ShowMoreOutfitsRefusal =
   | ConsultationStylingRefusal
+  | GuestRefusal
   /** Every one of the Consultation's current Style Icons has inspired an Outfit or been passed over. */
   | { refusal: "every-outfit-built" };
 
@@ -41,7 +50,7 @@ export type ShowMoreOutfitsRefusal =
  * its current Outfits, which stay meanwhile, all at once when it finishes.
  */
 export async function showMoreOutfits(ctx: OperationContext, consultationId: string): Promise<Result<object, ShowMoreOutfitsRefusal>> {
-  return startStylingOn(ctx, consultationId, async (tx, current) => {
+  return startStylingOnUnlessGuest(ctx, consultationId, async (tx, current) => {
     if (!(await hasCurrentStyleIconLeft(tx, consultationId))) return { ok: false, refusal: "every-outfit-built" };
     return { ok: true, kind: "more", budgetTier: current.budgetTier, photoStyle: current.photoStyle, stage: outfitsStage(current) };
   });
@@ -55,6 +64,7 @@ export const photoStyleWordsSchema = z
 /** Why a Photo Style change didn't start. */
 export type ChangePhotoStyleRefusal =
   | ConsultationStylingRefusal
+  | GuestRefusal
   /** It's the Consultation's Photo Style already, in whatever order: there's nothing to change. */
   | { refusal: "same-photo-style" };
 
@@ -69,7 +79,7 @@ export async function changePhotoStyle(
   consultationId: string,
   photoStyle: PhotoStyleWords,
 ): Promise<Result<object, ChangePhotoStyleRefusal>> {
-  return startStylingOn(ctx, consultationId, async (_tx, current) => {
+  return startStylingOnUnlessGuest(ctx, consultationId, async (_tx, current) => {
     if (isSamePhotoStyle(current.photoStyle, photoStyle)) return { ok: false, refusal: "same-photo-style" };
     return { ok: true, kind: "photo_style_change", budgetTier: current.budgetTier, photoStyle, stage: "style_icons" };
   });
@@ -78,6 +88,7 @@ export async function changePhotoStyle(
 /** Why a Budget Tier change didn't start. */
 export type ChangeBudgetTierRefusal =
   | ConsultationStylingRefusal
+  | GuestRefusal
   /** It's a Face Photo's: a Hairstyle has no price, so there's no Budget Tier to change. */
   | { refusal: "no-budget-tier" }
   /** It's the Consultation's Budget Tier already: there's nothing to change. */
@@ -94,7 +105,7 @@ export async function changeBudgetTier(
   consultationId: string,
   budgetTier: BudgetTier,
 ): Promise<Result<object, ChangeBudgetTierRefusal>> {
-  return startStylingOn<ChangeBudgetTierRefusal>(ctx, consultationId, async (tx, current) => {
+  return startStylingOnUnlessGuest<ChangeBudgetTierRefusal>(ctx, consultationId, async (tx, current) => {
     if (current.budgetTier === null) return { ok: false, refusal: "no-budget-tier" };
     if (current.budgetTier === budgetTier) return { ok: false, refusal: "same-budget-tier" };
     const change = { kind: "budget_tier_change", budgetTier, photoStyle: current.photoStyle } as const;
@@ -121,7 +132,7 @@ export type TryAgainRefusal =
  * Tier and Photo Style. Its Outfits switch in as the broken one's would have.
  */
 export async function tryAgain(ctx: OperationContext, consultationId: string): Promise<Result<object, TryAgainRefusal>> {
-  return startStylingOn<TryAgainRefusal>(ctx, consultationId, async (tx, current) => {
+  return startStylingOn<TryAgainRefusal>(ctx, await readViewer(ctx), consultationId, async (tx, current) => {
     const failed = await readLatestFailedStyling(tx, consultationId);
     if (failed?.reason !== "something_broke") return { ok: false, refusal: "nothing-to-try-again" };
     const tryingAgain = { kind: "try_again", budgetTier: failed.budgetTier, photoStyle: failed.photoStyle } as const;
@@ -140,18 +151,34 @@ type StylingPlan = Pick<NewStyling, "kind" | "budgetTier" | "photoStyle" | "stag
 type CurrentConsultation = PhotoCategoryFacts & Pick<NewStyling, "budgetTier" | "photoStyle">;
 
 /**
+ * Starts a Styling a Guest can't have, "Show 2 more Outfits" or a Budget Tier or Photo Style
+ * change, as `startStylingOn` does, unless the viewer is a Guest. That's refused before the shared
+ * start check, so it holds whatever else would.
+ */
+async function startStylingOnUnlessGuest<R extends { refusal: string }>(
+  ctx: OperationContext,
+  consultationId: string,
+  plan: (tx: Transaction, current: CurrentConsultation) => Promise<Result<StylingPlan, R>>,
+): Promise<Result<object, ConsultationStylingRefusal | GuestRefusal | R>> {
+  const viewer = await readViewer(ctx);
+  if (viewer?.isGuest) return { ok: false, refusal: "guest" };
+  return startStylingOn(ctx, viewer, consultationId, plan);
+}
+
+/**
  * Starts a Styling on one of the viewer's own Consultations, after the shared start check, once no
- * Styling runs on it. `plan` says what it builds, or why it can't start, holding the
+ * Styling runs on it. `viewer` is the request's, from `readViewer`: null is refused as signed out.
+ * `plan` says what it builds, or why it can't start, holding the
  * Consultation's row to the end of the transaction, so of two presses at once the second finds it
  * Styling. One started meanwhile on another of the viewer's Consultations, past the shared start
  * check's lock, is caught by the database's.
  */
 async function startStylingOn<R extends { refusal: string }>(
   ctx: OperationContext,
+  viewer: Viewer | null,
   consultationId: string,
   plan: (tx: Transaction, current: CurrentConsultation) => Promise<Result<StylingPlan, R>>,
 ): Promise<Result<object, ConsultationStylingRefusal | R>> {
-  const viewer = await readViewer(ctx);
   if (!viewer) return { ok: false, refusal: "signed-out" };
   const stylingStart = await checkStylingStart(ctx, viewer);
   if (!stylingStart.ok) return stylingStart;

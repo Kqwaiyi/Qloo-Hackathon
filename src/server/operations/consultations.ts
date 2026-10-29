@@ -300,6 +300,12 @@ export interface ConsultationView {
    * stored prices it asks for the price refresh in the background.
    */
   productsToCheck: boolean;
+  /**
+   * It's a Guest's Guest Consultation: one Styling's Outfits and no more. The page offers no
+   * re-styling, and "Create an account to get more consultations" where "Show 2 more Outfits" would
+   * be. A failed Styling can still be tried again.
+   */
+  isGuestConsultation: boolean;
 }
 
 /**
@@ -578,6 +584,8 @@ export async function readConsultation(
     // Outfits are shown in the order their Stylings made them, so each Styling's first is oldest first.
     stylistNotes: await stylistNotesView(ctx.db, row.id, [...new Set(outfitRows.map(({ stylingId }) => stylingId))]),
     productsToCheck: pieceRows.some(({ pricedAt }) => pricedAt !== null && isDueForCheck(pricedAt, ctx.clock.now())),
+    // A Guest's only Consultation is their Guest Consultation.
+    isGuestConsultation: viewer.isGuest,
   };
 }
 

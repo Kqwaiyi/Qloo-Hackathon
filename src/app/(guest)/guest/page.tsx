@@ -14,6 +14,7 @@ import { getConsultation, getStylingStatus } from "@/server/data/consultations";
 import { getGuestPage } from "@/server/data/guests";
 import { getSignedInUser } from "@/server/data/session";
 import type { GuestPageView } from "@/server/operations/guest-consultations";
+import type { UsageSummary } from "@/server/operations/usage";
 
 export const metadata: Metadata = { title: COPY.guestPageTitle };
 
@@ -28,7 +29,7 @@ export default async function GuestPage() {
   const page = await getGuestPage();
   switch (page.show) {
     case "guest-consultation":
-      return <GuestConsultation consultationId={page.consultationId} />;
+      return <GuestConsultation consultationId={page.consultationId} usage={page.usage} />;
     case "new-consultation":
       return (
         <>
@@ -42,8 +43,11 @@ export default async function GuestPage() {
   }
 }
 
-/** The Guest Consultation, as a signed-in user's Consultation page shows theirs. */
-async function GuestConsultation({ consultationId }: { consultationId: string }) {
+/**
+ * The Guest Consultation, as a signed-in user's Consultation page shows theirs, but with no more
+ * Outfits and no Budget Tier or Photo Style change, and Try again by `usage` once a Styling breaks.
+ */
+async function GuestConsultation({ consultationId, usage }: { consultationId: string; usage: UsageSummary }) {
   // The status first: a Styling that finishes between the two reads shows its Outfits.
   const status = await getStylingStatus(consultationId);
   const consultation = status && (await getConsultation(consultationId));
@@ -51,7 +55,7 @@ async function GuestConsultation({ consultationId }: { consultationId: string })
   if (!status || !consultation) redirect(ROUTES.guest);
   const { progress } = status;
   if (progress && !addsToCurrentOutfits(progress.kind)) return <StylingInPlace consultation={consultation} progress={progress} />;
-  return <ConsultationResults consultation={consultation} progress={progress} usage={null} />;
+  return <ConsultationResults consultation={consultation} progress={progress} usage={usage} />;
 }
 
 /**
