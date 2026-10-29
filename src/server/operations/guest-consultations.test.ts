@@ -1,9 +1,10 @@
 import { eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { PHOTO_NOTICE_VERSION } from "@/config/accounts";
+import { BOT_CHECK_TIMEOUT_MS, PHOTO_NOTICE_VERSION } from "@/config/accounts";
+import { GUEST_PHOTO_CHECK_LIMIT } from "@/config/limits";
 import { AGE_GATE_COOKIE } from "@/server/accounts/age-gate";
 import { consultation, guestUsageRecord, qlooCache, qlooLimitState, usageRecord, user } from "@/server/db/schema";
 import { deleteConsultation, listConsultations, readConsultation } from "@/server/operations/consultations";
@@ -14,7 +15,14 @@ import { readUsageSummary } from "@/server/operations/usage";
 import { qlooBrand, qlooPerson, qlooResponse, type RecordedQlooRequest } from "@/server/qloo/fake";
 import { saveQlooLimitState } from "@/server/qloo/limit-state";
 import { recordProductSearches } from "@/server/usage/records";
-import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
+import {
+  BOTH_CONSENT_BOXES_TICKED,
+  createTestHarness,
+  TEST_BOT_CHECK_SECRET,
+  TEST_BOT_CHECK_TOKEN,
+  TestBrowser,
+  type TestHarness,
+} from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities: enough Style Icons for a Face Photo's two Outfits.
 const STYLE_ICONS = [qlooPerson("p-1", "Ava Stone", 0.94), qlooPerson("p-2", "Bea Marsh", 0.91), qlooPerson("p-3", "Cleo Hart", 0.88)];
@@ -52,6 +60,8 @@ beforeEach(async () => {
   harness.stylings.pending.length = 0;
   harness.qloo.requests.length = 0;
   harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+  harness.turnstile.requests.length = 0;
+  harness.turnstile.answer = "pass";
   await harness.db.delete(qlooCache);
   // The app-wide caps count every user's Outfits, Guests' included, so each test starts with none made.
   await harness.db.delete(usageRecord);
@@ -61,6 +71,11 @@ beforeEach(async () => {
   await harness.db.delete(user).where(eq(user.isGuest, true));
   await harness.db.delete(guestUsageRecord);
   guestUsersBefore = await harness.db.$count(user, eq(user.isGuest, true));
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("a Guest Consultation", () => {
@@ -591,6 +606,122 @@ describe("a Guest's internet address", () => {
   });
 });
 
+// The Bot Check (ADR-0006), as sign-up has it: Cloudflare Turnstile, through the harness's fake.
+describe("the Bot Check on a Guest's \"Get my Outfits\"", () => {
+  it("lets a Guest with a good token start, sending Cloudflare the secret, the form's token and the Guest's IP address", async () => {
+    const guest = new TestBrowser({ ip: "203.0.113.9", ipCountry: "GB" });
+
+    const started = await startGuestConsultation(harness.context(guest), await guestInput({ botCheckToken: "form-token" }));
+
+    expect(started).toEqual({ ok: true, consultationId: expect.any(String) });
+    expect(harness.turnstile.requests).toEqual([{ secret: TEST_BOT_CHECK_SECRET, token: "form-token", ip: "203.0.113.9" }]);
+  });
+
+  it("refuses a token Cloudflare rejects, before the photo is checked, storing nothing", async () => {
+    harness.turnstile.answer = { reject: "timeout-or-duplicate" };
+    const guest = new TestBrowser({ ipCountry: "GB" });
+
+    const refused = await startGuestConsultation(harness.context(guest), await guestInput());
+
+    expect(refused).toEqual({ ok: false, refusal: "bot-check-failed" });
+    await expectNothingStoredFor(guest);
+  });
+
+  it("lets a Guest it refused press \"Get my Outfits\" again, as often as it takes, using up none of the address's photo checks", async () => {
+    harness.turnstile.answer = { reject: "invalid-input-response" };
+    const guest = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+    for (let press = 0; press <= GUEST_PHOTO_CHECK_LIMIT; press++) {
+      expect(await startGuestConsultation(harness.context(guest), await guestInput())).toEqual({ ok: false, refusal: "bot-check-failed" });
+    }
+    expect(await readGuestPage(harness.context(guest))).toEqual({ show: "new-consultation", countryCode: "GB" });
+    harness.turnstile.answer = "pass";
+
+    const consultationId = consultationIdOf(await startGuestConsultation(harness.context(guest), await guestInput()));
+    await harness.stylings.runPending();
+
+    expect(await readConsultation(harness.context(guest), consultationId)).toMatchObject({ state: "ready", outfits: [{ position: 1 }, { position: 2 }] });
+  });
+
+  it("refuses \"Get my Outfits\" sent without a token, without asking Cloudflare, storing nothing", async () => {
+    const guest = new TestBrowser({ ipCountry: "GB" });
+
+    const none = await startGuestConsultation(harness.context(guest), await guestInput({ botCheckToken: undefined }));
+    const empty = await startGuestConsultation(harness.context(guest), await guestInput({ botCheckToken: "" }));
+
+    expect([none, empty]).toEqual([
+      { ok: false, refusal: "bot-check-failed" },
+      { ok: false, refusal: "bot-check-failed" },
+    ]);
+    expect(harness.turnstile.requests).toEqual([]);
+    await expectNothingStoredFor(guest);
+  });
+
+  it.each([
+    { outage: "can't be reached", answer: "unreachable" as const, logged: "network error" },
+    { outage: "answers with a server error", answer: "server-error" as const, logged: "Cloudflare answered 500" },
+  ])("lets the Guest Consultation start when Cloudflare $outage, and logs it", async ({ answer, logged }) => {
+    const log = vi.spyOn(console, "warn").mockImplementation(() => {});
+    harness.turnstile.answer = answer;
+    const guest = new TestBrowser({ ipCountry: "GB" });
+
+    const started = await startGuestConsultation(harness.context(guest), await guestInput());
+
+    expect(started).toEqual({ ok: true, consultationId: expect.any(String) });
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0]!.join(" ")).toContain(`Bot Check let a request to start a Guest Consultation through: ${logged}`);
+  });
+
+  it("waits up to 5 seconds for Cloudflare, then lets the Guest Consultation start and logs it", async () => {
+    const log = vi.spyOn(console, "warn").mockImplementation(() => {});
+    harness.turnstile.answer = "slow";
+    const input = await guestInput();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let settled = false;
+
+    const pending = startGuestConsultation(harness.context(new TestBrowser({ ipCountry: "GB" })), input).finally(() => {
+      settled = true;
+    });
+    // Under fake timers, `vi.waitFor` moves time on by its interval at every check, so this one doesn't.
+    await vi.waitFor(() => expect(harness.turnstile.requests).toHaveLength(1), { interval: 0 });
+    await vi.advanceTimersByTimeAsync(BOT_CHECK_TIMEOUT_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(await pending).toEqual({ ok: true, consultationId: expect.any(String) });
+    expect(log.mock.calls[0]!.join(" ")).toContain("Bot Check let a request to start a Guest Consultation through: no answer within 5 seconds");
+  });
+
+  it("comes right after the region gate: Cloudflare isn't asked from a country Gemini doesn't serve", async () => {
+    const guest = new TestBrowser({ ipCountry: "RU" });
+
+    expect(await startGuestConsultation(harness.context(guest), await guestInput({ botCheckToken: undefined }))).toEqual({
+      ok: false,
+      refusal: "unsupported-region",
+    });
+    expect(await startGuestConsultation(harness.context(guest), await guestInput())).toEqual({ ok: false, refusal: "unsupported-region" });
+    expect(harness.turnstile.requests).toEqual([]);
+  });
+
+  it("refuses a bot before the address's daily limit, so it learns nothing of the address", async () => {
+    await guestConsultationShownOn("203.0.113.7");
+    const bot = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+
+    expect(await startGuestConsultation(harness.context(bot), await guestInput({ botCheckToken: undefined }))).toEqual({
+      ok: false,
+      refusal: "bot-check-failed",
+    });
+  });
+
+  it("is off with no Turnstile secret configured, as at sign-up: no token is needed and Cloudflare is never asked", async () => {
+    const unconfigured = await createTestHarness({ botCheck: false });
+
+    const started = await startGuestConsultation(unconfigured.context(new TestBrowser({ ipCountry: "GB" })), await guestInput({ botCheckToken: undefined }));
+
+    expect(started).toEqual({ ok: true, consultationId: expect.any(String) });
+    expect(unconfigured.turnstile.requests).toEqual([]);
+  });
+});
+
 describe("a Guest's photo checks", () => {
   it("are 5 an address in any 24 hours, whoever's browser sends them, then refused before the photo is checked, saying when more come", async () => {
     harness.ai.scenario = "unclear-main-person";
@@ -668,7 +799,10 @@ async function outfitsMadeByOthers(count: number, time: string): Promise<void> {
     .values(Array.from({ length: count }, () => ({ id: randomUUID(), kind: "outfit" as const, userId: null, usedAt: new Date(time) })));
 }
 
-/** What "Get my Outfits" sends from the Guest Page with every field filled in, a Face Photo unless it says. */
+/**
+ * What "Get my Outfits" sends from the Guest Page with every field filled in, a Face Photo unless it
+ * says, and the token the Bot Check's widget made, which passes unless the test says otherwise.
+ */
 async function guestInput(overrides: Partial<StartGuestConsultationInput> = {}): Promise<StartGuestConsultationInput> {
   return {
     photo: await jpeg(),
@@ -678,6 +812,7 @@ async function guestInput(overrides: Partial<StartGuestConsultationInput> = {}):
     countryCode: "GB",
     consent: BOTH_CONSENT_BOXES_TICKED,
     acceptedTerms: true,
+    botCheckToken: TEST_BOT_CHECK_TOKEN,
     ...overrides,
   };
 }

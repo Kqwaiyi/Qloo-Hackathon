@@ -63,6 +63,9 @@ export function botCheckFromEnvironment(productionHostnames: readonly string[]):
 
 type Verdict = { verdict: "pass" } | { verdict: "rejected" } | { verdict: "unreachable"; reason: string };
 
+/** Better Auth's options, which say where a request's IP address is read from. */
+type AuthConfig = Parameters<typeof getIP>[1];
+
 /**
  * For the `hooks.before` on every endpoint: on the Bot Check's endpoints, refuses a request whose
  * token is missing or that Cloudflare rejects. When Cloudflare can't be reached the request goes
@@ -77,21 +80,47 @@ export function botCheckGuard(options: BotCheckOptions | undefined, demoAccountE
     // For now the judges skip it, so nothing gets between them and the demo. The per-IP sign-in
     // rate limit still guards the Demo Account's password.
     if (signsInToDemoAccount(ctx, demoAccountEmail)) return;
-    const token = ctx.headers.get(BOT_CHECK_TOKEN_HEADER)?.trim();
-    // Nothing Cloudflare made, so it's never sent: a huge token can't make the call fail like an outage.
-    if (!token || token.length > TOKEN_MAX_LENGTH) throw botCheckFailed();
-    const outcome = await verify(options, token, visitorIp(ctx.headers, ctx.context.options));
-    if (outcome.verdict === "rejected") throw botCheckFailed();
-    if (outcome.verdict === "unreachable") console.warn(`The Bot Check let a request to ${ctx.path} through: ${outcome.reason}.`);
+    const token = ctx.headers.get(BOT_CHECK_TOKEN_HEADER);
+    if (!(await passes(options, token, visitorIp(ctx.headers, ctx.context.options), `a request to ${ctx.path}`))) throw botCheckFailed();
   };
+}
+
+/**
+ * The Bot Check for an operation of ours that no Better Auth endpoint runs, such as a Guest's
+ * "Get my Outfits", which takes its token in its input: whether the request may go on. As on the
+ * Bot Check's endpoints, a missing or rejected token is refused, and when Cloudflare can't be
+ * reached the request goes on, and the runtime log says so, calling it `loggedAs`. Without options
+ * the Bot Check is off, and every request goes on. `authConfig` gives Better Auth's options.
+ */
+export function botCheckForOperations(options: BotCheckOptions | undefined, authConfig: () => Promise<AuthConfig>) {
+  return async function passesBotCheck(requestHeaders: Headers, token: string | undefined, loggedAs: string): Promise<boolean> {
+    if (!options) return true;
+    return passes(options, token, visitorIp(requestHeaders, await authConfig()), loggedAs);
+  };
+}
+
+/**
+ * Whether a request with this token passes: not without one, nor once Cloudflare rejects it, but
+ * yes when Cloudflare can't be reached, which the runtime log says, calling the request `loggedAs`.
+ */
+async function passes(options: BotCheckOptions, token: string | null | undefined, remoteIp: string | null, loggedAs: string): Promise<boolean> {
+  const trimmed = token?.trim();
+  // Nothing Cloudflare made, so it's never sent: a huge token can't make the call fail like an outage.
+  if (!trimmed || trimmed.length > TOKEN_MAX_LENGTH) return false;
+  const outcome = await verify(options, trimmed, remoteIp);
+  if (outcome.verdict === "unreachable") console.warn(`The Bot Check let ${loggedAs} through: ${outcome.reason}.`);
+  return outcome.verdict !== "rejected";
 }
 
 /**
  * The visitor's IP address, read as Better Auth reads it from x-forwarded-for, but whole: for its rate
  * limits Better Auth keeps only an IPv6 address's /64 network, which isn't the visitor's address.
  */
-function visitorIp(headers: Headers, options: HookContext["context"]["options"]): string | null {
-  return getIP(headers, { ...options, advanced: { ...options.advanced, ipAddress: { ...options.advanced?.ipAddress, ipv6Subnet: 128 } } });
+function visitorIp(headers: Headers, authConfig: AuthConfig): string | null {
+  return getIP(headers, {
+    ...authConfig,
+    advanced: { ...authConfig.advanced, ipAddress: { ...authConfig.advanced?.ipAddress, ipv6Subnet: 128 } },
+  });
 }
 
 /** Asks Cloudflare about the token, waiting at most BOT_CHECK_TIMEOUT_MS. */

@@ -44,7 +44,7 @@ import {
   trackApiEndpoints,
   verificationEmailSender,
 } from "./emails";
-import { type BotCheckOptions, botCheckGuard } from "./bot-check";
+import { botCheckForOperations, botCheckGuard, type BotCheckOptions } from "./bot-check";
 import { demoAccountGuard, emailTaken } from "./demo-account";
 import { refuseDisposableAddress } from "./disposable-address";
 import { emailChangeLinkCheck } from "./email-change";
@@ -311,9 +311,14 @@ export function createAuth({
     plugins: [username({ minUsernameLength: USERNAME_MIN_LENGTH, maxUsernameLength: USERNAME_MAX_LENGTH })],
   });
   trackApiEndpoints(auth.api);
-  // Which account is the Demo Account, for whatever reads a user through Better Auth, and the
-  // secret Better Auth signs its cookies with, which signs the guest cookie too.
-  return Object.assign(auth, { demoAccountEmail, cookieSecret: secret });
+  // Which account is the Demo Account, for whatever reads a user through Better Auth, the secret
+  // Better Auth signs its cookies with, which signs the guest cookie too, and the same Bot Check as
+  // the hook's, for our operations that no Better Auth endpoint runs.
+  return Object.assign(auth, {
+    demoAccountEmail,
+    cookieSecret: secret,
+    passesBotCheck: botCheckForOperations(botCheck, async () => (await auth.$context).options),
+  });
 }
 
 export type Auth = ReturnType<typeof createAuth>;

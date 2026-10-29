@@ -38,6 +38,8 @@ export const startGuestConsultationInputSchema = startConsultationInputSchema.ex
   countryCode: z.string(),
   /** The consent sheet's third box: the Terms and Privacy Policy. */
   acceptedTerms: z.boolean(),
+  /** The Bot Check widget's token. The form has none while the Bot Check is off. */
+  botCheckToken: z.string().optional(),
 });
 export type StartGuestConsultationInput = z.infer<typeof startGuestConsultationInputSchema>;
 
@@ -47,6 +49,8 @@ export type GuestDetailsField = "birthDate" | "stylePreference" | "countryCode";
 export type StartGuestConsultationRefusal =
   /** The region gate, the app-wide caps or the backstops, which stop everyone's Stylings. */
   | AppWideStylingStartRefusal
+  /** The Bot Check's token was missing, or Cloudflare rejected it: the Guest may try again. */
+  | { refusal: "bot-check-failed" }
   /** The age gate: the date of birth isn't 18 or more everywhere, or the browser is blocked, as at sign-up. */
   | { refusal: "under-18" }
   /** A detail is missing, or isn't one: not a real date, or not on its list. */
@@ -66,9 +70,10 @@ export type StartGuestConsultationRefusal =
  * The Guest Page's "Get my Outfits": checks the request, has the AI check the photo as for anyone,
  * then creates the guest user who owns the Guest Consultation, the Consultation and its first
  * Styling together, and sets the guest cookie that lets this browser come back to it. Its checks
- * run in the spec's order, every one before the photo is checked: the region gate, the age gate,
- * the details, consent and the Terms, then the app-wide caps and backstops. A refused request
- * stores nothing, and only an accepted photo makes a guest user.
+ * run in the spec's order, every one before the photo is checked: the region gate, the Bot Check,
+ * the internet address's limits, the age gate, the details, consent and the Terms, then the
+ * app-wide caps and backstops. A refused request stores nothing, and only an accepted photo makes
+ * a guest user.
  */
 export async function startGuestConsultation(
   ctx: OperationContext,
@@ -76,6 +81,11 @@ export async function startGuestConsultation(
 ): Promise<Result<{ consultationId: string }, StartGuestConsultationRefusal>> {
   // First, so nothing is asked of, or recorded from, where the app isn't available.
   if (!isFromSupportedRegion(ctx.requestHeaders)) return { ok: false, refusal: "unsupported-region" };
+  // Next, as at sign-up, so a bot learns nothing from the other checks, and a refused request uses
+  // up nothing: no photo check, no Guest Consultation. It fails open only when Cloudflare can't be reached.
+  if (!(await ctx.auth.passesBotCheck(ctx.requestHeaders, input.botCheckToken, "a request to start a Guest Consultation"))) {
+    return { ok: false, refusal: "bot-check-failed" };
+  }
   if (!ctx.guestIpSalt) return { ok: false, refusal: "guest-page-unavailable" };
   const ipHash = await guestIpHashOf(ctx, ctx.guestIpSalt);
   const limits = await checkGuestLimits(ctx, ipHash);

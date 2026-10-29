@@ -15,7 +15,7 @@ The country a user gives at sign-up (editable later); their Style Icons and Bran
 _Avoid_: market, region, location, nationality
 
 **Bot Check**:
-The check a visitor passes before signing up, signing in or asking for a password reset, so that scripted bots can't make accounts that use up the app-wide Outfit caps or the team's emails. When the check itself can't be reached, the step goes ahead without it.
+The check a visitor passes before signing up, signing in or asking for a password reset, and a Guest before "Get my Outfits", so that scripted bots can't use up the app-wide Outfit caps or the team's emails, through accounts or Guest Consultations. When the check itself can't be reached, the step goes ahead without it.
 _Avoid_: captcha, human verification, challenge
 
 **Guest**:

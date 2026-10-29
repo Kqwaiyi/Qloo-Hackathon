@@ -66,7 +66,7 @@ export class TestBrowser {
   /**
    * The Bot Check token the browser's requests carry, as a direct post must carry it, or undefined
    * for none. It passes unless the test makes the fake Cloudflare say otherwise. A token our forms
-   * send in their input replaces it.
+   * send in their input replaces it. A Guest's "Get my Outfits" reads only the one in its input.
    */
   botCheckToken: string | undefined = TEST_BOT_CHECK_TOKEN;
 

@@ -33,7 +33,8 @@ export async function startConsultationAction(form: FormData): Promise<Result<{ 
 
 /**
  * The Guest Page's "Get my Outfits", refused in the same way. A detail left out is sent as blank,
- * and the Terms box, like the photo boxes, counts as ticked when sent as "on".
+ * and the Terms box, like the photo boxes, counts as ticked when sent as "on". The Bot Check's
+ * token is left out while the Bot Check is off.
  */
 export async function startGuestConsultationAction(
   form: FormData,
@@ -50,6 +51,7 @@ export async function startGuestConsultationAction(
       sendToAiProviders: form.get("consentSendToAiProviders") === "on",
     },
     acceptedTerms: form.get("acceptedTerms") === "on",
+    botCheckToken: form.get("botCheckToken") ?? undefined,
   });
   if (!input.success) return { ok: false, refusal: "unusable-file" };
   return startGuestConsultation(await getOperationContext(), input.data);

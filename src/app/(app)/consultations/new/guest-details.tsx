@@ -15,10 +15,15 @@ export interface GuestDetailsValue {
   countryCode: string;
 }
 
-/** What the Guest Page's New Consultation starts from: the Country list, and the Country filled in from the IP address's, or "" for none. */
+/**
+ * What the Guest Page's New Consultation starts from: the Country list, the Country filled in from
+ * the IP address's, or "" for none, and the site key "Get my Outfits"'s Bot Check widget needs, or
+ * null while the Bot Check is off.
+ */
 export interface GuestVariant {
   countries: readonly CountryOption[];
   countryCode: string;
+  botCheckSiteKey: string | null;
 }
 
 /** The details left blank, in the order the fields are, which "Get my Outfits" names. */

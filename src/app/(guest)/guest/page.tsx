@@ -11,6 +11,7 @@ import { COPY } from "@/config/copy";
 import { COUNTRY_OPTIONS } from "@/config/countries";
 import { APP_HOME, ROUTES } from "@/config/routes";
 import { addsToCurrentOutfits } from "@/config/stylings";
+import { getBotCheckSiteKey } from "@/server/data/bot-check";
 import { getConsultation, getStylingStatus } from "@/server/data/consultations";
 import { getGuestPage } from "@/server/data/guests";
 import { getSignedInUser } from "@/server/data/session";
@@ -28,7 +29,7 @@ export const metadata: Metadata = { title: COPY.guestPageTitle };
  */
 export default async function GuestPage() {
   if (await getSignedInUser()) redirect(APP_HOME);
-  const page = await getGuestPage();
+  const [page, botCheckSiteKey] = await Promise.all([getGuestPage(), getBotCheckSiteKey()]);
   switch (page.show) {
     case "guest-consultation":
       return <GuestConsultation consultationId={page.consultationId} usage={page.usage} />;
@@ -37,7 +38,7 @@ export default async function GuestPage() {
         <>
           {/* The page's name, kept quiet: each step's question is the headline. */}
           <h1 className="mb-3 font-medium sm:mb-4">New Consultation</h1>
-          <NewConsultation guest={{ countries: COUNTRY_OPTIONS, countryCode: page.countryCode ?? "" }} />
+          <NewConsultation guest={{ countries: COUNTRY_OPTIONS, countryCode: page.countryCode ?? "", botCheckSiteKey }} />
         </>
       );
     case "used-up":
