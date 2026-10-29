@@ -5,7 +5,7 @@ Take one photo of yourself and get complete Outfits: a hairstyle, top, bottom an
 - **Live demo:** https://qloo-hackathon-kohl.vercel.app 
 - **License:** [MIT](LICENSE)
 
-![Qurator architecture: the Styling Agent asks Qloo for Style Icons and their fans' Brands, then Channel3 and Gemini turn them into real Products and a Preview](docs/images/architecture.webp)
+![Qurator architecture: the AI Stylist asks Qloo for Style Icons and their fans' Brands, then Channel3 and Gemini turn them into real Products and Previews](docs/images/architecture.webp)
 
 ## The problem
 
