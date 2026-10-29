@@ -18,6 +18,14 @@ _Avoid_: market, region, location, nationality
 The check a visitor passes before signing up, signing in or asking for a password reset, so that scripted bots can't make accounts that use up the app-wide Outfit caps or the team's emails. When the check itself can't be reached, the step goes ahead without it.
 _Avoid_: captcha, human verification, challenge
 
+**Guest**:
+A visitor who uses the app from the Guest Page without an account. A Guest gets one Guest Consultation, and nothing they do is kept once it is deleted.
+_Avoid_: anonymous user, visitor, trial user
+
+**Guest Page**:
+The app as a Guest sees it: one New Consultation, then its results, with no history, settings or signing out, and a way to create an account instead.
+_Avoid_: guest mode, demo page, trial
+
 **Disposable Address**:
 An email address at a throwaway-inbox service. No account may sign up with one or change to one; accounts that already have one keep it.
 _Avoid_: temp mail, burner email, fake email
@@ -52,6 +60,10 @@ _Avoid_: vibe, aesthetic, personal style (too close to Style Preference)
 **Consultation**:
 One submitted photo together with every Outfit and Preview generated from it; kept in the user's history until the user deletes it.
 _Avoid_: session, analysis, scan
+
+**Guest Consultation**:
+A Guest's Consultation: one Styling's Outfits and no more (a failed one may be tried again until it makes Outfits), with the Guest's birth date, Style Preference and Country given on the spot. It belongs to no account, is never in anyone's history, and is deleted soon after it is made. Each internet address gets one Guest Consultation in any 24 hours, counted once its first Outfit is shown.
+_Avoid_: guest session, trial consultation, free consultation
 
 **Outfit**:
 The unit the app recommends: one coordinated set of Pieces, one per Category the Photo Type unlocks (a One-Piece covers Top and Bottom together), inspired by a single Style Icon and shown with a single Preview, or none when the image model declines to make one or the Stylist finds both its tries break a hard rule.
@@ -101,7 +113,7 @@ What the Stylist tells the user about a Styling as it carries it out: a short no
 _Avoid_: log, trace, thinking, reasoning
 
 **Outfit Allowance**:
-How many Outfits a user may have made in any 24 hours. An Outfit counts once it is shown to the user, with or without its Preview, whichever Styling made it, and even if it is later replaced or deleted. The Demo Account has none.
+How many Outfits a user may have made in any 24 hours. An Outfit counts once it is shown to the user, with or without its Preview, whichever Styling made it, and even if it is later replaced or deleted. The Demo Account has none, and a Guest has none: a Guest Consultation limits them instead.
 _Avoid_: credits, quota, tokens
 
 **Demo Account**:
