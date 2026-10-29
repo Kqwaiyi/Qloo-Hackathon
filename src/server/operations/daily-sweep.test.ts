@@ -3,7 +3,7 @@ import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { closeDatabase } from "@/server/db/connect";
-import { consultation, emailLog, exchangeRate, qlooCache, usageRecord } from "@/server/db/schema";
+import { consultation, emailLog, exchangeRate, guestUsageRecord, qlooCache, usageRecord } from "@/server/db/schema";
 import { fawazahmed0Rates, frankfurterRates } from "@/server/exchange-rates/fake";
 import { startConsultation } from "@/server/operations/consultations";
 import { runDailySweep } from "@/server/operations/daily-sweep";
@@ -13,6 +13,7 @@ import { signIn } from "@/server/operations/sign-in";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { createDemoAccount } from "@/server/operations/team";
 import { qlooPerson, qlooResponse } from "@/server/qloo/fake";
+import { recordGuestUsage } from "@/server/usage/guest-records";
 import { recordProductSearches } from "@/server/usage/records";
 import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
 
@@ -333,6 +334,21 @@ describe("purges", () => {
     expect(await runDailySweep(harness)).toMatchObject({ usageRecordsPurged: 2 });
     expect(await usageTimes()).toEqual([november]);
   });
+
+  it("purges the Guest Page's guest usage records, with the IP hashes they hold, once they're 24 hours old", async () => {
+    const noon = new Date("2026-10-16T12:00:00Z");
+    const one = new Date("2026-10-16T13:00:00Z");
+    await recordGuestUsage(harness.db, { kind: "photo_check", ipHash: "an-address", at: noon });
+    await recordGuestUsage(harness.db, { kind: "photo_check", ipHash: "an-address", at: one });
+    await recordGuestUsage(harness.db, { kind: "guest_consultation", ipHash: "an-address", at: one });
+
+    harness.clock.set("2026-10-17T12:59:59Z");
+    expect(await runDailySweep(harness)).toMatchObject({ guestUsageRecordsPurged: 1 });
+    expect(await guestUsageTimes()).toEqual([one, one]);
+    harness.clock.set("2026-10-17T13:00:00Z");
+    expect(await runDailySweep(harness)).toMatchObject({ guestUsageRecordsPurged: 2 });
+    expect(await guestUsageTimes()).toEqual([]);
+  });
 });
 
 describe("exchange rates", () => {
@@ -468,6 +484,11 @@ async function start(browser: TestBrowser): Promise<void> {
 
 async function usageTimes(): Promise<Date[]> {
   const rows = await harness.db.select({ at: usageRecord.usedAt }).from(usageRecord).orderBy(asc(usageRecord.usedAt));
+  return rows.map(({ at }) => at);
+}
+
+async function guestUsageTimes(): Promise<Date[]> {
+  const rows = await harness.db.select({ at: guestUsageRecord.usedAt }).from(guestUsageRecord).orderBy(asc(guestUsageRecord.usedAt));
   return rows.map(({ at }) => at);
 }
 

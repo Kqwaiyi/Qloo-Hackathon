@@ -26,7 +26,7 @@ import {
   type PhotoStyleWords,
 } from "../../config/consultations";
 import type { EmailKind } from "../../config/email";
-import { USAGE_KINDS } from "../../config/limits";
+import { GUEST_USAGE_KINDS, USAGE_KINDS } from "../../config/limits";
 import type { ProductSearchMarket } from "../../config/product-search";
 import {
   PIECE_SEARCH_STATES,
@@ -74,6 +74,9 @@ export const user = pgTable(
     isGuest: boolean("is_guest").notNull().default(false),
     // A guest user's age group, which their Outfits are styled for, in place of a birth date.
     ageGroup: ageGroupEnum("age_group"),
+    // The salted hash of the IP address a guest user was made from, never the address itself, so
+    // the Guest Page's daily limit finds that address's Guest Consultations.
+    guestIpHash: text("guest_ip_hash"),
     // The photo notice the user last agreed to on the consent sheet, and when. Withdrawing photo
     // consent clears both.
     acceptedPhotoNoticeVersion: integer("accepted_photo_notice_version"),
@@ -94,6 +97,7 @@ export const user = pgTable(
       "user_birth_date_or_guest_age_group",
       sql`${table.isGuest} = (${table.birthYear} is null) and ${table.isGuest} = (${table.birthMonth} is null) and ${table.isGuest} = (${table.ageGroup} is not null)`,
     ),
+    index("user_guest_ip_hash_idx").on(table.guestIpHash),
   ],
 );
 
@@ -213,6 +217,22 @@ export const usageRecord = pgTable(
     // For the app-wide caps, which count every user's.
     index("usage_record_kind_used_at_idx").on(table.kind, table.usedAt),
   ],
+);
+
+// Guest usage records, which the Guest Page's daily limit counts: per internet address, by a salted
+// hash of it, never the address itself. They hold nothing else, and are purged once 24 hours old.
+
+export const guestUsageKindEnum = pgEnum("guest_usage_kind", GUEST_USAGE_KINDS);
+
+export const guestUsageRecord = pgTable(
+  "guest_usage_record",
+  {
+    id: text("id").primaryKey(),
+    kind: guestUsageKindEnum("kind").notNull(),
+    ipHash: text("ip_hash").notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("guest_usage_record_ip_hash_kind_used_at_idx").on(table.ipHash, table.kind, table.usedAt)],
 );
 
 // Consultations.

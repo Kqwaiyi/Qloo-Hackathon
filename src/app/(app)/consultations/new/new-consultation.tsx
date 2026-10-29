@@ -512,9 +512,10 @@ function PhotoStep({
       else if (result.refusal === "unusable-file") setProblem({ message: COPY.photoUnusable });
       else {
         // The user is unverified, or a limit or the region gate has stopped every Styling since the
-        // page loaded. The page then shows why in place of this step. A new refusal of another sort
-        // fails typecheck here.
-        result.refusal satisfies LimitRefusal["refusal"] | "unverified";
+        // page loaded. For a Guest, it may be their internet address's daily limit, its photo checks
+        // included, or the Guest Page has closed. The page then shows why in place of this step. A
+        // new refusal of another sort fails typecheck here.
+        result.refusal satisfies LimitRefusal["refusal"] | "unverified" | "guest-page-unavailable";
         router.refresh();
       }
     });

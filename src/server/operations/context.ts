@@ -22,6 +22,11 @@ export interface OperationContext {
   stylings: StylingRunner;
   /** The product search, whose free Product check the price refresh calls. */
   productSearch: ProductSearch;
+  /**
+   * The secret salt the Guest Page's daily limit hashes internet addresses under
+   * (`guestIpSaltFromEnvironment`), or null on a deployment without one, which keeps the Guest Page closed.
+   */
+  guestIpSalt: string | null;
   /** The incoming request's headers, cookies included. */
   requestHeaders: Headers;
   /** Cookies to send back with the response. */

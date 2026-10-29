@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { ConsultationResults, StylingInPlace } from "@/app/(app)/consultations/[id]/consultation-results";
 import { NewConsultation } from "@/app/(app)/consultations/new/new-consultation";
 import { Stepper } from "@/app/(app)/consultations/stepper";
-import { stepHeading } from "@/app/(app)/consultations/ui";
+import { inkPill, stepHeading } from "@/app/(app)/consultations/ui";
 import { LimitMessage } from "@/components/limit-message";
 import { COPY } from "@/config/copy";
 import { COUNTRY_OPTIONS } from "@/config/countries";
@@ -20,9 +21,10 @@ export const metadata: Metadata = { title: COPY.guestPageTitle };
 
 /**
  * The Guest Page: the app as a Guest sees it. With a guest cookie that works, it's their Guest
- * Consultation, running or finished; otherwise it's the New Consultation steps, unless something
- * keeps every Styling from starting. Someone signed in has the app itself instead: their session
- * is who the Consultation operations act for, so a guest cookie in the same browser couldn't be.
+ * Consultation, running or finished; otherwise it's the New Consultation steps, unless the internet
+ * address has used up its daily limit, or something keeps every Styling from starting. Someone
+ * signed in has the app itself instead: their session is who the Consultation operations act for,
+ * so a guest cookie in the same browser couldn't be.
  */
 export default async function GuestPage() {
   if (await getSignedInUser()) redirect(APP_HOME);
@@ -38,6 +40,8 @@ export default async function GuestPage() {
           <NewConsultation guest={{ countries: COUNTRY_OPTIONS, countryCode: page.countryCode ?? "" }} />
         </>
       );
+    case "used-up":
+      return <GuestPageUsedUp refusal={page.refusal} />;
     case "closed":
       return <GuestPageClosed refusal={page.refusal} />;
   }
@@ -59,9 +63,32 @@ async function GuestConsultation({ consultationId, usage }: { consultationId: st
 }
 
 /**
- * Instead of the Photo Type step while no Guest Consultation can start: to a browser the age gate
- * has blocked, as sign-up is, or while the region gate, an app-wide cap or a backstop stops every
- * Styling, saying why and, where the limit says, when that changes.
+ * Instead of the Photo Type step while the internet address can't have a Guest Consultation:
+ * saying when the next one opens, or when more photos can be checked, and offering an account,
+ * whose own Outfit Allowance no address shares.
+ */
+function GuestPageUsedUp({ refusal }: { refusal: Extract<GuestPageView, { show: "used-up" }>["refusal"] }) {
+  return (
+    <>
+      <h1 className="mb-3 font-medium sm:mb-4">New Consultation</h1>
+      <Stepper current={1} />
+      <section aria-labelledby="guest-page-used-up-heading">
+        <h2 id="guest-page-used-up-heading" className={`${stepHeading} max-w-[24ch]`}>
+          <LimitMessage refusal={refusal} />
+        </h2>
+        <Link href={ROUTES.signUp} className={`${inkPill} mt-6`}>
+          {COPY.createAnAccount}
+        </Link>
+      </section>
+    </>
+  );
+}
+
+/**
+ * Instead of the Photo Type step while no Guest Consultation can start: on a deployment that can't
+ * count them, to a browser the age gate has blocked, as sign-up is, or while the region gate, an
+ * app-wide cap or a backstop stops every Styling, saying why and, where the limit says, when that
+ * changes.
  */
 function GuestPageClosed({ refusal }: { refusal: Extract<GuestPageView, { show: "closed" }>["refusal"] }) {
   return (
@@ -70,7 +97,13 @@ function GuestPageClosed({ refusal }: { refusal: Extract<GuestPageView, { show: 
       <Stepper current={1} />
       <section aria-labelledby="guest-page-closed-heading">
         <h2 id="guest-page-closed-heading" className={`${stepHeading} max-w-[24ch]`}>
-          {refusal.refusal === "under-18" ? COPY.under18 : <LimitMessage refusal={refusal} />}
+          {refusal.refusal === "under-18" ? (
+            COPY.under18
+          ) : refusal.refusal === "guest-page-unavailable" ? (
+            COPY.guestPageUnavailable
+          ) : (
+            <LimitMessage refusal={refusal} />
+          )}
         </h2>
       </section>
     </>

@@ -31,6 +31,31 @@ export const USAGE_LIMITS: Record<UserUsageKind, number> = { outfit: OUTFIT_ALLO
  */
 export const USAGE_RECORD_LIFETIME_DAYS = 35;
 
+// The Guest Page's daily limit. A Guest has no Outfit Allowance, so each internet address is held to
+// these instead, over the same rolling window, counted by a salted hash of the address.
+
+/** What a guest usage record counts: a Guest Consultation, once its first Outfit is shown, or a photo checked. */
+export const GUEST_USAGE_KINDS = ["guest_consultation", "photo_check"] as const;
+export type GuestUsageKind = (typeof GUEST_USAGE_KINDS)[number];
+
+/** How many Guest Consultations an internet address may have in the window. */
+export const GUEST_CONSULTATIONS_PER_ADDRESS = 1;
+
+/** How many photos an internet address may have had checked on the Guest Page in the window, accepted or rejected. */
+export const GUEST_PHOTO_CHECK_LIMIT = 5;
+
+/** How many of each kind of guest usage an internet address may have in the window. */
+export const GUEST_USAGE_LIMITS: Record<GuestUsageKind, number> = {
+  guest_consultation: GUEST_CONSULTATIONS_PER_ADDRESS,
+  photo_check: GUEST_PHOTO_CHECK_LIMIT,
+};
+
+/**
+ * Guest usage records, with the IP hash they hold, are purged once they're this many hours old: as
+ * soon as the window no longer counts them. ADR-0013 keeps an IP hash no longer than this.
+ */
+export const GUEST_USAGE_RECORD_LIFETIME_HOURS = USAGE_WINDOW_HOURS;
+
 // The app-wide caps, so the public demo can't run up costs whatever individual users do. They count
 // every user's Outfits together, from the same usage records.
 

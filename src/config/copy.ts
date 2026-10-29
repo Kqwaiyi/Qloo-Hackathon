@@ -170,5 +170,13 @@ export const COPY = {
   agreeToTermsAndPrivacy: "I agree to Qurator's Terms and Privacy Policy.",
   /** The quiet line after the Guest Page's consent sheet is closed without agreeing. */
   agreeToAllThreeBoxes: "To get Outfits, agree to all three boxes on the consent sheet.",
+  /** The Guest Page, in place of the Photo Type step, once its internet address has had its Guest Consultation, given when the next opens. */
+  guestConsultationUsed: (time: string) => `Your internet connection has had today's Guest Consultation. The next one opens at ${time}.`,
+  /** The Guest Page, likewise, while another Guest Consultation on its internet address runs. */
+  guestConsultationRunning: "A Guest Consultation is already running on your internet connection. Only one runs at a time.",
+  /** The Guest Page, likewise, once its internet address has had every photo the Guest Page's limit allows checked. */
+  guestPhotoCheckLimitReached: (limit: number, time: string) => `Your internet connection has had ${limit} photos checked today. More from ${time}.`,
+  /** The Guest Page on a deployment that can't count Guest Consultations, without the salt it hashes internet addresses under. */
+  guestPageUnavailable: "The Guest Page isn't available right now.",
   didNotSignUp: (date: string) => `Didn't sign up? Ignore this email. The account is removed on ${date}.`,
 } as const;

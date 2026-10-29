@@ -11,6 +11,7 @@ import type { Database } from "@/server/db/database";
 import { gmailTransportFromEnvironment, teamEmailAddress } from "@/server/email/gmail";
 import { InboxTransport, LOCAL_INBOX_FOLDER } from "@/server/email/inbox";
 import { createEmailSender, type EmailSender, type EmailTransport } from "@/server/email/send-email";
+import { guestIpSaltFromEnvironment } from "@/server/guests/ip-hash";
 import type { StylingRunner } from "@/server/stylings/runner";
 
 // Not server-only, unlike `services.ts`: the team's scripts build these too, outside Next.js, so
@@ -29,6 +30,8 @@ export interface BaseServices {
   teamEmail: string;
   /** The site key the forms' Bot Check widget needs, or null while the Bot Check is off. */
   botCheckSiteKey: string | null;
+  /** The salt the Guest Page's daily limit hashes internet addresses under, or null to keep the Guest Page closed. */
+  guestIpSalt: string | null;
 }
 
 /** The base services as the environment sets them up, with this to run Stylings. */
@@ -42,7 +45,17 @@ export async function createBaseServices(stylings: StylingRunner): Promise<BaseS
   // On Production, a token must have been made on one of the app's own hostnames.
   const botCheck = botCheckFromEnvironment([urls.baseURL, ...urls.trustedOrigins].map((url) => new URL(url).hostname));
   const auth = createAuth({ db, clock, ...urls, secret: authSecret(), emailSender, teamEmail, blob, stylings, botCheck: botCheck?.options });
-  return { db, auth, clock, blob, stylings, emailSender, teamEmail, botCheckSiteKey: botCheck?.siteKey ?? null };
+  return {
+    db,
+    auth,
+    clock,
+    blob,
+    stylings,
+    emailSender,
+    teamEmail,
+    botCheckSiteKey: botCheck?.siteKey ?? null,
+    guestIpSalt: guestIpSaltFromEnvironment(),
+  };
 }
 
 /**

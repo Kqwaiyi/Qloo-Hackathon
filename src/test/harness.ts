@@ -29,6 +29,9 @@ export const TEST_BOT_CHECK_SECRET = "test-turnstile-secret";
 /** The token a test browser's Turnstile widget made, shaped like the one Turnstile's test keys make. */
 export const TEST_BOT_CHECK_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 
+/** The salt the Guest Page's daily limit hashes the test browsers' addresses under. */
+export const TEST_GUEST_IP_SALT = "test-guest-ip-salt";
+
 /**
  * The consent sheet with both boxes ticked, as "Get my Outfits" sends it. Starting a Consultation
  * with it records the user's agreement to the photo notice first.
@@ -232,6 +235,7 @@ export async function createTestHarness({
       blob,
       stylings,
       productSearch,
+      guestIpSalt: TEST_GUEST_IP_SALT,
       requestHeaders: browser.requestHeaders(),
       responseCookies: browser.responseCookies,
     }),

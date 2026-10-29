@@ -57,5 +57,6 @@ export async function createFreshApp<A extends AiProvider, B extends BlobStore>(
     stylings,
     rateLimit: false,
   });
-  return { db, auth, clock, ai, blob, stylings, productSearch };
+  // No Guest Page: its scripts style only accounts' Consultations.
+  return { db, auth, clock, ai, blob, stylings, productSearch, guestIpSalt: null };
 }

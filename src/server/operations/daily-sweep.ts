@@ -13,6 +13,7 @@ import { inactivityWarningEmail } from "@/server/email/messages";
 import type { EmailSender, SendResult } from "@/server/email/send-email";
 import { type ExchangeRateTransport, refreshExchangeRates } from "@/server/exchange-rates/rates";
 import type { OperationContext } from "@/server/operations/context";
+import { purgeGuestUsageRecords } from "@/server/usage/guest-records";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -29,6 +30,8 @@ export interface SweepReport {
   inactiveAccountsDeleted: number;
   inactivityWarningsSent: number;
   usageRecordsPurged: number;
+  /** The Guest Page's guest usage records, with the IP hashes they hold, once 24 hours old. */
+  guestUsageRecordsPurged: number;
   emailLogRowsPurged: number;
   qlooCacheEntriesPurged: number;
   /** Where the day's exchange rates came from, or null when no source answered, so the day before's stay. */
@@ -145,11 +148,11 @@ async function warnInactiveAccounts(ctx: SweepContext, now: Date): Promise<Tally
   return tally;
 }
 
-/** Usage records and email-log rows older than 35 days, and Qloo cache entries older than 30. */
+/** Usage records and email-log rows older than 35 days, Qloo cache entries older than 30, and guest usage records 24 hours old. */
 async function purgeOldRows(
   ctx: SweepContext,
   now: Date,
-): Promise<Pick<SweepReport, "usageRecordsPurged" | "emailLogRowsPurged" | "qlooCacheEntriesPurged">> {
+): Promise<Pick<SweepReport, "usageRecordsPurged" | "guestUsageRecordsPurged" | "emailLogRowsPurged" | "qlooCacheEntriesPurged">> {
   const usage = await ctx.db
     .delete(usageRecord)
     .where(lt(usageRecord.usedAt, daysBefore(now, USAGE_RECORD_LIFETIME_DAYS)))
@@ -162,7 +165,12 @@ async function purgeOldRows(
     .delete(qlooCache)
     .where(lt(qlooCache.fetchedAt, daysBefore(now, QLOO_CACHE_LIFETIME_DAYS)))
     .returning({ key: qlooCache.requestKey });
-  return { usageRecordsPurged: usage.length, emailLogRowsPurged: emails.length, qlooCacheEntriesPurged: qloo.length };
+  return {
+    usageRecordsPurged: usage.length,
+    guestUsageRecordsPurged: await purgeGuestUsageRecords(ctx.db, now),
+    emailLogRowsPurged: emails.length,
+    qlooCacheEntriesPurged: qloo.length,
+  };
 }
 
 /** The Demo Account is never swept: the team manages it, and the judges share it. */

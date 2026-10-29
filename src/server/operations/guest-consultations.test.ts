@@ -1,10 +1,11 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { PHOTO_NOTICE_VERSION } from "@/config/accounts";
-import { consultation, qlooCache, qlooLimitState, usageRecord, user } from "@/server/db/schema";
+import { AGE_GATE_COOKIE } from "@/server/accounts/age-gate";
+import { consultation, guestUsageRecord, qlooCache, qlooLimitState, usageRecord, user } from "@/server/db/schema";
 import { deleteConsultation, listConsultations, readConsultation } from "@/server/operations/consultations";
 import { readGuestPage, type StartGuestConsultationInput, startGuestConsultation } from "@/server/operations/guest-consultations";
 import { readSignUpGate } from "@/server/operations/sign-up";
@@ -46,6 +47,7 @@ beforeEach(async () => {
   harness.ai.scenario = "pass";
   harness.ai.photoCheckCount = 0;
   harness.ai.stylistTurn = undefined;
+  harness.ai.duringCall = undefined;
   harness.ai.stylistRequests.length = 0;
   harness.stylings.pending.length = 0;
   harness.qloo.requests.length = 0;
@@ -54,6 +56,10 @@ beforeEach(async () => {
   // The app-wide caps count every user's Outfits, Guests' included, so each test starts with none made.
   await harness.db.delete(usageRecord);
   await harness.db.delete(qlooLimitState);
+  // Every test browser without an address of its own has the same one, which gets one Guest
+  // Consultation a day, so each test starts with no Guest Consultation, running or counted.
+  await harness.db.delete(user).where(eq(user.isGuest, true));
+  await harness.db.delete(guestUsageRecord);
   guestUsersBefore = await harness.db.$count(user, eq(user.isGuest, true));
 });
 
@@ -235,7 +241,8 @@ describe("the Guest Page", () => {
     expect(await readGuestPage(harness.context(guest))).toEqual({ show: "guest-consultation", consultationId, usage: expect.any(Object) });
     await harness.stylings.runPending();
     expect(await readGuestPage(harness.context(guest))).toEqual({ show: "guest-consultation", consultationId, usage: expect.any(Object) });
-    expect(await readGuestPage(harness.context(new TestBrowser({ ipCountry: "GB" })))).toEqual({ show: "new-consultation", countryCode: "GB" });
+    const elsewhere = new TestBrowser({ ip: "198.51.100.20", ipCountry: "GB" });
+    expect(await readGuestPage(harness.context(elsewhere))).toEqual({ show: "new-consultation", countryCode: "GB" });
   });
 
   it("says whether a Guest Consultation whose Styling broke can be tried again, or why not, with no Outfit Allowance to count", async () => {
@@ -256,14 +263,17 @@ describe("the Guest Page", () => {
     });
   });
 
-  it("opens on the New Consultation steps again once the guest cookie is an hour old", async () => {
+  it("no longer opens on the Guest Consultation once the guest cookie is an hour old, but on its address's daily limit, used up", async () => {
     const guest = new TestBrowser({ ipCountry: "GB" });
     await startGuestConsultation(harness.context(guest), await guestInput());
     await harness.stylings.runPending();
 
     harness.clock.set("2026-10-16T13:00:00Z");
 
-    expect(await readGuestPage(harness.context(guest))).toEqual({ show: "new-consultation", countryCode: "GB" });
+    expect(await readGuestPage(harness.context(guest))).toEqual({
+      show: "used-up",
+      refusal: { refusal: "guest-consultation-used", moreFrom: new Date("2026-10-17T12:00:00Z") },
+    });
   });
 
   it("is closed, saying why, to a browser the age gate has blocked, to a country Gemini doesn't serve, and while a cap stops every Styling", async () => {
@@ -280,6 +290,16 @@ describe("the Guest Page", () => {
       show: "closed",
       refusal: { refusal: "app-wide-24-hour-cap" },
     });
+  });
+
+  it("stays closed to a browser the age gate has blocked on an address that's used up, offering it no account it can't have", async () => {
+    await guestConsultationShownOn("203.0.113.7");
+    // Blocked as an under-18 date of birth at sign-up, or on the Guest Page before, would block it.
+    const blocked = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+    blocked.responseCookies.set(AGE_GATE_COOKIE);
+    expect(readSignUpGate(harness.context(blocked))).toEqual({ ok: false, refusal: "under-18" });
+
+    expect(await readGuestPage(harness.context(blocked))).toEqual({ show: "closed", refusal: { refusal: "under-18" } });
   });
 });
 
@@ -344,8 +364,9 @@ describe("what stops every Styling", () => {
 describe("a Guest's Styling", () => {
   it("counts its Outfits toward the app-wide caps, which hold a Guest to the Outfits they leave", async () => {
     await outfitsMadeByOthers(97, "2026-10-16T09:00:00Z");
-    const first = new TestBrowser({ ipCountry: "GB" });
-    const second = new TestBrowser({ ipCountry: "GB" });
+    // Each on an address of its own, which the daily limit would otherwise hold to one.
+    const first = new TestBrowser({ ip: "198.51.100.1", ipCountry: "GB" });
+    const second = new TestBrowser({ ip: "198.51.100.2", ipCountry: "GB" });
 
     consultationIdOf(await startGuestConsultation(harness.context(first), await guestInput()));
     await harness.stylings.runPending();
@@ -353,7 +374,7 @@ describe("a Guest's Styling", () => {
     await harness.stylings.runPending();
 
     expect((await readConsultation(harness.context(second), secondId))!.outfits).toHaveLength(1);
-    expect(await startGuestConsultation(harness.context(new TestBrowser({ ipCountry: "GB" })), await guestInput())).toEqual({
+    expect(await startGuestConsultation(harness.context(new TestBrowser({ ip: "198.51.100.3", ipCountry: "GB" })), await guestInput())).toEqual({
       ok: false,
       refusal: "app-wide-24-hour-cap",
     });
@@ -439,6 +460,179 @@ describe("the age gate on the Guest Page", () => {
     expect(started).toEqual({ ok: true, consultationId: expect.any(String) });
   });
 });
+
+describe("the daily limit by internet address", () => {
+  it("counts a Guest Consultation once its first Outfit is shown, then refuses another browser on that address until 24 hours after", async () => {
+    const guest = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+    await startGuestConsultation(harness.context(guest), await guestInput());
+    harness.clock.set("2026-10-16T12:03:00Z");
+    await harness.stylings.runPending();
+
+    const otherBrowser = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+    const used = { refusal: "guest-consultation-used", moreFrom: new Date("2026-10-17T12:03:00Z") };
+    expect(await readGuestPage(harness.context(otherBrowser))).toEqual({ show: "used-up", refusal: used });
+    expect(await startGuestConsultation(harness.context(otherBrowser), await guestInput())).toEqual({ ok: false, ...used });
+    // Refused before its photo is checked, so only the first Guest's was.
+    expect(harness.ai.photoCheckCount).toBe(1);
+    expect(otherBrowser.cookie("guest")).toBeUndefined();
+  });
+
+  it("lets a Guest on another address have theirs", async () => {
+    await guestConsultationShownOn("203.0.113.7");
+
+    const elsewhere = new TestBrowser({ ip: "203.0.113.8", ipCountry: "GB" });
+
+    expect(await readGuestPage(harness.context(elsewhere))).toEqual({ show: "new-consultation", countryCode: "GB" });
+    expect(await startGuestConsultation(harness.context(elsewhere), await guestInput())).toEqual({ ok: true, consultationId: expect.any(String) });
+  });
+
+  it("lets the address have another once 24 hours have passed since its Guest Consultation was counted", async () => {
+    await guestConsultationShownOn("203.0.113.7");
+    const nextDay = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+
+    harness.clock.set("2026-10-17T11:59:59Z");
+    expect(await startGuestConsultation(harness.context(nextDay), await guestInput())).toMatchObject({ ok: false, refusal: "guest-consultation-used" });
+    harness.clock.set("2026-10-17T12:00:00Z");
+    expect(await readGuestPage(harness.context(nextDay))).toEqual({ show: "new-consultation", countryCode: "GB" });
+    expect(await startGuestConsultation(harness.context(nextDay), await guestInput())).toEqual({ ok: true, consultationId: expect.any(String) });
+  });
+
+  it("holds the address to one at a time: another is refused while the first's Styling runs, before either is counted", async () => {
+    const first = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+    await startGuestConsultation(harness.context(first), await guestInput());
+    const second = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+
+    const running = { refusal: "guest-consultation-running" };
+    expect(await readGuestPage(harness.context(second))).toEqual({ show: "used-up", refusal: running });
+    expect(await startGuestConsultation(harness.context(second), await guestInput())).toEqual({ ok: false, ...running });
+    expect(harness.ai.photoCheckCount).toBe(1);
+    expect(second.cookie("guest")).toBeUndefined();
+  });
+
+  it("holds two presses of \"Get my Outfits\" at once from the address to one: both get past the checks, but only one starts", async () => {
+    // Each photo check waits for the other's to begin, so both requests have been checked before either creates anything.
+    let checking = 0;
+    let bothChecking!: () => void;
+    const both = new Promise<void>((resolve) => (bothChecking = resolve));
+    harness.ai.duringCall = async (call) => {
+      if (call !== "checkPhoto") return;
+      if (++checking === 2) bothChecking();
+      await both;
+    };
+    const tabs = [new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" }), new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" })];
+
+    const results = await Promise.all(tabs.map(async (tab) => startGuestConsultation(harness.context(tab), await guestInput())));
+
+    expect(results).toEqual(
+      expect.arrayContaining([{ ok: true, consultationId: expect.any(String) }, { ok: false, refusal: "guest-consultation-running" }]),
+    );
+    expect(await harness.db.$count(user, eq(user.isGuest, true))).toBe(1);
+    expect(harness.blob.objects.size).toBe(1);
+  });
+
+  it("isn't held by a Styling that's stuck, which the stuck check finishes first", async () => {
+    await startGuestConsultation(harness.context(new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" })), await guestInput());
+
+    harness.clock.set("2026-10-16T12:10:00Z");
+    const second = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+
+    expect(await startGuestConsultation(harness.context(second), await guestInput())).toEqual({ ok: true, consultationId: expect.any(String) });
+  });
+
+  it("counts a Guest Consultation whose first Outfits a Try again showed, once they're shown", async () => {
+    harness.qloo.respond = () => Response.json({ error: "Internal Server Error" }, { status: 500 });
+    const guest = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+    const consultationId = consultationIdOf(await startGuestConsultation(harness.context(guest), await guestInput()));
+    await harness.stylings.runPending();
+    harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+    harness.clock.set("2026-10-16T12:05:00Z");
+
+    expect(await tryAgain(harness.context(guest), consultationId)).toEqual({ ok: true });
+    await harness.stylings.runPending();
+
+    expect(await readGuestPage(harness.context(new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" })))).toEqual({
+      show: "used-up",
+      refusal: { refusal: "guest-consultation-used", moreFrom: new Date("2026-10-17T12:05:00Z") },
+    });
+  });
+
+  it("isn't used up by a Guest Consultation whose Styling made no Outfit", async () => {
+    harness.qloo.respond = () => Response.json({ error: "Internal Server Error" }, { status: 500 });
+    await guestConsultationShownOn("203.0.113.7");
+    harness.qloo.respond = () => qlooResponse(STYLE_ICONS);
+    const second = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+
+    expect(await readGuestPage(harness.context(second))).toEqual({ show: "new-consultation", countryCode: "GB" });
+    const secondId = consultationIdOf(await startGuestConsultation(harness.context(second), await guestInput()));
+    await harness.stylings.runPending();
+    expect(await readConsultation(harness.context(second), secondId)).toMatchObject({ state: "ready", outfits: [{ position: 1 }, { position: 2 }] });
+  });
+});
+
+describe("a Guest's internet address", () => {
+  it("is in no row of any table once it has had a photo check and a Guest Consultation counted", async () => {
+    harness.ai.scenario = "unclear-main-person";
+    await startGuestConsultation(harness.context(new TestBrowser({ ip: "203.0.113.77", ipCountry: "GB" })), await guestInput());
+    harness.ai.scenario = "pass";
+    await guestConsultationShownOn("203.0.113.77");
+
+    // It was counted, all the same.
+    expect(await readGuestPage(harness.context(new TestBrowser({ ip: "203.0.113.77", ipCountry: "GB" })))).toMatchObject({ show: "used-up" });
+    expect(await rowsHolding("203.0.113.77")).toEqual([]);
+  });
+
+  it("can't be counted without the salt its hash is made under, as on a deployment that has none, so the Guest Page is closed", async () => {
+    const guest = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+    const withoutSalt = { ...harness.context(guest), guestIpSalt: null };
+
+    expect(await readGuestPage(withoutSalt)).toEqual({ show: "closed", refusal: { refusal: "guest-page-unavailable" } });
+    expect(await startGuestConsultation(withoutSalt, await guestInput())).toEqual({ ok: false, refusal: "guest-page-unavailable" });
+    await expectNothingStoredFor(guest);
+  });
+});
+
+describe("a Guest's photo checks", () => {
+  it("are 5 an address in any 24 hours, whoever's browser sends them, then refused before the photo is checked, saying when more come", async () => {
+    harness.ai.scenario = "unclear-main-person";
+    for (const minute of [0, 1, 2, 3, 4]) {
+      harness.clock.set(`2026-10-16T12:0${minute}:00Z`);
+      const tab = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+      expect(await startGuestConsultation(harness.context(tab), await guestInput())).toMatchObject({ ok: false, refusal: "photo-rejected" });
+    }
+    harness.clock.set("2026-10-16T12:05:00Z");
+    const sixth = new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" });
+
+    const usedUp = { refusal: "guest-photo-check-limit", moreFrom: new Date("2026-10-17T12:00:00Z") };
+    expect(await startGuestConsultation(harness.context(sixth), await guestInput())).toEqual({ ok: false, ...usedUp });
+    expect(harness.ai.photoCheckCount).toBe(5);
+    expect(await readGuestPage(harness.context(sixth))).toEqual({ show: "used-up", refusal: usedUp });
+    expect(await readGuestPage(harness.context(new TestBrowser({ ip: "203.0.113.8", ipCountry: "GB" })))).toMatchObject({ show: "new-consultation" });
+    harness.clock.set("2026-10-17T12:00:00Z");
+    expect(await readGuestPage(harness.context(sixth))).toMatchObject({ show: "new-consultation" });
+  });
+});
+
+/** A Guest Consultation on this address, its Styling run straight away: its two Outfits shown, unless Qloo fails it. */
+async function guestConsultationShownOn(ip: string): Promise<void> {
+  consultationIdOf(await startGuestConsultation(harness.context(new TestBrowser({ ip, ipCountry: "GB" })), await guestInput()));
+  await harness.stylings.runPending();
+}
+
+/** Every row, of every table in the database, that holds `text` anywhere in it, as "<table>: <row>". */
+async function rowsHolding(text: string): Promise<string[]> {
+  const { rows: tables } = (await harness.db.execute(
+    sql`select table_name as name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'`,
+  )) as unknown as { rows: { name: string }[] };
+  expect(tables.map(({ name }) => name)).toEqual(expect.arrayContaining(["user", "guest_usage_record", "consultation"]));
+  const holding: string[] = [];
+  for (const { name } of tables) {
+    const { rows } = (await harness.db.execute(sql`select row_to_json(t)::text as row from ${sql.identifier(name)} t`)) as unknown as {
+      rows: { row: string }[];
+    };
+    holding.push(...rows.filter(({ row }) => row.includes(text)).map(({ row }) => `${name}: ${row}`));
+  }
+  return holding;
+}
 
 /** Nothing of a refused "Get my Outfits" was kept: no photo checked or stored, no guest user, no guest cookie. */
 async function expectNothingStoredFor(guest: TestBrowser): Promise<void> {
