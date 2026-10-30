@@ -68,14 +68,14 @@ describe("the photo check", () => {
     expect(result).toEqual({ blocked: false, report: REPORT });
   });
 
-  it("sends claude-haiku-5-5 the photo inline, as its own bytes, with the API key", async () => {
+  it("sends claude-opus-5-5 the photo inline, as its own bytes, with the API key", async () => {
     anthropic.respond = () => anthropicJson(REPORT);
 
     await ai.checkPhoto(PHOTO_CHECK);
 
     expect(anthropic.requests.map(({ url }) => url.href)).toEqual(["https://api.anthropic.com/v1/messages"]);
     const [request] = anthropic.requests;
-    expect(request!.body.model).toBe("claude-haiku-5-5");
+    expect(request!.body.model).toBe("claude-opus-5-5");
     expect(request!.headers.get("x-api-key")).toBe("test-api-key");
     expect(imagesOf(request!)).toEqual([{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64(PHOTO.bytes) } }]);
   });

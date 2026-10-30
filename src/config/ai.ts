@@ -1,8 +1,8 @@
 // The AI provider's settings. Every model name lives here so it can change without hunting through code.
 
 /**
- * The Claude models the app can run on. Claude Haiku 5.5 runs the photo check and drives the Stylist.
- * Claude Opus 5.5 judges each Preview (ADR-0012).
+ * The Claude models the app can run on. Claude Haiku 5.5 drives the Stylist. Claude Opus 5.5 runs
+ * the photo check and judges each Preview (ADR-0012).
  */
 export const CLAUDE_MODELS = {
   haiku55: "claude-haiku-5-5",
@@ -11,8 +11,11 @@ export const CLAUDE_MODELS = {
 } as const;
 export type ClaudeModel = (typeof CLAUDE_MODELS)[keyof typeof CLAUDE_MODELS];
 
-/** The Claude model that checks each photo and reads its Photo Style (ADR-0011). */
-export const CLAUDE_PHOTO_CHECK_MODEL: ClaudeModel = CLAUDE_MODELS.haiku55;
+/**
+ * The Claude model that checks each photo and reads its Photo Style (ADR-0011). Claude Haiku 5.5 at
+ * times misjudged a photo's type, so Claude Opus 5.5 checks them instead.
+ */
+export const CLAUDE_PHOTO_CHECK_MODEL: ClaudeModel = CLAUDE_MODELS.opus55;
 
 /** How hard Claude works at each photo check: enough to judge the photo, while it stays quick. */
 export const CLAUDE_PHOTO_CHECK_EFFORT = "medium";

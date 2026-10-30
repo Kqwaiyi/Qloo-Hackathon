@@ -57,8 +57,8 @@ Qurator is an AI stylist. Take one photo of yourself and it builds complete Outf
 - **Stack:** Next.js on Vercel, Neon Postgres, Vercel Blob storage and Better Auth. Each Styling runs as a Vercel Workflow, so every model call and tool call is a durable step that survives a restart.
 - **Qloo** is called only from our server. The API key never reaches the browser.
 - **AI models**, all behind our own interface so any of them can be swapped:
-  - **Claude Haiku 5.5** checks each photo and reads its Photo Style.
-  - **Claude Haiku 5.5** also runs the AI Stylist, using the AI SDK's Workflow agent.
+  - **Claude Opus 5.5** checks each photo and reads its Photo Style.
+  - **Claude Haiku 5.5** runs the AI Stylist, using the AI SDK's Workflow agent.
   - **Gemini Nano Banana 2.1** draws each Preview from the user's photo and the sellers' product images.
   - **Claude Sonnet 5.5** checks each Preview for the wrong garment, a changed face, or a face invented on a Body-Only Photo. A faulty Preview is redrawn once with Sonnet's correction, and our code, not a model, decides which image to keep.
   - Users see the Stylist's notes and tool calls, never its internal reasoning.
