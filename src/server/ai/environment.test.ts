@@ -107,7 +107,7 @@ describe("switching real AI on", () => {
     });
 
     expect(result).toEqual({ refused: false, verdict: { right: true } });
-    expect(anthropic.requests.map(({ headers, body }) => [headers.get("x-api-key"), body.model])).toEqual([["anthropic-key-from-the-environment", "claude-sonnet-5-5"]]);
+    expect(anthropic.requests.map(({ headers, body }) => [headers.get("x-api-key"), body.model])).toEqual([["anthropic-key-from-the-environment", "claude-opus-5-5"]]);
     expect(gemini.requests).toEqual([]);
   });
 

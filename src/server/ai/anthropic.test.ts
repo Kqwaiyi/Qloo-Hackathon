@@ -391,7 +391,7 @@ describe("a Preview's verdict", () => {
     expect(result).toEqual({ refused: false, verdict: { right: true } });
   });
 
-  it("asks claude-sonnet-5-5 at medium effort for the verdict as structured output, with thinking display omitted, no temperature and no prefill, with the API key", async () => {
+  it("asks claude-opus-5-5 at medium effort for the verdict as structured output, with thinking display omitted, no temperature and no prefill, with the API key", async () => {
     anthropic.respond = () => anthropicJson(firstDrawReply({ right: true }));
 
     await ai.judgePreview(await firstDraw());
@@ -399,7 +399,7 @@ describe("a Preview's verdict", () => {
     expect(anthropic.requests.map(({ url }) => url.href)).toEqual(["https://api.anthropic.com/v1/messages"]);
     const { headers, body } = anthropic.requests[0]!;
     expect(headers.get("x-api-key")).toBe("test-api-key");
-    expect(body.model).toBe("claude-sonnet-5-5");
+    expect(body.model).toBe("claude-opus-5-5");
     expect(body.output_config).toEqual({
       effort: "medium",
       format: { type: "json_schema", schema: expect.objectContaining({ type: "object", required: ["verdict"] }) },

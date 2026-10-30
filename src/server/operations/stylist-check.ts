@@ -71,7 +71,7 @@ export interface StylistTurn {
 
 /** One call Claude answered for a Preview's verdict, as the check sees it: never what it was sent or said. */
 export interface VerdictCall {
-  /** The model that answered it, by its ID, such as "claude-sonnet-5-5". */
+  /** The model that answered it, by its ID, such as "claude-opus-5-5". */
   modelId: string;
   /** Its tokens, as the model reports them: its prompt's, cached or not, and what it wrote. */
   usage: LanguageModelV4Usage;

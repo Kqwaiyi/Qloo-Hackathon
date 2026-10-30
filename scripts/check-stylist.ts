@@ -1,6 +1,6 @@
 // A live check, opt-in and never run in CI, which costs money: the Haiku check (spec: "Fakes and the
 // check"). Is the Stylist good enough for production, its model, CLAUDE_STYLIST_MODEL (Claude Haiku
-// 5.5), driving it, and the verdict's, CLAUDE_PREVIEW_VERDICT_MODEL (Claude Sonnet 5.5), judging each
+// 5.5), driving it, and the verdict's, CLAUDE_PREVIEW_VERDICT_MODEL (Claude Opus 5.5), judging each
 // Preview (ADR-0012)? It runs the real Stylist, on real Claude, with live Qloo and Channel3, on
 // fixed, AI-generated photos: the landing page's Full-Body sample photo, and a Face Photo and a
 // Body-Only Photo cut from it, one of each Photo Type. Each is styled once as a new user in the
@@ -109,7 +109,7 @@ const ROUGH_PHOTO_CHECK_TOKENS = { noCache: 2_000, cacheWrite: 0, cacheRead: 0, 
 /**
  * One Preview's verdict, as the estimate has it: its rules and the photo read from cache, then the
  * Outfit's Pieces, their seller photos and the images to judge, and its verdict and thinking. On
- * Claude Sonnet 5.5 that's about $0.017, as the cheaper-stylist spec estimates a verdict.
+ * Claude Opus 5.5 that's about $0.033, twice the cheaper-stylist spec's estimate on Sonnet 5.5.
  */
 const ROUGH_VERDICT_TOKENS = { noCache: 4_000, cacheWrite: 0, cacheRead: 3_000, output: 800 };
 /** A body photo's Styling makes about this many product searches (spec: "Cost", real Products). */

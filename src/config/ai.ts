@@ -2,11 +2,12 @@
 
 /**
  * The Claude models the app can run on. Claude Haiku 5.5 runs the photo check and drives the Stylist.
- * Claude Sonnet 5.5 judges each Preview (ADR-0012).
+ * Claude Opus 5.5 judges each Preview (ADR-0012).
  */
 export const CLAUDE_MODELS = {
   haiku55: "claude-haiku-5-5",
   sonnet55: "claude-sonnet-5-5",
+  opus55: "claude-opus-5-5",
 } as const;
 export type ClaudeModel = (typeof CLAUDE_MODELS)[keyof typeof CLAUDE_MODELS];
 
@@ -37,9 +38,10 @@ export const CLAUDE_STYLIST_MAX_OUTPUT_TOKENS = 16_000;
 
 /**
  * The Claude model that judges each Preview, in a call of its own (ADR-0012). Claude Haiku 5.5 missed
- * a face added to a Body-Only Photo's Preview, a hard rule, which Claude Sonnet 5.5 caught.
+ * a face added to a Body-Only Photo's Preview, a hard rule, which Claude Sonnet 5.5 caught. Claude
+ * Opus 5.5 now judges them instead.
  */
-export const CLAUDE_PREVIEW_VERDICT_MODEL: ClaudeModel = CLAUDE_MODELS.sonnet55;
+export const CLAUDE_PREVIEW_VERDICT_MODEL: ClaudeModel = CLAUDE_MODELS.opus55;
 
 /** How hard Claude works at each Preview's verdict: the effort that caught the added face. */
 export const CLAUDE_PREVIEW_VERDICT_EFFORT = "medium";
@@ -80,6 +82,7 @@ export const CLAUDE_PRICES: Record<ClaudeModel, readonly ClaudeRateCard[]> = {
     { input: 0.5, cacheWrite: 0.625, cacheRead: 0.05, output: 2.5 },
   ],
   [CLAUDE_MODELS.sonnet55]: [{ input: 2, cacheWrite: 2.5, cacheRead: 0.2, output: 10 }],
+  [CLAUDE_MODELS.opus55]: [{ input: 4, cacheWrite: 5, cacheRead: 0.2, output: 20 }],
 };
 
 /**

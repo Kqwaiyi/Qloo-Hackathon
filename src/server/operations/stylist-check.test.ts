@@ -164,9 +164,9 @@ describe("the Stylist check's turns", () => {
 
   it("reports Claude's cost across both models: the Stylist's turns at its model's prices, each verdict call at the verdict's, and the two together", async () => {
     // Each of the Stylist's turns costs $0.000925 on Claude Haiku 5.5, as above. Each verdict is
-    // asked of Claude Sonnet 5.5, whose prices per million tokens are $2 input, $2.50 cache writes,
-    // $0.20 cache reads and $10 output: 1,000 × $2 + 2,000 × $2.50 + 4,000 × $0.20 + 500 × $10 per
-    // million is $0.0128. On Haiku's prices it would be $0.00064.
+    // asked of Claude Opus 5.5, whose prices per million tokens are $4 input, $5 cache writes,
+    // $0.20 cache reads and $20 output: 1,000 × $4 + 2,000 × $5 + 4,000 × $0.20 + 500 × $20 per
+    // million is $0.0248. On Haiku's prices it would be $0.00064.
     const anthropic = new FakeAnthropic();
     anthropic.respond = () =>
       anthropicJson({ verdict: { judged: "first draw", right: true } }, { input_tokens: 1_000, cache_creation_input_tokens: 2_000, cache_read_input_tokens: 4_000, output_tokens: 500 });
@@ -183,10 +183,10 @@ describe("the Stylist check's turns", () => {
     // A Face Photo's two Outfits, each Preview judged once.
     const turns = harness.ai.stylistRequests.length;
     expect(result).toMatchObject({ styled: true, outfits: [{ preview: "kept" }, { preview: "kept" }] });
-    expect(result.styled && result.verdictCalls.map(({ modelId }) => modelId)).toEqual(["claude-sonnet-5-5", "claude-sonnet-5-5"]);
+    expect(result.styled && result.verdictCalls.map(({ modelId }) => modelId)).toEqual(["claude-opus-5-5", "claude-opus-5-5"]);
     expect(result.styled && result.stylistCostUsd).toBeCloseTo(turns * 0.000925, 9);
-    expect(result.styled && result.verdictCostUsd).toBeCloseTo(2 * 0.0128, 9);
-    expect(result.styled && result.costUsd).toBeCloseTo(turns * 0.000925 + 2 * 0.0128, 9);
+    expect(result.styled && result.verdictCostUsd).toBeCloseTo(2 * 0.0248, 9);
+    expect(result.styled && result.costUsd).toBeCloseTo(turns * 0.000925 + 2 * 0.0248, 9);
   });
 
   it("reports what the prompt cache saved, and the least each turn after the first read from it", async () => {
