@@ -8,11 +8,11 @@
 
 **Spec:** [spec.md](../spec.md) section "Further Notes".
 
-- [ ] A long random salt is generated and set in Vercel's Production environment, under the name the example env file documents. It is never committed.
-- [ ] Production is redeployed with tickets 02–07 merged.
+- [x] A long random salt is generated and set in Vercel's Production environment, under the name the example env file documents. It is never committed.
+- [x] Production is redeployed with tickets 02–07 merged.
 - [ ] On the live site, signed out:
   - **Try it as a Guest** opens the Guest Page;
   - a Guest Consultation makes two Outfits with Previews;
   - a second try from the same connection, in another browser, is refused with when the next one opens.
-- [ ] The live Privacy Policy shows the Guest section.
+- [x] The live Privacy Policy shows the Guest section.
 - [ ] The hackathon submission mentions that judges can try the live demo as a Guest, with no login.
