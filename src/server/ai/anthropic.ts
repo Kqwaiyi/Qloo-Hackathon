@@ -325,14 +325,15 @@ const PHOTO_CHECK_PROMPT = `You check one photo for a styling app, which suggest
 Reply with:
 - peopleCount: how many people are in the photo. Count only real people, not people in pictures, posters or screens.
 - clearMainPerson: whether one person is clearly the photo's subject, its main person: noticeably closer or larger than everyone else, and in focus, while anyone else is in the background, much smaller, blurred or partly cut off. Two or more people of similar prominence mean there is no clear main person: a couple's selfie, friends side by side, a group photo, or two people of the same size where one faces away. When in doubt, clearMainPerson is false. With one person in the photo, it is true; with nobody, it is false. As for peopleCount, people in pictures, posters or screens don't count.
-- visible: whether each of these shows in the photo, for the main person:
-  - face: their face, seen from the front or the side, not turned away or cut off.
-  - hair: their hair. False when it is hidden, cut off by the frame or covered.
-  - upperBody: their shoulders, chest and waist.
-  - legs: their legs, from the hips to the ankles.
-  - feet: both feet, with whatever they're wearing on them.
+- visible: whether each of these shows in the photo, for the main person. Be generous: everyday photos are rarely perfect. A part counts as visible when most of it shows, even if it is small in the frame, at an angle, partly in shadow, partly hidden behind something or slightly cut off at the edge. It is false only when it is mostly or entirely out of the photo or hidden.
+  - face: their face, seen from the front, at an angle or from the side, even if small, a little blurred or partly covered by sunglasses, hair or a hand. False only when they face away or most of the face is out of the frame.
+  - hair: their hair, even if only the top and sides show. False only when most of it is hidden, cut off by the frame or covered.
+  - upperBody: their torso, roughly from the shoulders to the waist. True even if an arm, a bag or a hand covers part of it.
+  - legs: their legs, roughly from the hips down towards the ankles. True even if one leg is partly behind the other or the ankles are slightly cut off.
+  - feet: their feet or footwear. True if at least one foot or shoe shows, even partly, cut off a little at the frame's edge, or behind the other foot.
+  A full-length photo of someone from head to feet shows face, hair, upperBody, legs and feet together; report every one of them as visible, not only the face.
 - hairCovered: true or false only: whether something covers most of their hair, such as a hijab, a turban or a cap. Never say what covers it.
-- clearEnough: whether the photo is sharp, well lit and unfiltered enough to see the main person and what they're wearing.
+- clearEnough: whether the main person and what they're wearing can be made out. A slightly soft, dim, grainy or lightly filtered photo is still clear enough; only a photo too blurred, dark or distorted to make them out is not.
 - explicit: whether the photo shows nudity or sexual content, on anyone in it.
 - photoStyle: one or two words for the style of what they're wearing, strongest first, from this list only: ${PHOTO_STYLES.join(", ")}. A plain photo with no clear style is casual.
 
