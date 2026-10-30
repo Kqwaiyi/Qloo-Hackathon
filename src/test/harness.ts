@@ -29,6 +29,9 @@ export const TEST_BOT_CHECK_SECRET = "test-turnstile-secret";
 /** The token a test browser's Turnstile widget made, shaped like the one Turnstile's test keys make. */
 export const TEST_BOT_CHECK_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 
+/** The salt the Guest Page's daily limit hashes the test browsers' addresses under. */
+export const TEST_GUEST_IP_SALT = "test-guest-ip-salt";
+
 /**
  * The consent sheet with both boxes ticked, as "Get my Outfits" sends it. Starting a Consultation
  * with it records the user's agreement to the photo notice first.
@@ -49,6 +52,24 @@ export class TestClock implements Clock {
 }
 
 /**
+ * The work operations leave for once their response has gone, which Next.js's `after` runs in the
+ * app: here it waits until the test calls `runPending()`, so a test can see the request didn't.
+ */
+export class AfterResponseQueue {
+  /** The work left and not yet run, oldest first. */
+  readonly pending: (() => Promise<void>)[] = [];
+
+  readonly add = (work: () => Promise<void>): void => {
+    this.pending.push(work);
+  };
+
+  /** Runs the work left so far, one after another, and any work it leaves in turn. */
+  async runPending(): Promise<void> {
+    for (let work = this.pending.shift(); work !== undefined; work = this.pending.shift()) await work();
+  }
+}
+
+/**
  * One visitor's browser: the cookies it holds and sends with each request. Like a real browser, it
  * drops a cookie once its Max-Age or Expires passes (by `Date.now()`, which tests may fake).
  */
@@ -63,7 +84,7 @@ export class TestBrowser {
   /**
    * The Bot Check token the browser's requests carry, as a direct post must carry it, or undefined
    * for none. It passes unless the test makes the fake Cloudflare say otherwise. A token our forms
-   * send in their input replaces it.
+   * send in their input replaces it. A Guest's "Get my Outfits" reads only the one in its input.
    */
   botCheckToken: string | undefined = TEST_BOT_CHECK_TOKEN;
 
@@ -141,6 +162,8 @@ export interface TestHarness {
   exchangeRateTransport: ExchangeRateTransport;
   /** Runs started Stylings when the test calls `runPending()`, through the real Qloo client and cache. */
   stylings: InlineStylingRunner;
+  /** What operations leave for once their response has gone, run when the test calls `runPending()`. */
+  afterResponse: AfterResponseQueue;
   /** The send-email function every email goes through, Better Auth's included. */
   emailSender: EmailSender;
   /** Where the email goes instead of Gmail: every message sent, kept for the test to read. */
@@ -195,6 +218,7 @@ export async function createTestHarness({
   const emails = new CapturingEmailTransport();
   const emailSender = createEmailSender({ db, clock, transport: emails });
   const turnstile = new FakeTurnstileTransport();
+  const afterResponse = new AfterResponseQueue();
   const exchangeRates = new FakeExchangeRateTransport();
   const auth = createAuth({
     db,
@@ -222,6 +246,7 @@ export async function createTestHarness({
     exchangeRates,
     exchangeRateTransport: exchangeRates.send,
     stylings,
+    afterResponse,
     emailSender,
     emails,
     context: (browser) => ({
@@ -232,8 +257,10 @@ export async function createTestHarness({
       blob,
       stylings,
       productSearch,
+      guestIpSalt: TEST_GUEST_IP_SALT,
       requestHeaders: browser.requestHeaders(),
       responseCookies: browser.responseCookies,
+      afterResponse: afterResponse.add,
     }),
     async postToAuth(path, body, browser) {
       const headers = browser.requestHeaders();

@@ -26,7 +26,7 @@ import {
   type PhotoStyleWords,
 } from "../../config/consultations";
 import type { EmailKind } from "../../config/email";
-import { USAGE_KINDS } from "../../config/limits";
+import { GUEST_USAGE_KINDS, USAGE_KINDS } from "../../config/limits";
 import type { ProductSearchMarket } from "../../config/product-search";
 import {
   PIECE_SEARCH_STATES,
@@ -47,6 +47,7 @@ import type { QlooBrand } from "../qloo/client";
 // fields on the user. Better Auth looks these up by the export names below.
 
 export const stylePreferenceEnum = pgEnum("style_preference", STYLE_PREFERENCES);
+export const ageGroupEnum = pgEnum("age_group", AGE_GROUPS);
 
 export const user = pgTable(
   "user",
@@ -63,9 +64,19 @@ export const user = pgTable(
     displayUsername: text("display_username"),
     stylePreference: stylePreferenceEnum("style_preference").notNull(),
     countryCode: text("country_code").notNull(),
-    // Only the birth year and month are kept: the day is dropped at sign-up.
-    birthYear: integer("birth_year").notNull(),
-    birthMonth: integer("birth_month").notNull(),
+    // Only the birth year and month are kept: the day is dropped at sign-up. A guest user has
+    // neither: a Guest's birth date is never kept.
+    birthYear: integer("birth_year"),
+    birthMonth: integer("birth_month"),
+    // A guest user, the throwaway owner of one Guest Consultation (ADR-0013): it has a placeholder
+    // email and username, no password and no session, so it can never sign in. Better Auth doesn't
+    // know these two fields: only starting a Guest Consultation writes them.
+    isGuest: boolean("is_guest").notNull().default(false),
+    // A guest user's age group, which their Outfits are styled for, in place of a birth date.
+    ageGroup: ageGroupEnum("age_group"),
+    // The salted hash of the IP address a guest user was made from, never the address itself, so
+    // the Guest Page's daily limit finds that address's Guest Consultations.
+    guestIpHash: text("guest_ip_hash"),
     // The photo notice the user last agreed to on the consent sheet, and when. Withdrawing photo
     // consent clears both.
     acceptedPhotoNoticeVersion: integer("accepted_photo_notice_version"),
@@ -81,6 +92,12 @@ export const user = pgTable(
       "user_photo_notice_accepted_together",
       sql`(${table.acceptedPhotoNoticeVersion} is null) = (${table.photoNoticeAcceptedAt} is null)`,
     ),
+    // An account keeps its birth year and month; a guest user only its age group.
+    check(
+      "user_birth_date_or_guest_age_group",
+      sql`${table.isGuest} = (${table.birthYear} is null) and ${table.isGuest} = (${table.birthMonth} is null) and ${table.isGuest} = (${table.ageGroup} is not null)`,
+    ),
+    index("user_guest_ip_hash_idx").on(table.guestIpHash),
   ],
 );
 
@@ -202,11 +219,26 @@ export const usageRecord = pgTable(
   ],
 );
 
+// Guest usage records, which the Guest Page's daily limit counts: per internet address, by a salted
+// hash of it, never the address itself. They hold nothing else, and are purged once 24 hours old.
+
+export const guestUsageKindEnum = pgEnum("guest_usage_kind", GUEST_USAGE_KINDS);
+
+export const guestUsageRecord = pgTable(
+  "guest_usage_record",
+  {
+    id: text("id").primaryKey(),
+    kind: guestUsageKindEnum("kind").notNull(),
+    ipHash: text("ip_hash").notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("guest_usage_record_ip_hash_kind_used_at_idx").on(table.ipHash, table.kind, table.usedAt)],
+);
+
 // Consultations.
 
 export const photoTypeEnum = pgEnum("photo_type", PHOTO_TYPES);
 export const budgetTierEnum = pgEnum("budget_tier", BUDGET_TIERS);
-export const ageGroupEnum = pgEnum("age_group", AGE_GROUPS);
 export const consultationStateEnum = pgEnum("consultation_state", CONSULTATION_STATES);
 
 export const consultation = pgTable(

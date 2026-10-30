@@ -9,7 +9,7 @@ import { Label, Pill } from "../ui";
 
 // What frames every chapter: the fixed ground behind them, the header and the first-visit loader.
 
-/** Where "Get started" goes: the call to action, which says where photos go before anyone signs up. */
+/** The closing chapter: the call to action, which says where photos go before anyone signs up. */
 export const GET_STARTED_ID = "get-started";
 
 /** The fixed colour behind the transparent chapters, which the motion layer moves between paper and ink. */
@@ -51,7 +51,8 @@ export function Loader() {
 }
 
 /**
- * The wordmark on the left; on the right, signing in (or opening the app) and getting started.
+ * The wordmark on the left; on the right, signing in (or opening the app) and, for a signed-out
+ * visitor, trying the app as a Guest, on every screen width.
  * Each side is fixed on its own: the wordmark has no backing, and inverts against whatever passes
  * under it (landing.css), which it couldn't do from inside a fixed bar.
  */
@@ -61,15 +62,17 @@ export function Header({ signedIn }: { signedIn: boolean }) {
       {/* Boxed like the nav (40 px inside the same padding), so the two slide away together and
           the wordmark leaves the screen as fully. 12 px down, its caps centre on the pills. */}
       <Link href={ROUTES.home} data-header className="landing-header landing-wordmark fixed top-0 left-0 z-50 px-4 py-4 text-paper md:px-6 md:py-5">
-        <img src={WORDMARK_SRC.ink} alt="Qurator" {...WORDMARK_SIZE} className="mt-3 mb-1 block h-6 w-auto" />
+        <img src={WORDMARK_SRC.ink} alt="Qurator" {...WORDMARK_SIZE} className="mt-3 mb-1 block h-6 w-auto max-[374px]:h-5 max-[339px]:h-[18px]" />
       </Link>
-      <nav aria-label="Account" data-header className="landing-header fixed top-0 right-0 z-50 flex items-center gap-2 px-4 py-4 md:px-6 md:py-5">
-        <Pill href={signedIn ? APP_HOME : ROUTES.signIn} variant="glass" className="pr-4">
+      <nav aria-label="Account" data-header className="landing-header fixed top-0 right-0 z-50 flex items-center gap-1.5 px-4 py-4 max-[374px]:gap-1 max-[374px]:pr-3 sm:gap-2 md:px-6 md:py-5">
+        <Pill href={signedIn ? APP_HOME : ROUTES.signIn} variant="glass" compactOnPhones className="pr-4">
           {signedIn ? "Open the app" : "Sign in"}
         </Pill>
-        <Pill href={`#${GET_STARTED_ID}`} variant="solid" tone="ink" glyph="+" data-scroll-to="" className="ring-1 ring-ink/10 max-sm:hidden">
-          Get started
-        </Pill>
+        {!signedIn && (
+          <Pill href={ROUTES.guest} variant="solid" tone="ink" glyph="+" compactOnPhones className="ring-1 ring-ink/10">
+            {COPY.tryItAsAGuest}
+          </Pill>
+        )}
       </nav>
     </header>
   );

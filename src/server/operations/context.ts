@@ -22,11 +22,24 @@ export interface OperationContext {
   stylings: StylingRunner;
   /** The product search, whose free Product check the price refresh calls. */
   productSearch: ProductSearch;
+  /**
+   * The secret salt the Guest Page's daily limit hashes internet addresses under
+   * (`guestIpSaltFromEnvironment`), or null on a deployment without one, which keeps the Guest Page closed.
+   */
+  guestIpSalt: string | null;
   /** The incoming request's headers, cookies included. */
   requestHeaders: Headers;
   /** Cookies to send back with the response. */
   responseCookies: ResponseCookies;
+  /**
+   * Leaves work for once the response has gone, so the request never waits on it: Next.js's `after`
+   * in the app, and in tests whenever the test runs it.
+   */
+  afterResponse: (work: () => Promise<void>) => void;
 }
+
+/** Everything an operation may touch but what comes with a request: what the team's scripts have. */
+export type OperationContextWithoutRequest = Omit<OperationContext, "requestHeaders" | "responseCookies" | "afterResponse">;
 
 /** What an operation calling Better Auth for the browser's request needs: its headers in, its cookies out. */
 export type AuthRequestContext = Pick<OperationContext, "auth" | "requestHeaders" | "responseCookies">;

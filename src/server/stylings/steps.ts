@@ -26,6 +26,7 @@ import { rankStyleIcons, styleIconLines, styleIconQuery } from "@/server/outfit-
 import type { ProductPhotos } from "@/server/product-photos/photos";
 import type { ProductSearch } from "@/server/product-search/provider";
 import type { QlooClient } from "@/server/qloo/client";
+import { countGuestConsultation } from "@/server/usage/guest-records";
 import { recordUsage } from "@/server/usage/records";
 
 import { readBuildingBeside } from "./current-outfits";
@@ -523,8 +524,12 @@ export async function finishStyling(ctx: Pick<StylingContext, "db" | "clock">, s
       }
       await tx.update(outfit).set({ current: true }).where(eq(outfit.stylingId, stylingId));
       // Each counts against the Outfit Allowance and the app-wide caps from now, Preview or not, even
-      // if later replaced or deleted. The Demo Account's count against nothing.
-      if (!running.onDemoAccount) await recordUsage(tx, { kind: "outfit", userId: running.userId, at: finishedAt }, made.length);
+      // if later replaced or deleted, and a Guest Consultation's first count against its internet
+      // address's daily limit. The Demo Account's count against nothing.
+      if (!running.onDemoAccount) {
+        await recordUsage(tx, { kind: "outfit", userId: running.userId, at: finishedAt }, made.length);
+        await countGuestConsultation(tx, { ...running, stylingId }, finishedAt);
+      }
       await tx.update(styling).set({ status: "succeeded", outfitsMade: made.length, finishedAt }).where(eq(styling.id, stylingId));
       // What it built for becomes the Consultation's, together with its Outfits.
       await tx

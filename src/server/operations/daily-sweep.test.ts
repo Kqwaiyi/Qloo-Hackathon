@@ -2,19 +2,22 @@ import { asc, eq } from "drizzle-orm";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { isGuestPlaceholderAddress } from "@/config/guests";
 import { closeDatabase } from "@/server/db/connect";
-import { consultation, emailLog, exchangeRate, qlooCache, usageRecord } from "@/server/db/schema";
+import { consultation, emailLog, exchangeRate, guestUsageRecord, qlooCache, usageRecord, user } from "@/server/db/schema";
 import { fawazahmed0Rates, frankfurterRates } from "@/server/exchange-rates/fake";
 import { startConsultation } from "@/server/operations/consultations";
 import { runDailySweep } from "@/server/operations/daily-sweep";
+import { startGuestConsultation } from "@/server/operations/guest-consultations";
 import { requestPasswordReset } from "@/server/operations/password-reset";
 import { readSignedInUser, refreshSession } from "@/server/operations/session";
 import { signIn } from "@/server/operations/sign-in";
 import { signUp, type SignUpInput } from "@/server/operations/sign-up";
 import { createDemoAccount } from "@/server/operations/team";
 import { qlooPerson, qlooResponse } from "@/server/qloo/fake";
+import { recordGuestUsage } from "@/server/usage/guest-records";
 import { recordProductSearches } from "@/server/usage/records";
-import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TestBrowser, type TestHarness } from "@/test/harness";
+import { BOTH_CONSENT_BOXES_TICKED, createTestHarness, TEST_BOT_CHECK_TOKEN, TestBrowser, type TestHarness } from "@/test/harness";
 
 // Made-up people, shaped like Qloo's person entities: enough Style Icons for a Face Photo's two Outfits.
 const STYLE_ICONS = [qlooPerson("p-1", "Ava Stone", 0.94), qlooPerson("p-2", "Bea Marsh", 0.91), qlooPerson("p-3", "Cleo Hart", 0.88)];
@@ -287,6 +290,70 @@ describe("the Demo Account", () => {
   });
 });
 
+// ADR-0013: the sweep is the guest cleanup's backstop, so a quiet day still deletes within 24 hours.
+describe("guest users", () => {
+  it("are deleted once their Guest Consultation is an hour old, with its photo and Previews, the report counting them", async () => {
+    harness.clock.set("2026-10-16T12:00:00Z");
+    const consultationId = await startGuestConsultationFrom(new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" }));
+    await harness.stylings.runPending();
+    expect(harness.blob.objects.size).toBe(3);
+
+    harness.clock.set("2026-10-16T12:59:59Z");
+    expect(await runDailySweep(harness)).toMatchObject({ guestUsersDeleted: 0 });
+    expect(harness.blob.objects.size).toBe(3);
+    harness.clock.set("2026-10-16T13:00:00Z");
+    expect(await runDailySweep(harness)).toMatchObject({ guestUsersDeleted: 1, failures: 0 });
+
+    expect(await harness.db.select().from(consultation).where(eq(consultation.id, consultationId))).toEqual([]);
+    expect(harness.blob.objects.size).toBe(0);
+    expect(await harness.db.$count(user, eq(user.isGuest, true))).toBe(0);
+  });
+
+  it("aren't accounts: one left over a week is deleted as a guest user, never as an unverified account", async () => {
+    harness.clock.set("2026-10-16T12:00:00Z");
+    await startGuestConsultationFrom(new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" }));
+    await harness.stylings.runPending();
+
+    harness.clock.set("2026-10-23T12:00:00Z");
+
+    expect(await runDailySweep(harness)).toMatchObject({ unverifiedAccountsDeleted: 0, guestUsersDeleted: 1 });
+  });
+
+  it("are never warned of inactivity, however long one is left over: no email goes to a guest user", async () => {
+    harness.clock.set("2026-10-16T12:00:00Z");
+    await startGuestConsultationFrom(new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" }));
+    await harness.stylings.runPending();
+
+    harness.clock.set("2027-09-16T12:00:00Z");
+
+    expect(await runDailySweep(harness)).toMatchObject({ inactivityWarningsSent: 0, guestUsersDeleted: 1 });
+    expect(harness.emails.messages.filter(({ to }) => isGuestPlaceholderAddress(to))).toEqual([]);
+  });
+
+  it("go on past a guest user it can't delete, which stays until a later sweep can, logged without whose it was", async () => {
+    harness.clock.set("2026-10-16T12:00:00Z");
+    await startGuestConsultationFrom(new TestBrowser({ ip: "203.0.113.7", ipCountry: "GB" }));
+    harness.clock.set("2026-10-16T12:01:00Z");
+    await startGuestConsultationFrom(new TestBrowser({ ip: "203.0.113.8", ipCountry: "GB" }));
+    await harness.stylings.runPending();
+    const [oldest] = await harness.db.select({ id: user.id }).from(user).where(eq(user.isGuest, true)).orderBy(asc(user.createdAt));
+    // Blob storage fails the first guest user's photo and Previews, and only theirs.
+    vi.spyOn(harness.blob, "deleteFolder").mockRejectedValueOnce(new Error("Blob storage is down."));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    harness.clock.set("2026-10-16T13:01:00Z");
+    expect(await runDailySweep(harness)).toMatchObject({ guestUsersDeleted: 1, failures: 1 });
+    expect(await harness.db.select({ id: user.id }).from(user).where(eq(user.isGuest, true))).toEqual([oldest]);
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(errors.mock.calls)).not.toContain(oldest!.id);
+
+    harness.clock.set("2026-10-17T12:00:00Z");
+    expect(await runDailySweep(harness)).toMatchObject({ guestUsersDeleted: 1, failures: 0 });
+    expect(await harness.db.$count(user, eq(user.isGuest, true))).toBe(0);
+    expect(harness.blob.objects.size).toBe(0);
+  });
+});
+
 describe("purges", () => {
   it("purges usage records and email-log rows older than 35 days, and Qloo cache entries older than 30 days", async () => {
     harness.clock.set("2026-10-16T12:00:00Z");
@@ -332,6 +399,21 @@ describe("purges", () => {
     harness.clock.set("2026-11-20T12:01:00Z");
     expect(await runDailySweep(harness)).toMatchObject({ usageRecordsPurged: 2 });
     expect(await usageTimes()).toEqual([november]);
+  });
+
+  it("purges the Guest Page's guest usage records, with the IP hashes they hold, once they're 24 hours old", async () => {
+    const noon = new Date("2026-10-16T12:00:00Z");
+    const one = new Date("2026-10-16T13:00:00Z");
+    await recordGuestUsage(harness.db, { kind: "photo_check", ipHash: "an-address", at: noon });
+    await recordGuestUsage(harness.db, { kind: "photo_check", ipHash: "an-address", at: one });
+    await recordGuestUsage(harness.db, { kind: "guest_consultation", ipHash: "an-address", at: one });
+
+    harness.clock.set("2026-10-17T12:59:59Z");
+    expect(await runDailySweep(harness)).toMatchObject({ guestUsageRecordsPurged: 1 });
+    expect(await guestUsageTimes()).toEqual([one, one]);
+    harness.clock.set("2026-10-17T13:00:00Z");
+    expect(await runDailySweep(harness)).toMatchObject({ guestUsageRecordsPurged: 2 });
+    expect(await guestUsageTimes()).toEqual([]);
   });
 });
 
@@ -455,19 +537,43 @@ async function signedUpUser(overrides: Partial<SignUpInput> = {}, { verified = t
   return browser;
 }
 
+/**
+ * A Guest's "Get my Outfits" from this browser, a Face Photo with every detail given, returning
+ * its Guest Consultation. Its Styling waits for `runPending()`.
+ */
+async function startGuestConsultationFrom(browser: TestBrowser): Promise<string> {
+  const result = await startGuestConsultation(harness.context(browser), {
+    photo: await jpeg(),
+    photoType: "face",
+    birthDate: { day: "2", month: "2", year: "1992" },
+    stylePreference: "womenswear",
+    countryCode: "GB",
+    consent: BOTH_CONSENT_BOXES_TICKED,
+    acceptedTerms: true,
+    botCheckToken: TEST_BOT_CHECK_TOKEN,
+  });
+  if (!result.ok) throw new Error(`Couldn't start a Guest Consultation: ${result.refusal}`);
+  return result.consultationId;
+}
+
 /** Starts a Face Photo Consultation, agreeing on the consent sheet. Its Styling waits for `runPending()`. */
 async function start(browser: TestBrowser): Promise<void> {
-  const bytes = await sharp({ create: { width: 30, height: 40, channels: 3, background: "#8a7f72" } }).jpeg().toBuffer();
-  const result = await startConsultation(harness.context(browser), {
-    photo: new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }),
-    photoType: "face",
-    consent: BOTH_CONSENT_BOXES_TICKED,
-  });
+  const result = await startConsultation(harness.context(browser), { photo: await jpeg(), photoType: "face", consent: BOTH_CONSENT_BOXES_TICKED });
   if (!result.ok) throw new Error(`Couldn't start a Consultation: ${result.refusal}`);
+}
+
+async function jpeg(): Promise<Blob> {
+  const bytes = await sharp({ create: { width: 30, height: 40, channels: 3, background: "#8a7f72" } }).jpeg().toBuffer();
+  return new Blob([new Uint8Array(bytes)], { type: "image/jpeg" });
 }
 
 async function usageTimes(): Promise<Date[]> {
   const rows = await harness.db.select({ at: usageRecord.usedAt }).from(usageRecord).orderBy(asc(usageRecord.usedAt));
+  return rows.map(({ at }) => at);
+}
+
+async function guestUsageTimes(): Promise<Date[]> {
+  const rows = await harness.db.select({ at: guestUsageRecord.usedAt }).from(guestUsageRecord).orderBy(asc(guestUsageRecord.usedAt));
   return rows.map(({ at }) => at);
 }
 

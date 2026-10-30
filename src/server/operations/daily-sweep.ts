@@ -12,6 +12,7 @@ import { emailLog, qlooCache, usageRecord, user } from "@/server/db/schema";
 import { inactivityWarningEmail } from "@/server/email/messages";
 import type { EmailSender, SendResult } from "@/server/email/send-email";
 import { type ExchangeRateTransport, refreshExchangeRates } from "@/server/exchange-rates/rates";
+import { cleanUpGuests } from "@/server/guests/cleanup";
 import type { OperationContext } from "@/server/operations/context";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -28,12 +29,16 @@ export interface SweepReport {
   unverifiedAccountsDeleted: number;
   inactiveAccountsDeleted: number;
   inactivityWarningsSent: number;
+  /** The guest cleanup's: guest users whose Guest Consultation was an hour old, deleted with it. */
+  guestUsersDeleted: number;
   usageRecordsPurged: number;
+  /** The Guest Page's guest usage records, with the IP hashes they hold, once 24 hours old. */
+  guestUsageRecordsPurged: number;
   emailLogRowsPurged: number;
   qlooCacheEntriesPurged: number;
   /** Where the day's exchange rates came from, or null when no source answered, so the day before's stay. */
   exchangeRatesFrom: ExchangeRateSource | null;
-  /** Accounts it couldn't delete or warn, each logged. They're still due, so the next sweep tries them again. */
+  /** Accounts it couldn't delete or warn, and guest users it couldn't delete, each logged. They're still due, so the next sweep tries them again. */
   failures: number;
 }
 
@@ -56,13 +61,16 @@ export async function runDailySweep(ctx: SweepContext): Promise<SweepReport> {
   const unverified = await deleteUnverifiedAccounts(ctx, now);
   const inactive = await deleteWarnedAccounts(ctx, now);
   const warnings = await warnInactiveAccounts(ctx, now);
+  const guests = await cleanUpGuests(ctx);
   return {
     unverifiedAccountsDeleted: unverified.done,
     inactiveAccountsDeleted: inactive.done,
     inactivityWarningsSent: warnings.done,
+    guestUsersDeleted: guests.guestUsersDeleted,
+    guestUsageRecordsPurged: guests.guestUsageRecordsPurged,
     ...(await purgeOldRows(ctx, now)),
     exchangeRatesFrom: await refreshExchangeRates(ctx),
-    failures: unverified.failed + inactive.failed + warnings.failed,
+    failures: unverified.failed + inactive.failed + warnings.failed + guests.failures,
   };
 }
 
@@ -87,7 +95,7 @@ function deleteWarnedAccounts(ctx: SweepContext, now: Date): Promise<Tally> {
  * that has verified or become active meanwhile, such as by signing in, stays.
  */
 async function deleteAccountsWhere(ctx: SweepContext, due: SQL[], logLabel: string): Promise<Tally> {
-  const whereDue = and(...due, notTheDemoAccount(ctx));
+  const whereDue = and(...due, notTheDemoAccount(ctx), notAGuestUser());
   const accounts = await ctx.db.select({ id: user.id }).from(user).where(whereDue).orderBy(asc(user.createdAt));
   const tally = { done: 0, failed: 0 };
   for (const { id } of accounts) {
@@ -117,7 +125,7 @@ async function warnInactiveAccounts(ctx: SweepContext, now: Date): Promise<Tally
   const due = await ctx.db
     .select({ id: user.id, email: user.email })
     .from(user)
-    .where(and(lte(user.lastActiveAt, lastActiveBy), isNull(user.inactivityWarningSentAt), notTheDemoAccount(ctx)))
+    .where(and(lte(user.lastActiveAt, lastActiveBy), isNull(user.inactivityWarningSentAt), notTheDemoAccount(ctx), notAGuestUser()))
     .orderBy(asc(user.lastActiveAt));
   // Better Auth's URL is its own path's: the sign-in page sits at the app's root.
   const signInLink = new URL(ROUTES.signIn, (await ctx.auth.$context).baseURL).toString();
@@ -162,12 +170,21 @@ async function purgeOldRows(
     .delete(qlooCache)
     .where(lt(qlooCache.fetchedAt, daysBefore(now, QLOO_CACHE_LIFETIME_DAYS)))
     .returning({ key: qlooCache.requestKey });
-  return { usageRecordsPurged: usage.length, emailLogRowsPurged: emails.length, qlooCacheEntriesPurged: qloo.length };
+  return {
+    usageRecordsPurged: usage.length,
+    emailLogRowsPurged: emails.length,
+    qlooCacheEntriesPurged: qloo.length,
+  };
 }
 
 /** The Demo Account is never swept: the team manages it, and the judges share it. */
 function notTheDemoAccount(ctx: SweepContext): SQL {
   return ne(user.email, ctx.auth.demoAccountEmail);
+}
+
+/** A guest user is no account: the guest cleanup deletes it, and it's never emailed (ADR-0013). */
+function notAGuestUser(): SQL {
+  return eq(user.isGuest, false);
 }
 
 /** Logs what failed without saying whose account it was. */

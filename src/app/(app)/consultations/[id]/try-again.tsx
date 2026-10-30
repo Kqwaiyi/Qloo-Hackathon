@@ -16,10 +16,13 @@ export function TryAgain({
   consultationId,
   stylingStart,
   outfitsLeft,
+  onGuestPage,
 }: {
   consultationId: string;
   stylingStart: UsageSummary["stylingStart"];
   outfitsLeft: UsageSummary["outfitsLeft"];
+  /** It's on the Guest Page, which never sends anyone to sign-in. */
+  onGuestPage: boolean;
 }) {
   const { sending, failed, send } = useStylingRequest();
 
@@ -27,7 +30,7 @@ export function TryAgain({
     <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
       <button
         type="button"
-        onClick={() => send(() => tryAgainAction(consultationId))}
+        onClick={() => send(() => tryAgainAction(consultationId, onGuestPage))}
         disabled={!stylingStart.ok || sending}
         aria-describedby="try-again-line try-again-failed"
         className={`${primaryButton} px-4 py-2`}

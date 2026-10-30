@@ -12,15 +12,16 @@ function watchForErrors(page: Page): string[] {
   return errors;
 }
 
-test("a visitor follows the walkthrough's promise to the call to action, then on to sign up", async ({ page }) => {
+test("a visitor is offered the Guest Page, and follows the walkthrough's promise to the call to action, then on to sign up", async ({ page }) => {
   const errors = watchForErrors(page);
   await page.goto("/");
 
   await expect(page.getByRole("heading", { level: 1, name: "One photo, complete Outfits" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Try it as a Guest" })).toHaveAttribute("href", "/guest");
 
-  await page.getByRole("link", { name: "Get started" }).click();
   const getStarted = page.locator("#get-started");
+  await getStarted.scrollIntoViewIfNeeded();
   await expect(getStarted).toBeInViewport();
   await expect(getStarted).toContainText("Your photos go to Google's Gemini to make your Previews.");
 
@@ -69,4 +70,5 @@ test("a signed-in visitor sees the landing page too, offered the app instead of 
   await expect(page.getByRole("heading", { level: 1, name: "One photo, complete Outfits" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Open the app" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Sign in" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Try it as a Guest" })).toHaveCount(0);
 });

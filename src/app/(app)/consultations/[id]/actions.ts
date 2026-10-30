@@ -53,10 +53,11 @@ export async function changeBudgetTierAction(consultationId: string, budgetTier:
 /**
  * Try again, once the latest Styling broke. The page then shows where things stand: the Styling
  * step once the Styling has started, or, if it couldn't, why not, such as a limit reached since the
- * page loaded.
+ * page loaded. A Guest whose guest cookie has run out stays on the Guest Page, which never sends
+ * anyone to sign-in: it opens on the New Consultation steps instead.
  */
-export async function tryAgainAction(consultationId: string): Promise<void> {
+export async function tryAgainAction(consultationId: string, onGuestPage: boolean): Promise<void> {
   const result = await tryAgain(await getOperationContext(), z.string().parse(consultationId));
-  if (!result.ok && result.refusal === "signed-out") redirect(ROUTES.signIn);
+  if (!result.ok && result.refusal === "signed-out" && !z.boolean().parse(onGuestPage)) redirect(ROUTES.signIn);
   refresh();
 }

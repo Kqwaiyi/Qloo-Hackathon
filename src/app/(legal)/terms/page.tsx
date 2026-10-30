@@ -4,18 +4,19 @@ import Link from "next/link";
 import { textLink } from "@/components/ui";
 import { MINIMUM_AGE } from "@/config/accounts";
 import { COPY } from "@/config/copy";
-import { OUTFIT_ALLOWANCE } from "@/config/limits";
+import { GUEST_CONSULTATIONS_PER_ADDRESS, GUEST_PHOTO_CHECK_LIMIT, OUTFIT_ALLOWANCE } from "@/config/limits";
 import { ROUTES } from "@/config/routes";
+import { OUTFITS_PER_STYLING } from "@/config/stylings";
 import { getTeamEmail } from "@/server/data/team";
 
-import { bulletList, LegalSection, paragraph, TeamEmailLink } from "../legal-text";
+import { bulletList, count, guestConsultationDeleted, LegalSection, paragraph, TeamEmailLink } from "../legal-text";
 
 export const metadata: Metadata = { title: "Terms" };
 
 /**
  * The Terms: the 18+ rule, the content rules, that this is a free hackathon project with no
- * affiliation with Style Icons or Brands, and where Products, their prices, links and photos come
- * from. Public, with no sign-in.
+ * affiliation with Style Icons or Brands, where Products, their prices, links and photos come
+ * from, and what using it as a Guest allows. Public, with no sign-in.
  */
 export default function Page() {
   const teamEmail = getTeamEmail();
@@ -23,7 +24,8 @@ export default function Page() {
     <>
       <h1 className="text-3xl font-semibold tracking-tight">Terms</h1>
       <p className={paragraph}>
-        These are the rules for using Qurator. By creating an account, you agree to them and to our{" "}
+        These are the rules for using Qurator. By creating an account, or by agreeing to them on the Guest Page&apos;s
+        consent sheet, you agree to them and to our{" "}
         <Link href={ROUTES.privacy} className={textLink}>
           Privacy Policy
         </Link>
@@ -53,7 +55,8 @@ export default function Page() {
         <p className={paragraph}>If other people are in a photo, only upload it if they&apos;re fine with that.</p>
         <p className={paragraph}>
           Your photos stay yours. You let us store them and have AI process them only to make your Outfits and Previews, as
-          the Privacy Policy describes, until you delete them. We may delete an account that breaks these rules.
+          the Privacy Policy describes, until you delete them, or as a Guest until your Guest Consultation is deleted. We may
+          delete an account that breaks these rules.
         </p>
       </LegalSection>
 
@@ -65,6 +68,26 @@ export default function Page() {
           <li>
             Each account can make up to {OUTFIT_ALLOWANCE} Outfits a day, and the whole app has daily and monthly limits.
             Don&apos;t try to get around them, or to disrupt the app or anyone else&apos;s account.
+          </li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection id="guests" title="Using Qurator as a Guest">
+        <ul className={bulletList}>
+          <li>
+            On the Guest Page, you can try Qurator without an account. As a Guest, you get one Guest Consultation: up to{" "}
+            {OUTFITS_PER_STYLING} Outfits from your photo, with no more Outfits and no change of Budget Tier or Photo Style
+            once they&apos;re shown.
+          </li>
+          <li>
+            Each internet connection gets {count(GUEST_CONSULTATIONS_PER_ADDRESS, "Guest Consultation")} and{" "}
+            {count(GUEST_PHOTO_CHECK_LIMIT, "photo check")} a day. Everyone on a shared connection, such as an office&apos;s or
+            a café&apos;s Wi-Fi, shares them. Don&apos;t try to get around this: create an account for an Outfit Allowance of
+            your own.
+          </li>
+          <li>
+            Your Guest Consultation is deleted {guestConsultationDeleted}, as the Privacy Policy
+            describes. {COPY.guestResultsWontCarryOver}
           </li>
         </ul>
       </LegalSection>

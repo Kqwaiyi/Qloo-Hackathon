@@ -35,6 +35,8 @@ beforeEach(async () => {
   harness.qloo.respond = () => qlooResponse([]);
   harness.qloo.duringRequest = undefined;
   harness.ai.duringCall = undefined;
+  harness.turnstile.requests.length = 0;
+  harness.turnstile.answer = "pass";
   await harness.db.delete(qlooCache);
 });
 
@@ -184,6 +186,19 @@ describe("starting a Consultation", () => {
     expect(harness.ai.photoCheckCount).toBe(0);
     expect(harness.blob.objects.size).toBe(0);
     expect(await consultationsOf(browser)).toEqual([]);
+  });
+
+  it("asks a signed-in user for no Bot Check, which they passed at sign-up and sign-in: Cloudflare is never asked", async () => {
+    const browser = await signedInUser();
+    // Only the sign-up's own Bot Check was asked so far.
+    harness.turnstile.requests.length = 0;
+    harness.turnstile.answer = { reject: "invalid-input-response" };
+    browser.botCheckToken = undefined;
+
+    const result = await getMyOutfits(browser, "full_body");
+
+    expect(result).toEqual({ ok: true, consultationId: expect.any(String) });
+    expect(harness.turnstile.requests).toEqual([]);
   });
 });
 
@@ -338,6 +353,8 @@ describe("opening a Consultation", () => {
       failedStyling: null,
       stylistNotes: [],
       productsToCheck: false,
+      // A signed-in owner's: re-stylings are theirs to have.
+      isGuestConsultation: false,
     });
   });
 

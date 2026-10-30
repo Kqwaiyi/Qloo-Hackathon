@@ -10,6 +10,17 @@ const IP_COUNTRY_HEADER = "x-vercel-ip-country";
  * never do.
  */
 export function isFromSupportedRegion(requestHeaders: Headers): boolean {
-  const code = requestHeaders.get(IP_COUNTRY_HEADER)?.trim();
+  const code = ipCountryCode(requestHeaders);
   return !code || findCountry(code) !== undefined;
+}
+
+/** The request's IP country, when it's on the Country list, or null: none outside it, or without the header. */
+export function ipCountryOf(requestHeaders: Headers): string | null {
+  const code = ipCountryCode(requestHeaders);
+  return (code && findCountry(code)?.code) || null;
+}
+
+/** The code in the IP country header, or undefined without one. */
+function ipCountryCode(requestHeaders: Headers): string | undefined {
+  return requestHeaders.get(IP_COUNTRY_HEADER)?.trim() || undefined;
 }

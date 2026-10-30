@@ -190,6 +190,20 @@
       "when": 1792841925209,
       "tag": "0026_hair_length_pass_overs",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793303501620,
+      "tag": "0027_guest_users",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793308574055,
+      "tag": "0028_guest_usage",
+      "breakpoints": true
     }
   ]
 }

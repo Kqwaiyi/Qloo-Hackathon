@@ -1,4 +1,5 @@
 import { and, asc, count, eq, gt, gte, lte, type SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
 
 import { APP_WIDE_24_HOUR_CAP, APP_WIDE_MONTHLY_CAP, type UsageKind, USAGE_LIMITS, USAGE_WINDOW_HOURS, type UserUsageKind } from "@/config/limits";
@@ -75,8 +76,18 @@ async function readLeftInWindow(db: Database | Transaction, counting: SQL | unde
   const counted = await db
     .select({ usedAt: usageRecord.usedAt })
     .from(usageRecord)
-    .where(and(counting, gt(usageRecord.usedAt, new Date(at.getTime() - WINDOW_MS)), lte(usageRecord.usedAt, at)))
+    .where(and(counting, inUsageWindow(usageRecord.usedAt, at)))
     .orderBy(asc(usageRecord.usedAt));
+  return usageLeftOf(counted, limit);
+}
+
+/** Where a use at the time in `usedAt` counts in the rolling window up to `at`. */
+export function inUsageWindow(usedAt: AnyPgColumn, at: Date): SQL {
+  return and(gt(usedAt, new Date(at.getTime() - WINDOW_MS)), lte(usedAt, at))!;
+}
+
+/** What the uses `counted` in the rolling window, oldest first, leave of `limit`. */
+export function usageLeftOf(counted: { usedAt: Date }[], limit: number): UsageLeft {
   const holding = counted[Math.max(0, counted.length - limit)];
   const moreFrom = holding ? new Date(holding.usedAt.getTime() + WINDOW_MS) : null;
   if (counted.length >= limit && moreFrom) return { usedUp: true, left: 0, moreFrom };

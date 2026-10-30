@@ -2,6 +2,11 @@
 
 const STYLING_BROKE = "Something went wrong while styling.";
 
+/** A new Consultation's first Styling that built nothing, given its Budget Tier, or null for a Face Photo. */
+function firstStylingCouldntBuild(tier: string | null): string {
+  return `We couldn't build Outfits for this photo${tier ? ` at ${tier}` : ""}.`;
+}
+
 /** What else to try for more Outfits. A Face Photo has no Budget Tier to suggest. */
 function tryAnother(suggestBudgetTier: boolean): string {
   return `Try another ${suggestBudgetTier ? "Budget Tier or Photo Style" : "Photo Style"}`;
@@ -102,8 +107,9 @@ export const COPY = {
    * A new Consultation whose first Styling built nothing, given its Budget Tier, or null for a Face
    * Photo, which has none, so only another Photo Style is suggested.
    */
-  firstStylingBuiltNothing: (tier: string | null) =>
-    `We couldn't build Outfits for this photo${tier ? ` at ${tier}` : ""}. ${tryAnother(tier !== null)}.`,
+  firstStylingBuiltNothing: (tier: string | null) => `${firstStylingCouldntBuild(tier)} ${tryAnother(tier !== null)}.`,
+  /** A Guest Consultation's first Styling that built nothing: nothing else to try is suggested, since a Guest can't change either. */
+  guestFirstStylingBuiltNothing: firstStylingCouldntBuild,
   /**
    * A Styling that broke, shown with "Try again", given the Budget Tier or Photo Style of the
    * Outfits a re-styling kept, or null when there are none.
@@ -132,5 +138,47 @@ export const COPY = {
   /** On the Demo Account's consent sheet, as part of its photo notice, and on its My Consultations. */
   sharedDemoAccount: "Shared demo account: anyone with this login can see Consultations made here. Delete yours when you're done.",
   emailUsForData: "Email us for a copy of your data",
+  /** The landing header's button to the Guest Page, for signed-out visitors, in place of "Get started". */
+  tryItAsAGuest: "Try it as a Guest",
+  /** The Guest Page's tab title, before the root layout's " · Qurator". */
+  guestPageTitle: "Guest Page",
+  /** Beside the wordmark in the Guest Page's header. */
+  guestTag: "Guest",
+  /** The Guest Page header's one button, to sign-up. */
+  createAnAccount: "Create an account",
+  /** Under the Guest Page's "Get my Outfits", in place of the allowance line. */
+  usesYourGuestConsultation: "Uses your one Guest Consultation",
+  /** Below a Guest's Outfits, in place of "Show 2 more Outfits": to sign-up. */
+  createAnAccountForMore: "Create an account to get more consultations",
+  /** Beside "Create an account to get more consultations", and in the Terms and the Privacy Policy's Guest section. */
+  guestResultsWontCarryOver: "Your guest results won't carry over to a new account.",
+  /** The Guest Page's details, on its photo step, as their fields name them. */
+  guestBirthDate: "Date of birth",
+  /** The Guest Page's details, as "Get my Outfits" names them when they're left out. */
+  guestDetailNames: { birthDate: "date of birth", stylePreference: "Style Preference", countryCode: "Country" },
+  /** Under the Guest Page's "Get my Outfits" when details were left out, given their names in a sentence. */
+  guestDetailsMissing: (details: string) => `Add your ${details} to get your Outfits.`,
+  /**
+   * On the Guest Page's consent sheet, in place of how long an account's photos are kept. Part of
+   * the photo notice: raise PHOTO_NOTICE_VERSION when it changes.
+   */
+  guestPhotosKept:
+    "We keep it privately, with the Outfits and Previews made from it, until your Guest Consultation is deleted: usually about an hour after you start it, and always within 24 hours. Only this browser can open them, through private links that stop working after an hour.",
+  /** The heading over the deletion promise on the Guest Page's consent sheet, where a Guest deletes nothing themselves. */
+  whenTheyAreDeleted: "When they're deleted",
+  /** The Guest Page consent sheet's third box. */
+  agreeToTermsAndPrivacy: "I agree to Qurator's Terms and Privacy Policy.",
+  /** The quiet line after the Guest Page's consent sheet is closed without agreeing. */
+  agreeToAllThreeBoxes: "To get Outfits, agree to all three boxes on the consent sheet.",
+  /** The Guest Page, in place of the Photo Type step, once its internet address has had its Guest Consultation, given when the next opens. */
+  guestConsultationUsed: (time: string) => `Your internet connection has had today's Guest Consultation. The next one opens at ${time}.`,
+  /** The Guest Page, likewise, while another Guest Consultation on its internet address runs. */
+  guestConsultationRunning: "A Guest Consultation is already running on your internet connection. Only one runs at a time.",
+  /** The Guest Page, likewise, once its internet address has had every photo the Guest Page's limit allows checked. */
+  guestPhotoCheckLimitReached: (limit: number, time: string) => `Your internet connection has had ${limit} photos checked today. More from ${time}.`,
+  /** The Guest Page on a deployment that can't count Guest Consultations, without the salt it hashes internet addresses under. */
+  guestPageUnavailable: "The Guest Page isn't available right now.",
+  /** Atop the Guest Page, once, for a Guest back after their Guest Consultation was deleted. */
+  guestConsultationDeleted: "Your Guest Consultation has been deleted, with its photo and Previews, as every Guest's is about an hour after it starts.",
   didNotSignUp: (date: string) => `Didn't sign up? Ignore this email. The account is removed on ${date}.`,
 } as const;

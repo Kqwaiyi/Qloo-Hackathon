@@ -1,14 +1,8 @@
 import * as z from "zod";
 
 import { isAllowedPassword } from "@/config/accounts";
-import { AGE_GATE_COOKIE, isBlockedByAgeGate } from "@/server/accounts/age-gate";
-import {
-  type BirthDateFields,
-  birthDateFieldsSchema,
-  formatBirthDate,
-  judgeAge,
-  parseBirthDateFields,
-} from "@/server/accounts/birth-date";
+import { applyAgeGate, isBlockedByAgeGate } from "@/server/accounts/age-gate";
+import { type BirthDateFields, birthDateFieldsSchema, formatBirthDate, parseBirthDateFields } from "@/server/accounts/birth-date";
 import { checkProfile, type ProfileField, profileInputSchema, usernameProblem } from "@/server/accounts/profile";
 import { AUTH_ENDPOINTS } from "@/config/routes";
 import { BOT_CHECK_FAILED } from "@/server/auth/bot-check";
@@ -41,10 +35,7 @@ export async function checkDateOfBirth(
   if (isBlockedByAgeGate(ctx.requestHeaders)) return { ok: false, refusal: "under-18" };
   const birthDate = parseBirthDateFields(fields);
   if (!birthDate) return { ok: false, refusal: "invalid-date" };
-  const verdict = judgeAge(birthDate, ctx.clock.now());
-  if (verdict === "adult") return { ok: true };
-  if (verdict === "under-18") ctx.responseCookies.set(AGE_GATE_COOKIE);
-  return { ok: false, refusal: "under-18" };
+  return applyAgeGate(ctx.responseCookies, birthDate, ctx.clock.now()) ? { ok: true } : { ok: false, refusal: "under-18" };
 }
 
 /** Everything sign-up step 2 sends, unchecked. Server actions parse their input with this. */
